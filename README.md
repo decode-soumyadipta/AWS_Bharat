@@ -1,293 +1,431 @@
 # Vyapar-Vaani 🛒🗣️
 
-**Voice-First ONDC Seller Node for Rural Indian Merchants**
+> **Voice-First ONDC Platform for Rural Indian Merchants**  
+> Enabling low-literacy sellers to join India's Open Network for Digital Commerce using only WhatsApp.
 
-A headless e-commerce platform enabling rural merchants with low digital literacy to participate in India's Open Network for Digital Commerce (ONDC) using only WhatsApp voice notes and images.
+<div align="center">
+
+[![AWS](https://img.shields.io/badge/AWS-Serverless-orange?logo=amazon-aws)](https://aws.amazon.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
+[![ONDC](https://img.shields.io/badge/ONDC-Compliant-green)](https://ondc.org)
+[![Tests](https://img.shields.io/badge/Tests-414%20passing-success)](./test.sh)
+[![Coverage](https://img.shields.io/badge/Coverage-82.62%25-brightgreen)](./coverage)
+
+</div>
 
 ---
 
-## 🌟 Features
+## 🎯 The Problem
 
-- ✅ **Zero-UI KYC**: Upload PAN/Aadhar photos, get registered automatically
-- ✅ **Voice-First**: Create catalogs, manage inventory, handle orders via voice notes
-- ✅ **Multi-Language**: Hindi, Marathi, English support
-- ✅ **AI-Powered**: Claude 3.5 Sonnet for intent classification & entity extraction
-- ✅ **Image Enhancement**: Amazon Titan for professional product photos
-- ✅ **ONDC Compliant**: Full Beckn Protocol v1.2.0 implementation
-- ✅ **Serverless**: Scale-to-zero AWS architecture
-- ✅ **Property-Based Testing**: 27 correctness properties validated
+Rural Indian merchants face barriers to e-commerce:
+- **Low digital literacy** - Can't use complex apps
+- **Language barriers** - English-only interfaces
+- **No technical skills** - Can't manage online catalogs
+- **Limited access** - Only have basic smartphones
+
+## 💡 Our Solution
+
+A **zero-UI, voice-first platform** that works entirely through WhatsApp:
+
+```
+📱 WhatsApp Voice Note → 🤖 AI Processing → 🛍️ ONDC Network
+```
+
+Merchants speak in their language. We handle the rest.
+
+---
+
+## 🏗️ Architecture
+
+### System Overview
+
+```mermaid
+graph LR
+    A[👤 Seller<br/>WhatsApp] -->|Voice/Text/Image| B[🌐 API Gateway]
+    B --> C[📨 Webhook<br/>Handler]
+    C --> D[⚡ EventBridge]
+    
+    D -->|Text| E[🎯 Intent<br/>Classification]
+    D -->|Voice| F[🎤 Voice<br/>Transcription]
+    D -->|Image| G[🖼️ Image<br/>Enhancement]
+    
+    E --> H[🔍 Entity<br/>Extraction]
+    F --> E
+    
+    H --> I[📦 Catalog<br/>Builder]
+    I --> J[💾 DynamoDB]
+    J --> K[📤 ONDC<br/>Network]
+    
+    J --> L[📱 WhatsApp<br/>Response]
+    L --> A
+    
+    style A fill:#25D366
+    style K fill:#FF6B35
+    style J fill:#4A90E2
+```
+
+### AWS Services
+
+```mermaid
+graph TB
+    subgraph "AI/ML Layer"
+        A1[Amazon Bedrock<br/>Claude 3 Haiku]
+        A2[Amazon Bedrock<br/>Titan Image Gen v2]
+        A3[Amazon Transcribe]
+        A4[Amazon Textract]
+    end
+    
+    subgraph "Compute Layer"
+        B1[AWS Lambda<br/>11 Functions]
+        B2[Step Functions<br/>KYC Workflow]
+    end
+    
+    subgraph "Integration Layer"
+        C1[EventBridge<br/>Event Bus]
+        C2[API Gateway<br/>HTTP API]
+    end
+    
+    subgraph "Storage Layer"
+        D1[DynamoDB<br/>Single Table]
+        D2[S3<br/>Images & Docs]
+        D3[KMS<br/>Encryption]
+    end
+    
+    A1 --> B1
+    A2 --> B1
+    A3 --> B1
+    A4 --> B2
+    B1 --> C1
+    C1 --> B1
+    B1 --> D1
+    B1 --> D2
+    D3 --> D1
+    D3 --> D2
+    
+    style A1 fill:#FF9900
+    style B1 fill:#FF9900
+    style C1 fill:#FF9900
+    style D1 fill:#FF9900
+```
+
+### Event Flow
+
+```mermaid
+sequenceDiagram
+    participant S as Seller
+    participant W as WhatsApp
+    participant API as API Gateway
+    participant EB as EventBridge
+    participant IC as Intent Classifier
+    participant EE as Entity Extractor
+    participant CB as Catalog Builder
+    participant DB as DynamoDB
+    participant ONDC as ONDC Network
+    
+    S->>W: Voice: "मैं आम बेचना चाहता हूं"
+    W->>API: Webhook POST
+    API->>EB: Publish Event
+    EB->>IC: Trigger Lambda
+    IC->>IC: Claude 3 Haiku<br/>Intent: CREATE_CATALOG
+    IC->>EB: Publish Intent
+    EB->>EE: Trigger Lambda
+    EE->>EE: Claude 3 Haiku<br/>Extract Entities
+    EE->>EB: Publish Entities
+    EB->>CB: Trigger Lambda
+    CB->>CB: Build Beckn Catalog
+    CB->>DB: Store Catalog
+    DB->>ONDC: Broadcast
+    CB->>W: Send Confirmation
+    W->>S: "✅ उत्पाद जोड़ा गया"
+```
+
+---
+
+## ✨ Features
+
+<table>
+<tr>
+<td width="50%">
+
+### 🎤 Voice-First
+- Speak in Hindi, Marathi, or English
+- No typing required
+- Natural conversation flow
+
+### 📸 Smart Images
+- Upload product photos
+- AI enhances to professional quality
+- Titan Image Generator v2
+
+### 🔐 Zero-UI KYC
+- Upload PAN/Aadhar photos
+- Automatic extraction & validation
+- Instant seller registration
+
+</td>
+<td width="50%">
+
+### 🌐 ONDC Compliant
+- Full Beckn Protocol v1.2.0
+- Real-time catalog sync
+- Order management
+
+### ⚡ Serverless
+- Scale to zero when idle
+- Pay only for usage
+- Auto-scaling to millions
+
+### 🧪 Production-Ready
+- 82.62% test coverage
+- 414 tests passing
+- Property-based testing
+
+</td>
+</tr>
+</table>
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 20+
-- AWS Account
-- AWS CLI configured
-- WhatsApp Business Account
 
-### 1. Clone & Install
 ```bash
-git clone <your-repo>
-cd vyapar-vaani
-npm install
+Node.js 20+ | AWS Account | AWS CLI | WhatsApp Business
 ```
 
-### 2. Build
-```bash
-npm run build
-```
+### Deploy in 3 Steps
 
-### 3. Deploy
 ```bash
+# 1. Install dependencies
+npm install && npm run build
+
+# 2. Deploy to AWS
 cdk bootstrap  # First time only
 cdk deploy
+
+# 3. Test the system
+./test.sh
 ```
 
-### 4. Configure WhatsApp
-See `DEPLOYMENT_GUIDE.md` for detailed WhatsApp setup
-
-### 5. Test
-```bash
-npm test
-```
-
-**Done!** Send a WhatsApp message to test.
+**That's it!** Your voice-first ONDC platform is live.
 
 ---
 
-## 📚 Documentation
+## 📊 System Metrics
 
-- **[QUICK_START.md](QUICK_START.md)** - Get running in 30 minutes
-- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Complete deployment instructions
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing and debugging
-- **[.kiro/specs/vyapar-vaani/](./kiro/specs/vyapar-vaani/)** - Requirements, design, tasks
+<table>
+<tr>
+<td align="center"><b>11</b><br/>Lambda Functions</td>
+<td align="center"><b>7</b><br/>EventBridge Rules</td>
+<td align="center"><b>5</b><br/>AI/ML Services</td>
+<td align="center"><b>3</b><br/>Languages</td>
+</tr>
+<tr>
+<td align="center"><b>82.62%</b><br/>Test Coverage</td>
+<td align="center"><b>414</b><br/>Tests Passing</td>
+<td align="center"><b>7-15s</b><br/>Processing Time</td>
+<td align="center"><b>$15-20</b><br/>Monthly Dev Cost</td>
+</tr>
+</table>
 
 ---
 
-## 🏗️ Architecture
+## 🎬 How It Works
+
+### 1️⃣ Seller Sends Voice Note
 
 ```
-WhatsApp → API Gateway → EventBridge → Lambda Functions
-                                    ↓
-                            Step Functions (AI workflows)
-                                    ↓
-                            DynamoDB + S3 + KMS
-                                    ↓
-                            ONDC Registry (Beckn Protocol)
+"मैं आम बेचना चाहता हूं, 100 रुपये प्रति किलो, 50 किलो स्टॉक है"
 ```
 
-### Key Components
+### 2️⃣ AI Processes Request
 
-- **WhatsApp Integration**: Webhook handler + message sender
-- **KYC Processing**: Textract → Validation → ONDC registration
-- **Voice Processing**: Transcribe → Claude (intent + entities)
-- **Catalog Builder**: Beckn-compliant catalog construction
-- **Image Enhancement**: Titan Image Generator with Canny Edge
-- **Order Management**: Interactive messages + state machine
-- **BPP Adapter**: Full Beckn Protocol implementation
+- **Intent**: CREATE_CATALOG
+- **Entities**: {product: "आम", price: 100, quantity: 50, unit: "kg"}
+
+### 3️⃣ System Creates Catalog
+
+- Builds Beckn-compliant catalog
+- Validates ONDC schema
+- Stores in DynamoDB
+
+### 4️⃣ Seller Gets Confirmation
+
+```
+✅ उत्पाद जोड़ा गया: आम, कीमत: ₹100
+```
+
+### 5️⃣ Product Goes Live on ONDC
+
+Visible to millions of buyers across India!
 
 ---
 
 ## 🧪 Testing
 
-### Test Coverage: 82.62%
-
-- ✅ 414 tests passing
-- ✅ 9 property-based tests
-- ✅ 405 unit tests
-- ✅ All correctness properties validated
+### Comprehensive Test Suite
 
 ```bash
-# Run all tests
-npm test
+./test.sh  # 15+ end-to-end tests
+```
 
-# With coverage
-npm test -- --coverage
+**Tests cover:**
+- ✅ All Lambda functions
+- ✅ Intent classification (5 types)
+- ✅ Entity extraction
+- ✅ Catalog building
+- ✅ DynamoDB storage
+- ✅ WhatsApp integration
+- ✅ Multilingual support
+- ✅ Error handling
 
-# Watch mode
-npm test -- --watch
+### Unit & Property Tests
+
+```bash
+npm test  # 414 tests
+```
+
+See **[TEST_GUIDE.md](TEST_GUIDE.md)** for details.
+
+---
+
+## 🛠️ Tech Stack
+
+<table>
+<tr>
+<td><b>Language</b></td>
+<td>TypeScript 5.0</td>
+</tr>
+<tr>
+<td><b>Infrastructure</b></td>
+<td>AWS CDK</td>
+</tr>
+<tr>
+<td><b>AI/ML</b></td>
+<td>Amazon Bedrock (Claude 3 Haiku, Titan Image Gen v2)</td>
+</tr>
+<tr>
+<td><b>Compute</b></td>
+<td>AWS Lambda, Step Functions</td>
+</tr>
+<tr>
+<td><b>Storage</b></td>
+<td>DynamoDB, S3, KMS</td>
+</tr>
+<tr>
+<td><b>Integration</b></td>
+<td>EventBridge, API Gateway</td>
+</tr>
+<tr>
+<td><b>Testing</b></td>
+<td>Jest, fast-check (Property-Based Testing)</td>
+</tr>
+</table>
+
+---
+
+## 📁 Project Structure
+
+```
+vyapar-vaani/
+├── src/
+│   ├── lambdas/          # 11 Lambda functions
+│   ├── models/           # TypeScript interfaces
+│   ├── services/         # Business logic
+│   └── config/           # AWS clients
+├── infrastructure/       # CDK stack
+├── tests/
+│   ├── unit/            # 405 unit tests
+│   └── property/        # 9 property-based tests
+├── test.sh              # E2E test suite
+└── README.md
 ```
 
 ---
 
-## 📊 Tech Stack
+## 📚 Documentation
 
-### AWS Services
-- **Compute**: Lambda, Step Functions
-- **Storage**: DynamoDB, S3
-- **AI/ML**: Bedrock (Claude, Titan), Transcribe, Textract, Rekognition
-- **Integration**: EventBridge, API Gateway, End User Messaging
-- **Security**: KMS, IAM
-- **Monitoring**: CloudWatch, X-Ray
-
-### Languages & Frameworks
-- TypeScript
-- AWS CDK (Infrastructure as Code)
-- Jest (Testing)
-- fast-check (Property-Based Testing)
+| Document | Description |
+|----------|-------------|
+| **[TEST_GUIDE.md](TEST_GUIDE.md)** | Comprehensive testing guide |
+| **[COMPLETE_SYSTEM_STATUS.md](COMPLETE_SYSTEM_STATUS.md)** | System health & deployment status |
+| **[.kiro/specs/vyapar-vaani/](./kiro/specs/vyapar-vaani/)** | Requirements, design, tasks |
 
 ---
 
 ## 💰 Cost Estimate
 
-**For 1000 active sellers/month:**
-- Lambda: ~$50
-- DynamoDB: ~$25
-- S3: ~$10
-- AI Services (Transcribe, Bedrock, Textract): ~$350
-- **Total: ~$435/month**
+### Development (1000 messages/month)
+- Claude 3 Haiku: $2-3
+- Titan Image Generator: $8
+- Transcribe: $1
+- Textract: $1.50
+- Lambda/DynamoDB/S3: $2
+- **Total: ~$15-20/month**
 
-Scale-to-zero means you only pay for actual usage!
-
----
-
-## 🔒 Security
-
-- ✅ KMS encryption at rest
-- ✅ TLS 1.3 in transit
-- ✅ PII anonymization in logs
-- ✅ IAM least privilege
-- ✅ Beckn message signing
-- ✅ WhatsApp webhook verification
+### Production (10,000 messages/month)
+- **Estimated: $150-200/month**
+- Scales automatically with usage
+- No upfront costs
 
 ---
 
-## 🌍 Multi-Language Support
+## 🌟 Key Highlights
 
-- **Hindi** (hi-IN): मैं 5 किलो आम का अचार बेचना चाहता हूं
-- **Marathi** (mr-IN): मी 5 किलो आंब्याचे लोणचे विकायचे आहे
-- **English** (en-IN): I want to sell 5 kg mango pickle
+### For Rural Merchants
+- 🗣️ **Speak naturally** - No typing, no forms
+- 🌐 **Any language** - Hindi, Marathi, English
+- 📱 **Just WhatsApp** - No app downloads
+- ⚡ **Instant setup** - Start selling in minutes
 
-Code-mixed input supported: "Mango pickle 200 rupees 5 kg"
+### For Developers
+- 🏗️ **Serverless** - Zero infrastructure management
+- 🧪 **Well-tested** - 82.62% coverage, 414 tests
+- 📊 **Observable** - CloudWatch logs & metrics
+- 🔒 **Secure** - KMS encryption, IAM policies
 
----
-
-## 📈 Monitoring
-
-### CloudWatch Metrics
-- Time to Network (KYC → Registration)
-- Catalog Rejection Rate
-- Image Enhancement Success Rate
-- Order Acceptance Rate
-- Error Rates per Component
-
-### Alarms
-- Lambda errors > 5%
-- DynamoDB throttling > 10 requests
-- Step Functions failures > 3
-- Beckn signature failures > 1
-
----
-
-## 🛠️ Development
-
-### Project Structure
-```
-vyapar-vaani/
-├── src/
-│   ├── lambdas/          # Lambda function handlers
-│   ├── models/           # TypeScript interfaces
-│   ├── services/         # Business logic
-│   └── config/           # AWS client configs
-├── infrastructure/       # CDK stack definitions
-├── tests/
-│   ├── unit/            # Unit tests
-│   └── property/        # Property-based tests
-├── .kiro/specs/         # Requirements & design
-└── docs/                # Documentation
-```
-
-### Key Files
-- `infrastructure/stacks/vyapar-vaani-stack.ts` - CDK infrastructure
-- `src/lambdas/` - All Lambda functions
-- `src/services/dynamodb-repository.ts` - Data access layer
-- `tests/property/` - Correctness properties
+### For ONDC Network
+- ✅ **Beckn compliant** - Full protocol support
+- 🔄 **Real-time sync** - Event-driven architecture
+- 📈 **Scalable** - Handles millions of requests
+- 🎯 **Reliable** - Retry logic, error handling
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Write tests (`npm test`)
-4. Commit changes (`git commit -m 'Add amazing feature'`)
-5. Push to branch (`git push origin feature/amazing-feature`)
-6. Open Pull Request
+We welcome contributions! Here's how:
 
-### Code Standards
-- TypeScript strict mode
-- 80%+ test coverage
-- Property tests for core logic
-- Beckn Protocol compliance
+1. Fork the repository
+2. Create a feature branch
+3. Write tests (maintain 80%+ coverage)
+4. Submit a pull request
 
 ---
 
-## 📝 License
+## 📄 License
 
-MIT License - See LICENSE file
+MIT License - See [LICENSE](LICENSE) for details
 
 ---
 
 ## 🙏 Acknowledgments
 
-- **ONDC** for the open commerce protocol
-- **AWS** for serverless infrastructure
-- **Anthropic** for Claude 3.5 Sonnet
-- **Meta** for WhatsApp Business API
+Built for **AWS Build On India 2024**
+
+Powered by:
+- Amazon Bedrock (Claude 3 Haiku, Titan Image Generator v2)
+- Amazon Transcribe, Textract
+- AWS Lambda, EventBridge, DynamoDB
+- Open Network for Digital Commerce (ONDC)
 
 ---
 
-## 📞 Support
+<div align="center">
 
-- **Documentation**: See `/docs` folder
-- **Issues**: GitHub Issues
-- **Email**: support@vyapar-vaani.in
+**Made with ❤️ for Rural India**
 
----
+[Report Bug](https://github.com/your-repo/issues) · [Request Feature](https://github.com/your-repo/issues) · [Documentation](./TEST_GUIDE.md)
 
-## 🎯 Roadmap
-
-- [ ] Multi-seller marketplace support
-- [ ] Advanced analytics dashboard
-- [ ] Automated inventory forecasting
-- [ ] Integration with payment gateways
-- [ ] Mobile app for sellers
-- [ ] Regional language expansion
-
----
-
-## 📸 Screenshots
-
-### WhatsApp Interface
-```
-Seller: [Voice Note] "मैं आम का अचार बेचना चाहता हूं"
-Bot: "कृपया कीमत और मात्रा बताएं"
-Seller: [Voice Note] "200 रुपये, 5 किलो"
-Bot: "✅ उत्पाद सफलतापूर्वक जोड़ा गया!"
-```
-
-### Order Notification
-```
-🛒 नया ऑर्डर!
-
-ग्राहक: राज कुमार
-उत्पाद: आम का अचार
-मात्रा: 2 किलो
-कीमत: ₹400
-
-पता: मुंबई, महाराष्ट्र
-
-[✅ स्वीकार करें] [❌ अस्वीकार करें]
-```
-
----
-
-## 🌟 Star History
-
-If you find this project useful, please star it! ⭐
-
----
-
-**Built with ❤️ for rural India**
+</div>

@@ -18,10 +18,13 @@
  */
 
 import { randomUUID } from 'crypto';
+import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { BecknCatalogItem } from '../models/catalog';
 import { CatalogEntities } from '../models/intent';
 import { SellerProfile } from '../models/seller';
 import { validateCatalogItem, ValidationResult } from '../services/ondc-schema-validator';
+import { eventBridgeClient } from '../config/aws-clients';
+import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
  * Request to build a catalog item
@@ -133,6 +136,14 @@ export const handler = async (
         },
       };
     }
+
+    // Publish catalog.created event to EventBridge
+    await publishCatalogCreatedEvent({
+      catalogItem,
+      itemId,
+      sellerId: event.sellerProfile.sellerId,
+      messageId: event.messageId,
+    });
 
     return {
       success: true,
@@ -300,4 +311,44 @@ function generateLongDescription(entities: CatalogEntities): string {
   }
 
   return longDesc;
+}
+
+/**
+ * Publish catalog.created event to EventBridge
+ */
+async function publishCatalogCreatedEvent(data: {
+  catalogItem: BecknCatalogItem;
+  itemId: string;
+  sellerId: string;
+  messageId?: string;
+}): Promise<void> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured - skipping event publication');
+    return;
+  }
+
+  const command = new PutEventsCommand({
+    Entries: [
+      {
+        Source: EVENT_SOURCES.INTERNAL,
+        DetailType: INTERNAL_EVENT_TYPES.CATALOG_CREATED,
+        Detail: JSON.stringify({
+          itemId: data.itemId,
+          sellerId: data.sellerId,
+          catalogItem: data.catalogItem,
+          messageId: data.messageId,
+          timestamp: new Date().toISOString(),
+        }),
+        EventBusName: eventBusName,
+      },
+    ],
+  });
+
+  const response = await eventBridgeClient.send(command);
+  console.log('Published catalog.created event:', {
+    itemId: data.itemId,
+    sellerId: data.sellerId,
+    eventId: response.Entries?.[0]?.EventId,
+  });
 }

@@ -210,6 +210,8 @@ export class VyaparVaaniStack extends cdk.Stack {
           'bedrock:InvokeModel',
           'rekognition:DetectLabels',
           'rekognition:CompareFaces',
+          'aws-marketplace:ViewSubscriptions',
+          'aws-marketplace:Subscribe',
         ],
         resources: ['*'],
       })
@@ -383,6 +385,44 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
+    // Catalog Builder Lambda
+    const catalogBuilderLambda = new lambda.Function(this, 'CatalogBuilderLambda', {
+      functionName: 'vyapar-vaani-catalog-builder',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/catalog-builder.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Catalog Storage Broadcast Lambda
+    const catalogStorageBroadcastLambda = new lambda.Function(this, 'CatalogStorageBroadcastLambda', {
+      functionName: 'vyapar-vaani-catalog-storage-broadcast',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/catalog-storage-broadcast.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
     // WhatsApp Webhook Handler Lambda
     const webhookLambdaRole = new iam.Role(this, 'WebhookLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
@@ -506,6 +546,29 @@ export class VyaparVaaniStack extends cdk.Stack {
         detailType: ['whatsapp.message.send'],
       },
       targets: [new targets.LambdaFunction(whatsappSenderLambda)],
+    });
+
+    // Rule 6: Entities extracted (CREATE_CATALOG) → Catalog Builder
+    new events.Rule(this, 'CatalogCreationRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: ['vyapar.vaani.internal'],
+        detailType: ['entities.extracted'],
+        detail: {
+          intent: ['CREATE_CATALOG'],
+        },
+      },
+      targets: [new targets.LambdaFunction(catalogBuilderLambda)],
+    });
+
+    // Rule 7: Catalog created → Catalog Storage Broadcast
+    new events.Rule(this, 'CatalogStorageRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: ['vyapar.vaani.internal'],
+        detailType: ['catalog.created'],
+      },
+      targets: [new targets.LambdaFunction(catalogStorageBroadcastLambda)],
     });
 
     // Step Functions State Machine for KYC Processing

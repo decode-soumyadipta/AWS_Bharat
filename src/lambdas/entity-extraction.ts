@@ -107,6 +107,17 @@ export const handler = async (
       });
     }
 
+    // Publish entities extracted event for downstream processing
+    if (!validationResult.missingFields.length && phoneNumber && messageId) {
+      await publishEntitiesExtractedEvent({
+        messageId,
+        phoneNumber,
+        intent,
+        entities: claudeResponse,
+        language: language as 'hi' | 'mr' | 'en',
+      });
+    }
+
     return {
       success: true,
       entities: claudeResponse,
@@ -522,6 +533,47 @@ async function sendWhatsAppResponse(data: {
   const response = await eventBridgeClient.send(command);
   console.log('Published WhatsApp response event:', {
     phoneNumber: data.phoneNumber,
+    eventId: response.Entries?.[0]?.EventId,
+  });
+}
+
+/**
+ * Publish entities extracted event for downstream processing
+ */
+async function publishEntitiesExtractedEvent(data: {
+  messageId: string;
+  phoneNumber: string;
+  intent: IntentType;
+  entities: Record<string, any>;
+  language: string;
+}): Promise<void> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured - skipping event publication');
+    return;
+  }
+
+  const command = new PutEventsCommand({
+    Entries: [
+      {
+        Source: EVENT_SOURCES.INTERNAL,
+        DetailType: INTERNAL_EVENT_TYPES.ENTITIES_EXTRACTED,
+        Detail: JSON.stringify({
+          messageId: data.messageId,
+          phone: data.phoneNumber,
+          intent: data.intent,
+          entities: data.entities,
+          language: data.language,
+        }),
+        EventBusName: eventBusName,
+      },
+    ],
+  });
+
+  const response = await eventBridgeClient.send(command);
+  console.log('Published entities extracted event:', {
+    messageId: data.messageId,
+    intent: data.intent,
     eventId: response.Entries?.[0]?.EventId,
   });
 }
