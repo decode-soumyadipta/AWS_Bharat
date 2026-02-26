@@ -1,4 +1,4 @@
-# Vyapar-Vaani 🛒🗣️
+# Vyapar-Vaani
 
 > **Voice-First ONDC Platform for Rural Indian Merchants**  
 > Enabling low-literacy sellers to join India's Open Network for Digital Commerce using only WhatsApp.
