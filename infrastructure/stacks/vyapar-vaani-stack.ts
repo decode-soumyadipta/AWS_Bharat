@@ -3,12 +3,29 @@ import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+
+// Event pattern constants
+const EVENT_SOURCES = {
+  WHATSAPP: 'vyapar.vaani.whatsapp',
+  ONDC: 'vyapar.vaani.ondc',
+  INTERNAL: 'vyapar.vaani.internal',
+} as const;
+
+const WHATSAPP_EVENT_TYPES = {
+  MESSAGE_RECEIVED_VOICE: 'message.received.voice',
+  MESSAGE_RECEIVED_IMAGE: 'message.received.image',
+  MESSAGE_RECEIVED_TEXT: 'message.received.text',
+  BUTTON_CLICKED: 'button.clicked',
+} as const;
 
 export class VyaparVaaniStack extends cdk.Stack {
   public readonly dataTable: dynamodb.Table;
@@ -17,6 +34,7 @@ export class VyaparVaaniStack extends cdk.Stack {
   public readonly eventBus: events.EventBus;
   public readonly encryptionKey: kms.Key;
   public readonly kycProcessingStateMachine: sfn.StateMachine;
+  public readonly httpApi: apigatewayv2.HttpApi;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -225,8 +243,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const documentExtractionLambda = new lambda.Function(this, 'DocumentExtractionLambda', {
       functionName: 'vyapar-vaani-document-extraction',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'document-extraction.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/document-extraction.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
       role: lambdaExecutionRole,
@@ -245,8 +263,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const kycValidationLambda = new lambda.Function(this, 'KYCValidationLambda', {
       functionName: 'vyapar-vaani-kyc-validation',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'kyc-validation.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/kyc-validation.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       role: lambdaExecutionRole,
@@ -265,8 +283,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const sellerRegistrationLambda = new lambda.Function(this, 'SellerRegistrationLambda', {
       functionName: 'vyapar-vaani-seller-registration',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'seller-registration.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/seller-registration.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
       role: lambdaExecutionRole,
@@ -288,8 +306,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const whatsappSenderLambda = new lambda.Function(this, 'WhatsAppSenderLambda', {
       functionName: 'vyapar-vaani-whatsapp-sender',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'whatsapp-message-sender.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/whatsapp-message-sender.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       role: lambdaExecutionRole,
@@ -310,8 +328,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const voiceTranscriptionLambda = new lambda.Function(this, 'VoiceTranscriptionLambda', {
       functionName: 'vyapar-vaani-voice-transcription',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'voice-transcription.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/voice-transcription.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.minutes(3), // Transcription can take time
       memorySize: 512,
       role: lambdaExecutionRole,
@@ -330,8 +348,8 @@ export class VyaparVaaniStack extends cdk.Stack {
     const intentClassificationLambda = new lambda.Function(this, 'IntentClassificationLambda', {
       functionName: 'vyapar-vaani-intent-classification',
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'intent-classification.handler',
-      code: lambda.Code.fromAsset('dist/src/lambdas'),
+      handler: 'lambdas/intent-classification.handler',
+      code: lambda.Code.fromAsset('dist/src'),
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
       role: lambdaExecutionRole,
@@ -344,6 +362,150 @@ export class VyaparVaaniStack extends cdk.Stack {
         
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Entity Extraction Lambda
+    const entityExtractionLambda = new lambda.Function(this, 'EntityExtractionLambda', {
+      functionName: 'vyapar-vaani-entity-extraction',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/entity-extraction.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // WhatsApp Webhook Handler Lambda
+    const webhookLambdaRole = new iam.Role(this, 'WebhookLambdaRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+      ],
+    });
+
+    // Grant webhook Lambda permissions
+    this.dataTable.grantReadWriteData(webhookLambdaRole);
+    this.kycBucket.grantReadWrite(webhookLambdaRole);
+    this.productsBucket.grantReadWrite(webhookLambdaRole);
+    this.eventBus.grantPutEventsTo(webhookLambdaRole);
+    this.encryptionKey.grantEncryptDecrypt(webhookLambdaRole);
+
+    const whatsappWebhookLambda = new lambda.Function(this, 'WhatsAppWebhookLambda', {
+      functionName: 'vyapar-vaani-whatsapp-webhook',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/whatsapp-webhook-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: webhookLambdaRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN || 'vyapar-vaani-webhook-token',
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // HTTP API Gateway for WhatsApp Webhook
+    this.httpApi = new apigatewayv2.HttpApi(this, 'WhatsAppWebhookApi', {
+      apiName: 'vyapar-vaani-whatsapp-webhook',
+      description: 'WhatsApp webhook endpoint for Vyapar-Vaani',
+      corsPreflight: {
+        allowOrigins: ['*'],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.POST],
+        allowHeaders: ['*'],
+      },
+    });
+
+    // Lambda integration
+    const webhookIntegration = new HttpLambdaIntegration('WhatsAppWebhookIntegration', whatsappWebhookLambda);
+
+    // Add routes
+    this.httpApi.addRoutes({
+      path: '/whatsapp/webhook',
+      methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
+      integration: webhookIntegration,
+    });
+
+    // EventBridge Rules to wire up the complete flow
+    
+    // Rule 1: Text messages → Intent Classification
+    new events.Rule(this, 'TextMessageRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_TEXT],
+      },
+      targets: [new targets.LambdaFunction(intentClassificationLambda)],
+    });
+
+    // Rule 2: Voice messages → Voice Transcription
+    new events.Rule(this, 'VoiceMessageRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_VOICE],
+      },
+      targets: [new targets.LambdaFunction(voiceTranscriptionLambda)],
+    });
+
+    // Rule 3: Image messages → Image Enhancement
+    const imageEnhancementLambda = new lambda.Function(this, 'ImageEnhancementLambda', {
+      functionName: 'vyapar-vaani-image-enhancement',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/image-enhancement.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 1024,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    new events.Rule(this, 'ImageMessageRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE],
+      },
+      targets: [new targets.LambdaFunction(imageEnhancementLambda)],
+    });
+
+    // Rule 4: Intent classified → Entity Extraction
+    new events.Rule(this, 'IntentClassifiedRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: ['vyapar.vaani.internal'],
+        detailType: ['intent.classified'],
+      },
+      targets: [new targets.LambdaFunction(entityExtractionLambda)],
+    });
+
+    // Rule 5: WhatsApp message send events → WhatsApp Sender
+    new events.Rule(this, 'WhatsAppSendRule', {
+      eventBus: this.eventBus,
+      eventPattern: {
+        source: ['vyapar.vaani.internal'],
+        detailType: ['whatsapp.message.send'],
+      },
+      targets: [new targets.LambdaFunction(whatsappSenderLambda)],
     });
 
     // Step Functions State Machine for KYC Processing
@@ -437,6 +599,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       tracingEnabled: true,
     });
 
+    // Update webhook Lambda with state machine ARN
+    whatsappWebhookLambda.addEnvironment('KYC_STATE_MACHINE_ARN', this.kycProcessingStateMachine.stateMachineArn);
+    
+    // Grant webhook Lambda permission to start state machine executions
+    this.kycProcessingStateMachine.grantStartExecution(webhookLambdaRole);
+
     // Add retry logic with exponential backoff to Lambda tasks
     extractDocumentTask.addRetry({
       errors: ['States.TaskFailed', 'States.Timeout', 'Lambda.ServiceException'],
@@ -514,6 +682,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       value: this.kycProcessingStateMachine.stateMachineArn,
       description: 'KYC Processing Step Functions state machine ARN',
       exportName: 'VyaparVaaniKYCStateMachineArn',
+    });
+
+    new cdk.CfnOutput(this, 'WhatsAppWebhookUrl', {
+      value: `${this.httpApi.url}whatsapp/webhook`,
+      description: 'WhatsApp webhook URL for Meta Developer Portal',
+      exportName: 'VyaparVaaniWhatsAppWebhookUrl',
     });
   }
 }

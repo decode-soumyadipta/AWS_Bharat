@@ -21,6 +21,7 @@ function getWhatsAppConfig() {
   return {
     endpoint: process.env.WHATSAPP_API_ENDPOINT || '',
     phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
   };
 }
 
@@ -263,7 +264,7 @@ async function sendMessage(
   const config = getWhatsAppConfig();
   
   // Validate required configuration
-  if (!config.endpoint || !config.phoneNumberId) {
+  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
     throw new Error('WhatsApp API configuration missing');
   }
 
@@ -271,12 +272,13 @@ async function sendMessage(
   const payload = constructWhatsAppPayload(message);
 
   try {
-    // In a real implementation, this would use AWS SDK for End User Messaging
-    // For now, we'll use a placeholder that simulates the API call
-    const response = await fetch(`${config.endpoint}/messages`, {
+    // Call WhatsApp Business API
+    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.accessToken}`,
       },
       body: JSON.stringify(payload),
     });

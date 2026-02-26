@@ -17,7 +17,8 @@
  */
 
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { bedrockClient } from '../config/aws-clients';
+import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
+import { bedrockClient, eventBridgeClient } from '../config/aws-clients';
 import {
   EntityExtractionRequest,
   EntityExtractionResponse,
@@ -26,11 +27,12 @@ import {
   InventoryEntities,
   OrderEntities,
 } from '../models/intent';
+import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Claude 3.5 Sonnet model ID
+ * Claude 3 Haiku model ID - faster and more cost-effective
  */
-const CLAUDE_MODEL_ID = 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+const CLAUDE_MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
 
 /**
  * Maximum tokens for Claude response
@@ -41,24 +43,47 @@ const MAX_TOKENS = 1000;
  * Lambda handler for entity extraction
  */
 export const handler = async (
-  event: EntityExtractionRequest
+  event: any
 ): Promise<EntityExtractionResponse> => {
   console.log('Entity extraction request:', JSON.stringify(event, null, 2));
 
   try {
+    // Handle EventBridge event format
+    let transcribedText: string;
+    let intent: IntentType;
+    let phoneNumber: string;
+    let messageId: string;
+    let language: string;
+
+    if (event.detail) {
+      // EventBridge event from intent classification
+      transcribedText = event.detail.transcribedText || '';
+      intent = event.detail.intent;
+      phoneNumber = event.detail.phone || '';
+      messageId = event.detail.messageId || '';
+      language = event.detail.language || 'en';
+    } else {
+      // Direct invocation format
+      transcribedText = event.transcribedText || '';
+      intent = event.intent;
+      phoneNumber = event.phoneNumber || '';
+      messageId = event.messageId || '';
+      language = event.language || 'en';
+    }
+
     // Validate input
-    if (!event.transcribedText || event.transcribedText.trim().length === 0) {
+    if (!transcribedText || transcribedText.trim().length === 0) {
       throw new Error('Transcribed text is required');
     }
 
-    if (!event.intent) {
+    if (!intent) {
       throw new Error('Intent is required');
     }
 
     // Construct intent-specific prompt
     const prompt = constructEntityExtractionPrompt(
-      event.transcribedText,
-      event.intent
+      transcribedText,
+      intent
     );
     console.log('Constructed prompt for Claude');
 
@@ -67,7 +92,20 @@ export const handler = async (
     console.log('Claude response:', JSON.stringify(claudeResponse, null, 2));
 
     // Validate extracted entities
-    const validationResult = validateEntities(claudeResponse, event.intent);
+    const validationResult = validateEntities(claudeResponse, intent);
+
+    // Send response to user via WhatsApp
+    if (phoneNumber && messageId) {
+      await sendWhatsAppResponse({
+        phoneNumber,
+        messageId,
+        intent,
+        entities: claudeResponse,
+        language: language as 'hi' | 'mr' | 'en',
+        needsClarification: validationResult.missingFields.length > 0,
+        missingFields: validationResult.missingFields,
+      });
+    }
 
     return {
       success: true,
@@ -393,4 +431,97 @@ function validateOrderEntities(
   }
 
   return { missingFields };
+}
+
+/**
+ * Send WhatsApp response to user
+ */
+async function sendWhatsAppResponse(data: {
+  phoneNumber: string;
+  messageId: string;
+  intent: IntentType;
+  entities: Record<string, any>;
+  language: 'hi' | 'mr' | 'en';
+  needsClarification: boolean;
+  missingFields: string[];
+}): Promise<void> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured - skipping response');
+    return;
+  }
+
+  // Generate response message based on intent and entities
+  let responseText: string;
+
+  if (data.needsClarification) {
+    // Request clarification for missing fields
+    const messages = {
+      hi: `कृपया निम्नलिखित जानकारी प्रदान करें: ${data.missingFields.join(', ')}`,
+      mr: `कृपया खालील माहिती द्या: ${data.missingFields.join(', ')}`,
+      en: `Please provide the following information: ${data.missingFields.join(', ')}`,
+    };
+    responseText = messages[data.language];
+  } else {
+    // Confirm successful extraction
+    const messages = {
+      CREATE_CATALOG: {
+        hi: `✅ उत्पाद जोड़ा जा रहा है: ${data.entities.product_name}, कीमत: ₹${data.entities.price}`,
+        mr: `✅ उत्पादन जोडले जात आहे: ${data.entities.product_name}, किंमत: ₹${data.entities.price}`,
+        en: `✅ Adding product: ${data.entities.product_name}, price: ₹${data.entities.price}`,
+      },
+      UPDATE_INVENTORY: {
+        hi: `✅ स्टॉक अपडेट हो रहा है: ${data.entities.product_identifier}, नई मात्रा: ${data.entities.new_quantity}`,
+        mr: `✅ स्टॉक अपडेट होत आहे: ${data.entities.product_identifier}, नवीन प्रमाण: ${data.entities.new_quantity}`,
+        en: `✅ Updating stock: ${data.entities.product_identifier}, new quantity: ${data.entities.new_quantity}`,
+      },
+      ACCEPT_ORDER: {
+        hi: `✅ ऑर्डर स्वीकार किया जा रहा है: ${data.entities.order_id || 'नवीनतम'}`,
+        mr: `✅ ऑर्डर स्वीकारली जात आहे: ${data.entities.order_id || 'नवीनतम'}`,
+        en: `✅ Accepting order: ${data.entities.order_id || 'latest'}`,
+      },
+      REJECT_ORDER: {
+        hi: `❌ ऑर्डर अस्वीकार किया जा रहा है: ${data.entities.order_id || 'नवीनतम'}`,
+        mr: `❌ ऑर्डर नाकारली जात आहे: ${data.entities.order_id || 'नवीनतम'}`,
+        en: `❌ Rejecting order: ${data.entities.order_id || 'latest'}`,
+      },
+      UPDATE_FULFILLMENT: {
+        hi: `📦 ऑर्डर स्थिति अपडेट हो रही है: ${data.entities.action}`,
+        mr: `📦 ऑर्डर स्थिती अपडेट होत आहे: ${data.entities.action}`,
+        en: `📦 Updating order status: ${data.entities.action}`,
+      },
+      QUERY_STATUS: {
+        hi: `🔍 स्थिति की जांच की जा रही है...`,
+        mr: `🔍 स्थिती तपासली जात आहे...`,
+        en: `🔍 Checking status...`,
+      },
+    };
+
+    responseText = messages[data.intent][data.language];
+  }
+
+  // Publish event to send WhatsApp message
+  const command = new PutEventsCommand({
+    Entries: [
+      {
+        Source: EVENT_SOURCES.INTERNAL,
+        DetailType: 'whatsapp.message.send',
+        Detail: JSON.stringify({
+          to: data.phoneNumber,
+          type: 'text',
+          content: {
+            text: responseText,
+          },
+          language: data.language,
+        }),
+        EventBusName: eventBusName,
+      },
+    ],
+  });
+
+  const response = await eventBridgeClient.send(command);
+  console.log('Published WhatsApp response event:', {
+    phoneNumber: data.phoneNumber,
+    eventId: response.Entries?.[0]?.EventId,
+  });
 }

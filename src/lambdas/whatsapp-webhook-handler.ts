@@ -162,16 +162,19 @@ async function publishToEventBridge(inboundEvent: WhatsAppInboundEvent): Promise
  * Lambda handler for WhatsApp webhook
  */
 export async function handler(
-  event: APIGatewayProxyEvent
+  event: any
 ): Promise<APIGatewayProxyResult> {
   console.log('Received WhatsApp webhook:', JSON.stringify(event, null, 2));
 
   try {
+    // API Gateway v2 uses event.requestContext.http.method instead of event.httpMethod
+    const httpMethod = event.requestContext?.http?.method || event.httpMethod;
+    
     // Handle webhook verification (GET request)
-    if (event.httpMethod === 'GET') {
+    if (httpMethod === 'GET') {
       const verifyToken = event.queryStringParameters?.['hub.verify_token'];
       const challenge = event.queryStringParameters?.['hub.challenge'];
-      const expectedToken = process.env.WEBHOOK_VERIFY_TOKEN;
+      const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN;
 
       if (verifyToken === expectedToken && challenge) {
         console.log('Webhook verification successful');
@@ -189,27 +192,23 @@ export async function handler(
     }
 
     // Handle incoming messages (POST request)
-    if (event.httpMethod === 'POST') {
+    if (httpMethod === 'POST') {
       const webhookSecret = process.env.WEBHOOK_SECRET;
       
-      if (!webhookSecret) {
-        console.error('WEBHOOK_SECRET environment variable not set');
-        return {
-          statusCode: 500,
-          body: JSON.stringify({ error: 'Server configuration error' }),
-        };
-      }
+      // Validate webhook signature if secret is configured
+      if (webhookSecret) {
+        const signature = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'];
+        const isValid = validateWebhookSignature(event.body || '', signature, webhookSecret);
 
-      // Validate webhook signature
-      const signature = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'];
-      const isValid = validateWebhookSignature(event.body || '', signature, webhookSecret);
-
-      if (!isValid) {
-        console.warn('Invalid webhook signature');
-        return {
-          statusCode: 401,
-          body: JSON.stringify({ error: 'Invalid signature' }),
-        };
+        if (!isValid) {
+          console.warn('Invalid webhook signature');
+          return {
+            statusCode: 401,
+            body: JSON.stringify({ error: 'Invalid signature' }),
+          };
+        }
+      } else {
+        console.warn('WEBHOOK_SECRET not configured - skipping signature validation');
       }
 
       // Parse the message

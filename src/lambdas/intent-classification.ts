@@ -16,18 +16,20 @@
  */
 
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { bedrockClient } from '../config/aws-clients';
+import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
+import { bedrockClient, eventBridgeClient } from '../config/aws-clients';
 import {
   IntentClassificationRequest,
   IntentClassificationResponse,
   IntentType,
   ClaudeIntentResponse,
 } from '../models/intent';
+import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Claude 3.5 Sonnet model ID
+ * Claude 3 Haiku model ID - faster and more cost-effective
  */
-const CLAUDE_MODEL_ID = 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+const CLAUDE_MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
 
 /**
  * Confidence threshold for requiring clarification
@@ -43,18 +45,37 @@ const MAX_TOKENS = 500;
  * Lambda handler for intent classification
  */
 export const handler = async (
-  event: IntentClassificationRequest
+  event: any
 ): Promise<IntentClassificationResponse> => {
   console.log('Intent classification request:', JSON.stringify(event, null, 2));
 
   try {
+    // Handle EventBridge event format
+    let transcribedText: string;
+    let phoneNumber: string;
+    let messageId: string;
+    
+    if (event.detail && event.detail.content) {
+      // EventBridge event from WhatsApp webhook
+      transcribedText = event.detail.content.text || event.detail.content.transcribedText || '';
+      phoneNumber = event.detail.phone || '';
+      messageId = event.detail.messageId || '';
+    } else if (event.transcribedText) {
+      // Direct invocation format
+      transcribedText = event.transcribedText;
+      phoneNumber = event.phoneNumber || '';
+      messageId = event.messageId || '';
+    } else {
+      throw new Error('No text content found in event');
+    }
+
     // Validate input
-    if (!event.transcribedText || event.transcribedText.trim().length === 0) {
+    if (!transcribedText || transcribedText.trim().length === 0) {
       throw new Error('Transcribed text is required');
     }
 
     // Construct prompt for Claude
-    const prompt = constructIntentClassificationPrompt(event.transcribedText);
+    const prompt = constructIntentClassificationPrompt(transcribedText);
     console.log('Constructed prompt for Claude');
 
     // Call Claude via Bedrock
@@ -71,6 +92,19 @@ export const handler = async (
       console.log(
         `Low confidence (${confidence}) - clarification needed`
       );
+    }
+
+    // Publish intent classified event to EventBridge
+    if (phoneNumber && messageId) {
+      await publishIntentClassifiedEvent({
+        messageId,
+        phoneNumber,
+        transcribedText,
+        intent,
+        confidence,
+        language,
+        needsClarification,
+      });
     }
 
     return {
@@ -232,4 +266,49 @@ function validateIntentResponse(response: ClaudeIntentResponse): void {
   if (!response.language || !validLanguages.includes(response.language)) {
     throw new Error(`Invalid language: ${response.language}`);
   }
+}
+
+/**
+ * Publish intent classified event to EventBridge
+ */
+async function publishIntentClassifiedEvent(data: {
+  messageId: string;
+  phoneNumber: string;
+  transcribedText: string;
+  intent: IntentType;
+  confidence: number;
+  language: string;
+  needsClarification: boolean;
+}): Promise<void> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured - skipping event publication');
+    return;
+  }
+
+  const command = new PutEventsCommand({
+    Entries: [
+      {
+        Source: EVENT_SOURCES.INTERNAL,
+        DetailType: INTERNAL_EVENT_TYPES.INTENT_CLASSIFIED,
+        Detail: JSON.stringify({
+          messageId: data.messageId,
+          phone: data.phoneNumber,
+          transcribedText: data.transcribedText,
+          intent: data.intent,
+          confidence: data.confidence,
+          language: data.language,
+          needsClarification: data.needsClarification,
+        }),
+        EventBusName: eventBusName,
+      },
+    ],
+  });
+
+  const response = await eventBridgeClient.send(command);
+  console.log('Published intent classified event:', {
+    messageId: data.messageId,
+    intent: data.intent,
+    eventId: response.Entries?.[0]?.EventId,
+  });
 }
