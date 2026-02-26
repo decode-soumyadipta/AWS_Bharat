@@ -86,8 +86,8 @@ test_webhook_verification() {
     local response=$(curl -s -w "\n%{http_code}" \
         "${WEBHOOK_URL}?hub.mode=subscribe&hub.verify_token=test123&hub.challenge=test-challenge")
     
-    local body=$(echo "$response" | head -n -1)
     local status=$(echo "$response" | tail -n 1)
+    local body=$(echo "$response" | sed '$d')
     
     if [ "$status" = "200" ] && [ "$body" = "test-challenge" ]; then
         print_success "Webhook verification working"
@@ -522,7 +522,8 @@ main() {
     echo -e "${YELLOW}Test phone number: $TEST_PHONE${NC}"
     echo -e "${YELLOW}Webhook URL: $WEBHOOK_URL${NC}"
     echo ""
-    read -p "Press Enter to start tests..."
+    echo -e "${GREEN}Starting tests...${NC}"
+    echo ""
     
     # Infrastructure Tests
     print_header "PHASE 1: INFRASTRUCTURE HEALTH CHECK"
