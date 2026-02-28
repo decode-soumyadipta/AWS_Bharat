@@ -18,7 +18,8 @@ export type IntentType =
   | 'ACCEPT_ORDER'
   | 'REJECT_ORDER'
   | 'UPDATE_FULFILLMENT'
-  | 'QUERY_STATUS';
+  | 'QUERY_STATUS'
+  | 'CONFIRM_CATALOG';
 
 /**
  * Intent classification request

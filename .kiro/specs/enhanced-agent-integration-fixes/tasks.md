@@ -1,0 +1,150 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Fault Condition** - Enhanced Agent Integration Failures
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bugs exist
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bugs exist
+  - **Scoped PBT Approach**: Scope the property to concrete failing cases: button clicks, voice confirmations, market price queries, typing indicators, language switching, and Bengali support
+  - Test implementation details from Fault Condition in design:
+    - Verify agent-handler.ts imports from enhanced-agent.ts (not personal-agent.ts)
+    - Verify web-search.ts file exists at src/tools/web-search.ts
+    - Verify sendTypingIndicator is exported from whatsapp-message-sender.ts
+    - Verify CONFIRM_CATALOG is in the valid intents list in intent-classification.ts
+    - Verify button clicks trigger enhanced agent processing
+    - Verify voice confirmations are recognized as CONFIRM_CATALOG intent
+    - Verify market price queries execute web search
+    - Verify typing indicators display before agent responses
+    - Verify language switching works (Hindi ↔ English ↔ Marathi ↔ Bengali)
+    - Verify Bengali voice messages are processed correctly
+  - The test assertions should match the Expected Behavior Properties from design
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bugs exist)
+  - Document counterexamples found to understand root causes:
+    - agent-handler imports personal-agent instead of enhanced-agent
+    - web-search.ts file does not exist
+    - sendTypingIndicator is not exported
+    - CONFIRM_CATALOG is not in valid intents list
+    - Button clicks return generic text instead of enhanced agent features
+  - Mark task complete when test is written, run, and failures are documented
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Existing Workflow Behavior
+  - **IMPORTANT**: Follow observation-first methodology
+  - Observe behavior on UNFIXED code for non-buggy inputs (regular voice messages, image uploads, KYC documents)
+  - Write property-based tests capturing observed behavior patterns from Preservation Requirements:
+    - Voice transcription continues to convert audio to text with Hindi support
+    - Entity extraction continues to identify product names, quantities, prices
+    - Catalog builder continues to validate and structure catalog data per ONDC standards
+    - KYC document processing continues to handle identity documents
+    - State manager continues to track conversation state
+    - Media download and image enhancement continue to process product photos
+    - WhatsApp webhook routing continues to direct messages appropriately
+    - DynamoDB repository continues to maintain data persistence
+    - ONDC schema validation continues to enforce Beckn protocol requirements
+    - Existing text message handling continues to work as before
+  - Property-based testing generates many test cases for stronger guarantees
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10_
+
+- [ ] 3. Fix for enhanced agent integration issues
+
+  - [x] 3.1 Update agent-handler.ts to use enhanced-agent
+    - Change import statement at line 12 from personal-agent to enhanced-agent
+    - Replace `processWithAgent` with `processWithEnhancedAgent`
+    - Replace `sendAgentMessage` with `sendEnhancedAgentMessage`
+    - Update all function calls to use enhanced agent functions
+    - Remove extractProductInfo call (lines 82-88) as enhanced agent handles this internally
+    - _Bug_Condition: isBugCondition(input) where input.type IN ['button_click', 'voice_message'] AND (containsConfirmationPhrase OR containsMarketPriceQuery OR agentProcessingMessage)_
+    - _Expected_Behavior: Enhanced agent with dynamic language switching, web search, typing indicators, and Bengali support is used for all message processing_
+    - _Preservation: Regular voice messages, image uploads, KYC documents, order queries continue to work unchanged_
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10_
+
+  - [x] 3.2 Create web-search.ts tool
+    - Create new file at src/tools/web-search.ts
+    - Implement remote_web_search function that accepts query parameter
+    - Return array of search results with snippet and url properties
+    - Handle errors gracefully and return empty array on failure
+    - Export remote_web_search function for use by enhanced-agent
+    - Use appropriate search API (Brave Search API, SerpAPI, or custom implementation)
+    - _Bug_Condition: isBugCondition(input) where input.type == 'voice_message' AND containsMarketPriceQuery(input.text)_
+    - _Expected_Behavior: Market price queries execute web search and return results with sources_
+    - _Preservation: Existing functionality unaffected_
+    - _Requirements: 2.3, 2.4, 2.5_
+
+  - [x] 3.3 Export sendTypingIndicator from whatsapp-message-sender.ts
+    - Add sendTypingIndicator to the export list in whatsapp-message-sender.ts
+    - Function already exists at line 89, just needs to be exported
+    - Ensure it's exported alongside sendTextMessage, sendImageMessage, etc.
+    - _Bug_Condition: isBugCondition(input) where agentProcessingMessage == true_
+    - _Expected_Behavior: Typing indicators display before agent responses_
+    - _Preservation: Existing message sending functionality unaffected_
+    - _Requirements: 2.6_
+
+  - [x] 3.4 Add CONFIRM_CATALOG intent to intent-classification.ts
+    - Update line 109 in constructIntentClassificationPrompt to add CONFIRM_CATALOG intent
+    - Add description: "User confirms/accepts the catalog creation (e.g., 'swikar hai', 'yes', 'accept', 'ok')"
+    - Update line 138 in validateIntentResponse to add 'CONFIRM_CATALOG' to validIntents array
+    - _Bug_Condition: isBugCondition(input) where input.type == 'voice_message' AND containsConfirmationPhrase(input.text)_
+    - _Expected_Behavior: Voice confirmations are recognized as CONFIRM_CATALOG intent_
+    - _Preservation: Existing intent classification for other intents unaffected_
+    - _Requirements: 2.7, 2.8_
+
+  - [x] 3.5 Add CONFIRM_CATALOG to IntentType in models/intent.ts
+    - Add 'CONFIRM_CATALOG' to the IntentType union type definition
+    - Ensure TypeScript recognizes it as a valid intent throughout the codebase
+    - _Bug_Condition: isBugCondition(input) where input.type == 'voice_message' AND containsConfirmationPhrase(input.text)_
+    - _Expected_Behavior: CONFIRM_CATALOG is a valid intent type in the type system_
+    - _Preservation: Existing intent types unaffected_
+    - _Requirements: 2.7, 2.8_
+
+  - [x] 3.6 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Enhanced Agent Integration Works
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bugs are fixed)
+    - Verify all assertions pass:
+      - agent-handler.ts imports from enhanced-agent.ts
+      - web-search.ts file exists and exports remote_web_search
+      - sendTypingIndicator is exported from whatsapp-message-sender.ts
+      - CONFIRM_CATALOG is in the valid intents list
+      - Button clicks trigger enhanced agent processing
+      - Voice confirmations are recognized as CONFIRM_CATALOG intent
+      - Market price queries execute web search
+      - Typing indicators display before agent responses
+      - Language switching works for all supported languages
+      - Bengali voice messages are processed correctly
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10_
+
+  - [x] 3.7 Verify preservation tests still pass
+    - **Property 2: Preservation** - Existing Workflow Behavior Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix:
+      - Voice transcription works for regular voice messages
+      - Entity extraction identifies product entities correctly
+      - Catalog builder validates and structures catalog data
+      - KYC document processing handles identity documents
+      - State manager tracks conversation state
+      - Media download and image enhancement process photos
+      - WhatsApp webhook routing directs messages appropriately
+      - DynamoDB repository maintains data persistence
+      - ONDC schema validation enforces Beckn protocol
+      - Existing text message handling works as before
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run all unit tests, property-based tests, and integration tests
+  - Verify bug condition exploration test passes (confirms bugs are fixed)
+  - Verify preservation tests pass (confirms no regressions)
+  - Verify enhanced agent features work: language switching, web search, typing indicators, Bengali support
+  - Verify button clicks, voice confirmations, and market price queries work correctly
+  - Verify existing workflows (voice transcription, entity extraction, catalog building, KYC, media processing) are unchanged
+  - Ask the user if questions arise

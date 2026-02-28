@@ -58,7 +58,23 @@ export const handler = async (event: any): Promise<any> => {
 
   try {
     const eventDetail = event.detail || event;
-    const { phone, action, field } = eventDetail;
+    let { phone, action, field } = eventDetail;
+
+    // Extract button payload if this is a button click event
+    if (eventDetail.content?.buttonPayload) {
+      const buttonPayload = eventDetail.content.buttonPayload;
+      console.log('Button clicked:', buttonPayload);
+      
+      // Map button payload to action
+      if (buttonPayload === 'approve') {
+        action = 'approve';
+      } else if (buttonPayload === 'edit_quantity') {
+        action = 'edit';
+        field = 'quantity';
+      } else if (buttonPayload === 'view_products') {
+        action = 'view_products';
+      }
+    }
 
     if (!phone) {
       throw new Error('Phone number is required');
@@ -85,6 +101,9 @@ export const handler = async (event: any): Promise<any> => {
       
       case 'edit':
         return await processEdit(phone, field, userState.language);
+      
+      case 'view_products':
+        return await viewProducts(phone, userState.language);
       
       default:
         throw new Error(`Unknown action: ${action}`);
@@ -145,7 +164,7 @@ export async function generateConfirmation(
     },
   ];
 
-  // Send enhanced image with caption FIRST
+  // Send enhanced image with caption FIRST (no typing indicator)
   const { sendImageMessage } = await import('./whatsapp-message-sender');
   const imageUrl = partialData.enhancedImageUrl || partialData.originalImageUrl;
   
@@ -196,6 +215,9 @@ export async function generateConfirmation(
       textSummary,
       lang.split('-')[0] as 'hi' | 'mr' | 'en'
     );
+    
+    // Wait 2 seconds to ensure image is delivered first
+    await new Promise(resolve => setTimeout(resolve, 2000));
     
     // Then send interactive buttons below the image
     await sendInteractiveMessage(
@@ -380,4 +402,25 @@ export async function processEdit(
   });
 
   console.log('Sent edit prompt and updated state to VOICE_RECEIVED');
+}
+
+/**
+ * View existing products
+ */
+export async function viewProducts(
+  phone: string,
+  language?: SupportedLanguage
+): Promise<void> {
+  const lang = getLanguagePreference(language);
+  
+  // TODO: Implement product listing from DynamoDB
+  const message = lang === 'hi-IN'
+    ? '📋 आपके उत्पाद जल्द ही दिखाए जाएंगे।'
+    : lang === 'mr-IN'
+    ? '📋 तुमची उत्पादने लवकरच दाखवली जातील.'
+    : '📋 Your products will be shown soon.';
+  
+  await sendTextMessage(phone, message, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+  
+  console.log('Sent view products message');
 }

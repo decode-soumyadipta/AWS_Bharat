@@ -21,6 +21,13 @@ import { getUserState, updateUserState } from '../services/state-manager';
 import { getPartialData, mergePartialData, isPartialDataComplete } from '../services/partial-data-store';
 import { storeLanguagePreference, detectLanguage } from '../services/language-manager';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
+import { 
+  addConversationMessage, 
+  getConversationContext, 
+  generateContextualGreeting,
+  generateContextualResponse,
+  updateUserPreferences
+} from '../services/conversation-memory';
 
 /**
  * Voice handler event from WhatsApp webhook
@@ -107,6 +114,17 @@ export const handler = async (
       detectedLanguage,
     });
 
+    // Track user message in conversation history
+    await addConversationMessage(phone, {
+      timestamp: Date.now(),
+      role: 'user',
+      content: transcription,
+      messageType: 'voice',
+    });
+
+    // Get conversation context for personalized responses
+    const conversationContext = await getConversationContext(phone);
+
     // Step 3: Store detected language in user profile
     if (detectedLanguage) {
       console.log('Storing language preference:', detectedLanguage);
@@ -190,6 +208,43 @@ export const handler = async (
     const { entities, missingFields } = entityResult;
     console.log('Entities extracted:', { entities, missingFields });
 
+    // Track assistant understanding in conversation
+    await addConversationMessage(phone, {
+      timestamp: Date.now(),
+      role: 'assistant',
+      content: `Understood: ${intent}`,
+      intent,
+      entities,
+      messageType: 'text',
+    });
+
+    // Generate contextual response based on conversation history
+    const contextualResponse = generateContextualResponse(
+      conversationContext,
+      intent,
+      entities,
+      detectedLanguage || 'hi-IN'
+    );
+
+    // Update user preferences based on current interaction
+    if (entities.category) {
+      const existingCategories = conversationContext?.preferences.preferredCategories || [];
+      if (!existingCategories.includes(entities.category)) {
+        await updateUserPreferences(phone, {
+          preferredCategories: [...existingCategories, entities.category],
+        });
+      }
+    }
+
+    if (entities.price) {
+      const existingRange = conversationContext?.preferences.typicalPriceRange;
+      const newMin = existingRange ? Math.min(existingRange.min, entities.price) : entities.price;
+      const newMax = existingRange ? Math.max(existingRange.max, entities.price) : entities.price;
+      await updateUserPreferences(phone, {
+        typicalPriceRange: { min: newMin, max: newMax },
+      });
+    }
+
     // Step 6: Handle different intents
     if (intent === 'CREATE_CATALOG') {
       console.log('Merging entities with partial data...');
@@ -212,30 +267,53 @@ export const handler = async (
       let nextAction: 'REQUEST_INFO' | 'REQUEST_IMAGE' | 'ERROR';
 
       if (mergedData.missingFields.length > 0) {
-        // Still missing required fields - request more info
+        // Still missing required fields - request more info conversationally
         nextAction = 'REQUEST_INFO';
         await updateUserState(phone, 'VOICE_RECEIVED', {
           missingFields: mergedData.missingFields,
         });
 
-        // Publish event to trigger missing info handler
-        await publishMissingInfoEvent({
+        // Generate conversational missing info prompt
+        const { generateMissingFieldsPrompt } = await import('../services/language-manager');
+        const missingPrompt = generateMissingFieldsPrompt(
+          mergedData.missingFields,
+          detectedLanguage as 'hi-IN' | 'mr-IN' | 'en-IN'
+        );
+        
+        // Add contextual response if available
+        const finalPrompt = contextualResponse 
+          ? `${contextualResponse}\n\n${missingPrompt}`
+          : missingPrompt;
+        
+        // Send the prompt immediately
+        const { sendTextMessage } = await import('./whatsapp-message-sender');
+        await sendTextMessage(
           phone,
-          messageId,
-          missingFields: mergedData.missingFields,
-          language: detectedLanguage || 'hi-IN',
-        });
+          finalPrompt,
+          detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
+        );
+        
+        console.log('Sent missing fields prompt:', finalPrompt);
       } else {
         // All required fields present - request product image
         nextAction = 'REQUEST_IMAGE';
         await updateUserState(phone, 'IMAGE_PENDING');
 
-        // Publish event to request image
-        await publishImageRequestEvent({
+        // Send image request message immediately
+        const { sendTextMessage } = await import('./whatsapp-message-sender');
+        const imageRequestMsg = detectedLanguage === 'hi-IN'
+          ? '📸 बहुत अच्छा! अब कृपया उत्पाद की फोटो भेजें।'
+          : detectedLanguage === 'mr-IN'
+          ? '📸 खूप छान! आता कृपया उत्पादाचा फोटो पाठवा.'
+          : '📸 Great! Now please send the product photo.';
+        
+        await sendTextMessage(
           phone,
-          messageId,
-          language: detectedLanguage || 'hi-IN',
-        });
+          imageRequestMsg,
+          detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
+        );
+        
+        console.log('Sent image request message');
       }
 
       return {

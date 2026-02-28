@@ -32,12 +32,13 @@ import {
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Amazon Nova Lite model ID - faster, cost-effective, no marketplace subscription needed
+ * Amazon Nova Pro - high-quality model without payment instrument requirements
+ * Provides excellent accuracy for entity extraction
  */
-const MODEL_ID = 'amazon.nova-lite-v1:0';
+const MODEL_ID = 'amazon.nova-pro-v1:0';
 
 /**
- * Maximum tokens for Claude response
+ * Maximum tokens for Nova response
  */
 const MAX_TOKENS = 1000;
 
@@ -350,10 +351,10 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }
 
 /**
- * Invoke Amazon Nova model via Amazon Bedrock
+ * Invoke Amazon Nova Pro via Amazon Bedrock
  */
 async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
-  // Construct request body for Nova (Converse API format)
+  // Construct request body for Nova Messages API format
   const requestBody = {
     messages: [
       {
@@ -371,7 +372,7 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
     },
   };
 
-  console.log('Invoking Nova model:', MODEL_ID);
+  console.log('Invoking Amazon Nova Pro:', MODEL_ID);
 
   // Invoke model
   const command = new InvokeModelCommand({
@@ -391,13 +392,12 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
   console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Nova response (Converse API format)
-  const output = responseBody.output;
-  if (!output || !output.message || !output.message.content) {
+  // Extract text from Nova response format
+  if (!responseBody.output?.message?.content || !Array.isArray(responseBody.output.message.content)) {
     throw new Error('No content in Nova response');
   }
 
-  const textContent = output.message.content[0]?.text;
+  const textContent = responseBody.output.message.content.find((item: any) => item.text)?.text;
   if (!textContent) {
     throw new Error('No text in Nova response content');
   }
@@ -658,6 +658,11 @@ async function sendWhatsAppResponse(data: {
         hi: `🔍 स्थिति की जांच की जा रही है...`,
         mr: `🔍 स्थिती तपासली जात आहे...`,
         en: `🔍 Checking status...`,
+      },
+      CONFIRM_CATALOG: {
+        hi: `✅ कैटलॉग की पुष्टि हो रही है...`,
+        mr: `✅ कॅटलॉग पुष्टी होत आहे...`,
+        en: `✅ Confirming catalog...`,
       },
     };
 

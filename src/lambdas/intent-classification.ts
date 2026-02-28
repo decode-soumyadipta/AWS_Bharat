@@ -27,9 +27,10 @@ import {
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Amazon Nova Lite model ID - faster, cost-effective, no marketplace subscription needed
+ * Amazon Nova Pro - high-quality model without payment instrument requirements
+ * Provides excellent accuracy for intent classification
  */
-const MODEL_ID = 'amazon.nova-lite-v1:0';
+const MODEL_ID = 'amazon.nova-pro-v1:0';
 
 /**
  * Confidence threshold for requiring clarification
@@ -37,7 +38,7 @@ const MODEL_ID = 'amazon.nova-lite-v1:0';
 const CONFIDENCE_THRESHOLD = 0.7;
 
 /**
- * Maximum tokens for Claude response
+ * Maximum tokens for Nova response
  */
 const MAX_TOKENS = 500;
 
@@ -143,6 +144,7 @@ Classify the following transcribed voice note into ONE of these intents:
 - REJECT_ORDER: User wants to reject an order
 - UPDATE_FULFILLMENT: User wants to update order status (packed, shipped, delivered)
 - QUERY_STATUS: User wants to check order or catalog status
+- CONFIRM_CATALOG: User confirms/accepts the catalog creation (e.g., 'swikar hai', 'yes', 'accept', 'ok')
 
 Transcription: ${transcribedText}
 
@@ -154,7 +156,7 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }
 
 Rules:
-- intent must be one of the seven options listed above
+- intent must be one of the nine options listed above
 - confidence must be a number between 0.0 and 1.0
 - language should be "hi" for Hindi, "mr" for Marathi, or "en" for English
 - UPDATE_PRICE is specifically for price changes during product creation/confirmation
@@ -163,10 +165,10 @@ Rules:
 }
 
 /**
- * Invoke Amazon Nova model via Amazon Bedrock
+ * Invoke Amazon Nova Pro via Amazon Bedrock
  */
 async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> {
-  // Construct request body for Nova (Converse API format)
+  // Construct request body for Nova Messages API format
   const requestBody = {
     messages: [
       {
@@ -184,7 +186,7 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
     },
   };
 
-  console.log('Invoking Nova model:', MODEL_ID);
+  console.log('Invoking Amazon Nova Pro:', MODEL_ID);
 
   // Invoke model
   const command = new InvokeModelCommand({
@@ -204,13 +206,12 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
   console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Nova response (Converse API format)
-  const output = responseBody.output;
-  if (!output || !output.message || !output.message.content) {
+  // Extract text from Nova response format
+  if (!responseBody.output?.message?.content || !Array.isArray(responseBody.output.message.content)) {
     throw new Error('No content in Nova response');
   }
 
-  const textContent = output.message.content[0]?.text;
+  const textContent = responseBody.output.message.content.find((item: any) => item.text)?.text;
   if (!textContent) {
     throw new Error('No text in Nova response content');
   }
@@ -259,6 +260,7 @@ function validateIntentResponse(response: ClaudeIntentResponse): void {
     'REJECT_ORDER',
     'UPDATE_FULFILLMENT',
     'QUERY_STATUS',
+    'CONFIRM_CATALOG',
   ];
 
   if (!response.intent || !validIntents.includes(response.intent)) {

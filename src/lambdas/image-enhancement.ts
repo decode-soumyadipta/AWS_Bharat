@@ -91,19 +91,22 @@ export interface ImageEnhancementResponse {
  * Titan Image Generator v2 request structure
  */
 interface TitanImageRequest {
-  taskType: 'IMAGE_VARIATION';
-  imageVariationParams: {
+  taskType: 'IMAGE_VARIATION' | 'BACKGROUND_REMOVAL';
+  imageVariationParams?: {
     images: string[]; // Base64 encoded images
     text: string; // Positive prompt
     negativeText: string; // Negative prompt
     similarityStrength: number; // 0.0-1.0, higher = more preservation
+  };
+  backgroundRemovalParams?: {
+    image: string; // Base64 encoded image
   };
   imageGenerationConfig: {
     numberOfImages: number;
     quality: 'standard' | 'premium';
     height: number;
     width: number;
-    cfgScale: number; // Guidance scale
+    cfgScale?: number; // Guidance scale
     seed?: number; // For reproducibility
   };
 }
@@ -147,21 +150,17 @@ export const handler = async (
     console.log('Positive prompt:', positivePrompt);
     console.log('Negative prompt:', negativePrompt);
 
-    // Construct Titan Image Generator v2 request with controlled preservation
+    // Use BACKGROUND_REMOVAL to preserve product completely, then add solid background
     const titanRequest: TitanImageRequest = {
-      taskType: 'IMAGE_VARIATION',
-      imageVariationParams: {
-        images: [base64Image],
-        text: positivePrompt,
-        negativeText: negativePrompt,
-        similarityStrength: 0.85, // Balanced - preserve product but allow visible background changes (85% similarity)
+      taskType: 'BACKGROUND_REMOVAL',
+      backgroundRemovalParams: {
+        image: base64Image,
       },
       imageGenerationConfig: {
         numberOfImages: 1,
         quality: 'premium',
         height: 1024,
         width: 1024,
-        cfgScale: 7.5, // Higher guidance for more noticeable background transformation
       },
     };
 
@@ -303,31 +302,33 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
 
 /**
  * Generate positive prompt for professional product photography
- * CRITICAL: Transform background completely while preserving product exactly
+ * CRITICAL: Complete background transformation with solid colors, preserve product exactly
+ * If image has no labels/stickers, add minimal appropriate product label
  */
 function generatePositivePrompt(
   productName: string,
   productCategory?: string
 ): string {
-  // Strong prompt for visible background transformation with solid colors
-  let prompt = 'Professional product photography, solid color background, studio lighting setup';
+  // Strong prompt for dramatic background transformation
+  let prompt = 'Professional product photography, solid color background, studio lighting, clean backdrop';
 
-  // Add context-appropriate background based on category
+  // Add context-appropriate solid color background
   if (productCategory) {
     const category = productCategory.toLowerCase();
     if (category.includes('food') || category.includes('grocery')) {
-      prompt += ', clean solid white background, bright natural lighting, food photography style';
+      prompt += ', pure white background, bright lighting, food photography, white studio backdrop';
     } else if (category.includes('handicraft') || category.includes('textile')) {
-      prompt += ', solid warm beige background, soft diffused lighting, craft photography style';
+      prompt += ', warm beige background, soft lighting, craft photography, beige studio backdrop';
     } else {
-      prompt += ', solid neutral gray background, professional studio lighting, commercial photography style';
+      prompt += ', light gray background, professional lighting, commercial photography, gray studio backdrop';
     }
   } else {
-    prompt += ', solid light gray background, professional studio lighting, commercial product photography';
+    prompt += ', neutral gray background, studio lighting, commercial product photography, gray backdrop';
   }
 
-  // Add strong quality descriptors for background transformation
-  prompt += ', high-end product photography, professional backdrop, studio quality lighting, commercial grade photography';
+  // Add minimal product label/sticker if missing
+  prompt += ', replace background completely, solid color only, no patterns, no textures, plain backdrop, professional studio setup';
+  prompt += `, add minimal elegant product label with "${productName}" text if no label present, small corner label, professional branding`;
 
   return prompt;
 }
@@ -335,9 +336,11 @@ function generatePositivePrompt(
 /**
  * Generate negative prompt to prevent ANY product modifications
  * CRITICAL: Prevent ALL changes to product, labels, text, colors, shape
+ * MAX LENGTH: 512 characters for Titan Image Generator v2
  */
 function generateNegativePrompt(): string {
-  return 'modified product, changed product, altered product, different product, changed labels, altered text, modified text, different text, blurred text, unclear text, removed text, hidden text, different colors, changed colors, distorted shape, changed shape, fake appearance, unrealistic product, cartoon, illustration, painting, artistic style, changed packaging, modified branding, altered design, extra objects, added objects, watermarks, blurry product, low quality product, deformed product, changed product features, modified text on product, altered labels on product, different product appearance, changed product details, modified product surface, altered product texture, different product material, changed product size, modified product proportions';
+  // Shortened to fit 512 char limit while preserving key constraints
+  return 'modified product, altered product, changed labels, modified text, blurred text, removed text, different colors, distorted shape, fake appearance, unrealistic, cartoon, illustration, painting, artistic, changed packaging, modified branding, extra objects, watermarks, blurry, low quality, deformed, changed features, altered appearance, modified surface, different material, changed size, modified proportions, pattern background, textured background, busy background';
 }
 
 /**
