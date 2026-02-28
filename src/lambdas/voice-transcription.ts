@@ -127,6 +127,15 @@ function parseS3Url(url: string): { bucket: string; key: string } {
     };
   }
 
+  // Handle https://s3.region.amazonaws.com/bucket/key URLs (Amazon Transcribe format)
+  if (url.includes('s3.') && url.includes('.amazonaws.com/') && !url.match(/^https:\/\/[^.]+\.s3\./)) {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.substring(1).split('/'); // Remove leading / and split
+    const bucket = pathParts[0];
+    const key = pathParts.slice(1).join('/');
+    return { bucket, key };
+  }
+
   // Handle https://bucket.s3.region.amazonaws.com/key URLs
   if (url.includes('.s3.') && url.includes('.amazonaws.com/')) {
     const urlObj = new URL(url);
@@ -181,6 +190,15 @@ async function startTranscriptionJob(
     params.IdentifyLanguage = true;
     params.LanguageOptions = SUPPORTED_LANGUAGES as LanguageCode[];
   }
+
+  // Enable improved transcription settings for better accuracy
+  params.Settings = {
+    ShowSpeakerLabels: false, // Disable speaker labels since we don't need them
+    ChannelIdentification: false,
+    ShowAlternatives: false,
+    // Enable vocabulary filtering for better Hindi/Marathi transcription
+    VocabularyFilterMethod: 'remove' as any,
+  };
 
   console.log('Starting transcription job with params:', JSON.stringify(params, null, 2));
 

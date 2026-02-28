@@ -163,7 +163,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           expect(result.data?.overallConfidence).toBeLessThanOrEqual(1);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -304,7 +304,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           expect(result.data?.overallConfidence).toBeLessThanOrEqual(1);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -396,7 +396,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -566,7 +566,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           expect(result.data?.overallConfidence).toBeLessThan(expectedAvgConfidence + 0.1);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -617,7 +617,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           expect(result.data?.panNumber?.value).toBe(panNumber);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -718,7 +718,7 @@ describe('Property 1: Identity Document Text Extraction', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 });

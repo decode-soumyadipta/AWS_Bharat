@@ -2,9 +2,10 @@
  * WhatsApp Webhook Handler Lambda
  * 
  * This Lambda function receives incoming WhatsApp messages from AWS End User Messaging (Social),
- * validates webhook signatures, parses message content, and publishes events to EventBridge.
+ * validates webhook signatures, parses message content, routes based on user state,
+ * and publishes events to EventBridge.
  * 
- * Requirements: 2.1, 5.3
+ * Requirements: 2.1, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 5.3
  */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
@@ -12,6 +13,9 @@ import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { eventBridgeClient, EVENT_BUS_NAME } from '../config/aws-clients';
 import { EVENT_SOURCES, WHATSAPP_EVENT_TYPES } from '../config/event-patterns';
 import { WhatsAppInboundEvent, WhatsAppEventDetail } from '../models/whatsapp';
+import { getUserState, initializeNewUser, UserState } from '../services/state-manager';
+import { route, MessageType } from '../services/state-router';
+import { sendTextMessage } from './whatsapp-message-sender';
 import crypto from 'crypto';
 
 /**
@@ -56,23 +60,39 @@ function validateWebhookSignature(
  * @returns Parsed WhatsApp inbound event
  */
 function parseWhatsAppMessage(body: any): WhatsAppInboundEvent {
-  // Extract message details from AWS End User Messaging webhook payload
-  const message = body.message || body;
+  // Extract message details from Meta WhatsApp webhook payload
+  // Structure: body.entry[0].changes[0].value.messages[0]
+  const entry = body.entry?.[0];
+  const change = entry?.changes?.[0];
+  const value = change?.value;
+  
+  // Check if this is a status update (not a message)
+  if (value?.statuses && !value?.messages) {
+    throw new Error('Status update - not a message');
+  }
+  
+  const message = value?.messages?.[0];
+  const contact = value?.contacts?.[0];
+  
+  if (!message) {
+    throw new Error('No message found in webhook payload');
+  }
   
   return {
-    messageId: message.id || message.messageId || crypto.randomUUID(),
-    from: message.from || message.sender,
-    timestamp: message.timestamp || Date.now(),
-    type: message.type || determineMessageType(message),
+    messageId: message.id || crypto.randomUUID(),
+    from: message.from,
+    timestamp: parseInt(message.timestamp) * 1000 || Date.now(), // Convert to milliseconds
+    type: message.type || 'text',
     content: {
-      text: message.text?.body || message.content?.text,
-      mediaUrl: message.image?.url || message.audio?.url || message.content?.mediaUrl,
-      mimeType: message.image?.mime_type || message.audio?.mime_type || message.content?.mimeType,
-      buttonPayload: message.button?.payload || message.content?.buttonPayload,
+      text: message.text?.body,
+      mediaUrl: message.image?.id || message.audio?.id || message.video?.id,
+      mimeType: message.image?.mime_type || message.audio?.mime_type || message.video?.mime_type,
+      buttonPayload: message.button?.payload || message.interactive?.button_reply?.id,
+      buttonTitle: message.interactive?.button_reply?.title,
     },
     profile: {
-      name: message.profile?.name || message.from,
-      language: message.profile?.language,
+      name: contact?.profile?.name || message.from,
+      language: undefined, // Will be detected from message content
     },
   };
 }
@@ -81,15 +101,27 @@ function parseWhatsAppMessage(body: any): WhatsAppInboundEvent {
  * Determines message type from message content
  */
 function determineMessageType(message: any): 'text' | 'audio' | 'image' | 'button_reply' {
-  if (message.button || message.content?.buttonPayload) {
+  console.log('Determining message type for:', JSON.stringify(message, null, 2));
+  
+  // Check for interactive button reply
+  if (message.type === 'interactive' || message.content?.buttonPayload) {
+    console.log('Detected button_reply');
     return 'button_reply';
   }
-  if (message.audio || (message.content?.mimeType && message.content.mimeType.startsWith('audio/'))) {
+  
+  // Check for audio/voice message
+  if (message.type === 'audio' || message.audio || (message.content?.mimeType && message.content.mimeType.startsWith('audio/'))) {
+    console.log('Detected audio');
     return 'audio';
   }
-  if (message.image || (message.content?.mimeType && message.content.mimeType.startsWith('image/'))) {
+  
+  // Check for image
+  if (message.type === 'image' || message.image || (message.content?.mimeType && message.content.mimeType.startsWith('image/'))) {
+    console.log('Detected image');
     return 'image';
   }
+  
+  console.log('Defaulting to text');
   return 'text';
 }
 
@@ -111,11 +143,17 @@ function getEventDetailType(messageType: string): string {
 }
 
 /**
- * Publishes WhatsApp message event to EventBridge
+ * Publishes WhatsApp message event to EventBridge with state-based routing
  * 
  * @param inboundEvent - The parsed WhatsApp message
+ * @param userState - Current user state
+ * @param routeDecision - Routing decision from state router
  */
-async function publishToEventBridge(inboundEvent: WhatsAppInboundEvent): Promise<void> {
+async function publishToEventBridge(
+  inboundEvent: WhatsAppInboundEvent,
+  userState: UserState,
+  routeDecision: { handler: string; action: string; metadata?: Record<string, any> }
+): Promise<void> {
   const eventDetail: WhatsAppEventDetail = {
     messageId: inboundEvent.messageId,
     phone: inboundEvent.from,
@@ -123,7 +161,20 @@ async function publishToEventBridge(inboundEvent: WhatsAppInboundEvent): Promise
     messageType: inboundEvent.type,
     content: inboundEvent.content,
     profile: inboundEvent.profile,
+    // Add state routing information
+    state: userState.state,
+    handler: routeDecision.handler,
+    language: userState.language,
   };
+
+  console.log('Publishing event to EventBridge:', {
+    messageId: inboundEvent.messageId,
+    phone: inboundEvent.from,
+    messageType: inboundEvent.type,
+    state: userState.state,
+    handler: routeDecision.handler,
+    detailType: getEventDetailType(inboundEvent.type),
+  });
 
   const detailType = getEventDetailType(inboundEvent.type);
 
@@ -151,10 +202,33 @@ async function publishToEventBridge(inboundEvent: WhatsAppInboundEvent): Promise
       messageId: inboundEvent.messageId,
       detailType,
       phone: inboundEvent.from,
+      state: userState.state,
+      handler: routeDecision.handler,
     });
   } catch (error) {
     console.error('Error publishing to EventBridge:', error);
     throw error;
+  }
+}
+
+/**
+ * Send error guidance message to user
+ * 
+ * @param phone - User phone number
+ * @param guidanceMessage - Guidance message in user's language
+ */
+async function sendGuidanceMessage(phone: string, guidanceMessage: string): Promise<void> {
+  try {
+    const result = await sendTextMessage(phone, guidanceMessage);
+    
+    if (!result.success) {
+      console.error('Failed to send guidance message:', result.error);
+    } else {
+      console.log('Sent guidance message to user:', phone);
+    }
+  } catch (error) {
+    console.error('Error sending guidance message:', error);
+    // Don't throw - guidance message failure shouldn't block webhook processing
   }
 }
 
@@ -213,7 +287,21 @@ export async function handler(
 
       // Parse the message
       const body = JSON.parse(event.body || '{}');
-      const inboundEvent = parseWhatsAppMessage(body);
+      
+      let inboundEvent;
+      try {
+        inboundEvent = parseWhatsAppMessage(body);
+      } catch (error: any) {
+        // Handle status updates and other non-message webhooks
+        if (error.message.includes('Status update')) {
+          console.log('Received status update, ignoring');
+          return {
+            statusCode: 200,
+            body: JSON.stringify({ success: true, message: 'Status update received' }),
+          };
+        }
+        throw error; // Re-throw other errors
+      }
 
       console.log('Parsed WhatsApp message:', {
         messageId: inboundEvent.messageId,
@@ -221,12 +309,70 @@ export async function handler(
         type: inboundEvent.type,
       });
 
-      // Publish to EventBridge
-      await publishToEventBridge(inboundEvent);
+      // Determine actual message type (the type from webhook might not be accurate)
+      const actualMessageType = determineMessageType(inboundEvent);
+      console.log('Actual message type determined:', actualMessageType);
+      
+      // Update inbound event with correct type
+      inboundEvent.type = actualMessageType;
+
+      // Get or initialize user state
+      let userState = await getUserState(inboundEvent.from);
+      
+      if (!userState) {
+        console.log('New user detected, initializing state:', inboundEvent.from);
+        userState = await initializeNewUser(inboundEvent.from);
+      }
+
+      console.log('User state:', {
+        phone: userState.phone,
+        state: userState.state,
+        language: userState.language,
+      });
+
+      // Route message based on state and message type
+      const routeDecision = route(inboundEvent.type as MessageType, userState);
+
+      console.log('Route decision:', {
+        handler: routeDecision.handler,
+        action: routeDecision.action,
+        metadata: routeDecision.metadata,
+      });
+
+      // Handle error routing - send guidance message
+      if (routeDecision.handler === 'ERROR') {
+        const guidanceMessage = routeDecision.metadata?.guidanceMessage;
+        
+        if (guidanceMessage) {
+          await sendGuidanceMessage(inboundEvent.from, guidanceMessage);
+        }
+
+        console.log('Sent error guidance to user:', {
+          phone: inboundEvent.from,
+          currentState: userState.state,
+          receivedMessageType: inboundEvent.type,
+        });
+
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ 
+            success: true, 
+            messageId: inboundEvent.messageId,
+            action: 'guidance_sent',
+          }),
+        };
+      }
+
+      // Publish to EventBridge for processing
+      await publishToEventBridge(inboundEvent, userState, routeDecision);
 
       return {
         statusCode: 200,
-        body: JSON.stringify({ success: true, messageId: inboundEvent.messageId }),
+        body: JSON.stringify({ 
+          success: true, 
+          messageId: inboundEvent.messageId,
+          handler: routeDecision.handler,
+        }),
       };
     }
 

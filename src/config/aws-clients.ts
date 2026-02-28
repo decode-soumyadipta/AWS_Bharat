@@ -11,6 +11,7 @@ import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { RekognitionClient } from '@aws-sdk/client-rekognition';
 import { KMSClient } from '@aws-sdk/client-kms';
 import { SNSClient } from '@aws-sdk/client-sns';
+import { PollyClient } from '@aws-sdk/client-polly';
 
 // AWS Region configuration
 const AWS_REGION = process.env.AWS_REGION || 'ap-south-1';
@@ -59,6 +60,9 @@ export const kmsClient = new KMSClient({ region: AWS_REGION });
 
 // Amazon SNS Client
 export const snsClient = new SNSClient({ region: AWS_REGION });
+
+// Amazon Polly Client
+export const pollyClient = new PollyClient({ region: AWS_REGION });
 
 // Environment variables for resource names
 export const TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';

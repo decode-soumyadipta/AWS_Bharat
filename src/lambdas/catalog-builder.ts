@@ -99,13 +99,27 @@ const CATEGORY_MAPPING: Record<string, string> = {
  * Lambda handler for catalog builder
  */
 export const handler = async (
-  event: CatalogBuilderRequest
+  event: any
 ): Promise<CatalogBuilderResponse> => {
   console.log('Catalog builder request:', JSON.stringify(event, null, 2));
 
   try {
+    // Parse EventBridge event format
+    const eventDetail = event.detail || event;
+    const { entities, phone, messageId, intent, language } = eventDetail;
+
+    // Create minimal seller profile from phone number
+    const sellerProfile: Partial<SellerProfile> = {
+      sellerId: phone || 'unknown',
+      phone: phone || '',
+      name: `Seller ${phone}`,
+      language: (language as 'hi' | 'mr' | 'en') || 'en',
+    };
+
     // Validate input
-    validateCatalogBuilderRequest(event);
+    if (!entities) {
+      throw new Error('Entities are required');
+    }
 
     // Generate unique item ID
     const itemId = randomUUID();
@@ -114,9 +128,9 @@ export const handler = async (
     // Construct Beckn catalog item
     const catalogItem = constructBecknCatalogItem(
       itemId,
-      event.entities,
-      event.sellerProfile,
-      event.imageUrl
+      entities,
+      phone || 'unknown',
+      undefined // imageUrl
     );
 
     console.log('Constructed catalog item:', JSON.stringify(catalogItem, null, 2));
@@ -141,8 +155,8 @@ export const handler = async (
     await publishCatalogCreatedEvent({
       catalogItem,
       itemId,
-      sellerId: event.sellerProfile.sellerId,
-      messageId: event.messageId,
+      sellerId: phone || 'unknown',
+      messageId: messageId,
     });
 
     return {
@@ -206,7 +220,7 @@ function validateCatalogBuilderRequest(request: CatalogBuilderRequest): void {
 function constructBecknCatalogItem(
   itemId: string,
   entities: CatalogEntities,
-  sellerProfile: SellerProfile,
+  sellerId: string,
   imageUrl?: string
 ): BecknCatalogItem {
   // Map category to ONDC taxonomy
@@ -223,7 +237,7 @@ function constructBecknCatalogItem(
   // In a real implementation, these would come from seller profile
   // For now, we use default values
   const fulfillmentId = 'F1';
-  const locationId = sellerProfile.sellerId; // Use seller ID as location ID
+  const locationId = sellerId; // Use seller ID as location ID
 
   // Construct the catalog item
   const catalogItem: BecknCatalogItem = {
@@ -263,7 +277,7 @@ function constructBecknCatalogItem(
     '@ondc/org/seller_pickup_return': false,
     '@ondc/org/time_to_ship': 'P2D', // 2 days to ship
     '@ondc/org/available_on_cod': true, // Cash on delivery available
-    '@ondc/org/contact_details_consumer_care': `${sellerProfile.phone},support@vyapar-vaani.in`,
+    '@ondc/org/contact_details_consumer_care': `${sellerId},support@vyapar-vaani.in`,
   };
 
   return catalogItem;
@@ -328,6 +342,7 @@ async function publishCatalogCreatedEvent(data: {
     return;
   }
 
+  // Publish catalog.created event
   const command = new PutEventsCommand({
     Entries: [
       {

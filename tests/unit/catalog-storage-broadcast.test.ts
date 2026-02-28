@@ -82,6 +82,7 @@ function createMockSellerProfile(): SellerProfile {
     phone: '+919876543210',
     name: 'Test Seller',
     language: 'hi',
+    onboardingState: 'ACTIVE' as const,
     kyc: {
       panNumber: 'ABCDE1234F',
       aadharNumber: 'encrypted-aadhar',

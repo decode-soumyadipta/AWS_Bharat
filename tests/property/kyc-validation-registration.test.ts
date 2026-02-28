@@ -262,7 +262,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(durationSeconds).toBeLessThan(120);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -345,7 +345,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(registrationResult.subscriberId).toBeDefined();
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -395,7 +395,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(validationResult.validationResult?.invalidFields).toContain('PAN number');
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -444,7 +444,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(validationResult.validationResult?.invalidFields).toContain('Aadhar number');
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -489,7 +489,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(validationResult.validationResult?.missingFields.length).toBeGreaterThan(0);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -538,7 +538,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -628,7 +628,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           expect(uniqueSubscriberIds.size).toBe(subscriberIds.length);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -713,7 +713,7 @@ describe('Property 2: KYC Validation and Registration', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 });

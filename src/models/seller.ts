@@ -8,6 +8,36 @@
  */
 
 /**
+ * Seller onboarding state tracking
+ */
+export type OnboardingState = 
+  | 'NEW'                    // New user, needs KYC
+  | 'KYC_PENDING'           // Waiting for PAN card photo
+  | 'KYC_PROCESSING'        // Processing KYC documents
+  | 'KYC_VERIFIED'          // KYC complete, can create catalog
+  | 'CATALOG_VOICE_PENDING' // Waiting for voice message about product
+  | 'CATALOG_IMAGE_PENDING' // Waiting for product photo
+  | 'CATALOG_CONFIRMING'    // Waiting for user confirmation
+  | 'ACTIVE';               // Fully onboarded, normal operations
+
+/**
+ * Pending catalog item awaiting confirmation
+ */
+export interface PendingCatalogItem {
+  productName: string;
+  price: number;
+  quantity: number;
+  unit: string;
+  category: string;
+  description?: string;
+  language: 'hi' | 'mr' | 'en';
+  voiceNoteUrl?: string;
+  rawImageUrl?: string;
+  enhancedImageUrl?: string;
+  createdAt: number;
+}
+
+/**
  * KYC (Know Your Customer) information for seller verification
  */
 export interface KYCInfo {
@@ -50,6 +80,8 @@ export interface SellerProfile {
   phone: string; // E.164 format
   name: string;
   language: 'hi' | 'mr' | 'en'; // Preferred language
+  onboardingState: OnboardingState; // Current state in onboarding flow
+  pendingCatalog?: PendingCatalogItem; // Catalog item awaiting confirmation
   
   // KYC Details
   kyc: KYCInfo;

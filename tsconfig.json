@@ -26,5 +26,5 @@
     "rootDir": "."
   },
   "include": ["src/**/*", "infrastructure/**/*"],
-  "exclude": ["node_modules", "cdk.out", "dist"]
+  "exclude": ["node_modules", "cdk.out", "dist", "src/utils/xray-config.ts", "infrastructure/monitoring/alarms.ts"]
 }

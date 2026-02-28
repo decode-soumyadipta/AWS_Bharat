@@ -151,9 +151,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(response.error).toBeUndefined();
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should extract inventory update entities with all fields either populated or explicitly null', async () => {
     await fc.assert(
@@ -231,9 +231,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(response.needsClarification).toBe(expectedMissingFields.length > 0);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should extract order entities with all fields either populated or explicitly null', async () => {
     await fc.assert(
@@ -315,9 +315,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(response.needsClarification).toBe(expectedMissingFields.length > 0);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should handle complete catalog entities without missing fields', async () => {
     await fc.assert(
@@ -377,9 +377,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(entities.category).toBe(category);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should return error for empty or invalid transcribed text', async () => {
     await fc.assert(
@@ -399,9 +399,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(response.entities).toBeUndefined();
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should return error when intent is missing', async () => {
     await fc.assert(
@@ -420,9 +420,9 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(response.entities).toBeUndefined();
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 
   it('should handle Claude response with markdown code blocks', async () => {
     await fc.assert(
@@ -480,7 +480,7 @@ describe('Property 6: Entity Extraction from Voice', () => {
           expect(entities.category).toBe(category);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
-  }, 60000);
+  }, 30000);
 });

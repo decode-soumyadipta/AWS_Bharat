@@ -94,98 +94,72 @@ export interface CatalogStorageBroadcastResponse {
  * Lambda handler for catalog storage and broadcast
  */
 export const handler = async (
-  event: CatalogStorageBroadcastRequest
+  event: any
 ): Promise<CatalogStorageBroadcastResponse> => {
   console.log('Catalog storage and broadcast request:', JSON.stringify(event, null, 2));
 
   try {
+    // Parse EventBridge event format
+    const eventDetail = event.detail || event;
+    const { catalogItem, sellerId, messageId } = eventDetail;
+
+    if (!catalogItem) {
+      throw new Error('Catalog item is required');
+    }
+
     // Step 1: Validate catalog object using schema validator
     console.log('Step 1: Validating catalog object...');
-    const validation = validateCatalogItem(event.catalogItem);
+    const validation = validateCatalogItem(catalogItem);
 
     if (!validation.valid) {
       console.error('Catalog validation failed:', validation.errors);
-
-      // Extract missing fields from validation errors
-      const missingFields = validation.errors.map((error) => error.field);
-
-      // Request missing information from seller
-      await requestMissingInformation(
-        event.sellerPhone,
-        event.language,
-        missingFields,
-        validation.errors
-      );
-
       return {
         success: false,
         error: {
           code: 'VALIDATION_FAILED',
-          message: 'Catalog validation failed. Requested missing information from seller.',
-          missingFields,
+          message: 'Catalog validation failed',
         },
       };
     }
 
     console.log('Catalog validation passed');
 
-    // Step 2: Get seller profile for ONDC payload construction
-    console.log('Step 2: Fetching seller profile...');
-    const sellerProfile = await getSellerById(event.sellerId);
+    // Step 2: Store catalog item in DynamoDB
+    console.log('Step 2: Storing catalog item in DynamoDB...');
+    const itemId = catalogItem.id;
+    
+    const catalogItemToStore: CatalogItem = {
+      PK: `SELLER#${sellerId}`,
+      SK: `ITEM#${itemId}`,
+      GSI3PK: `CATEGORY#${catalogItem.category_id}`,
+      GSI3SK: `ITEM#${itemId}`,
+      entityType: 'CATALOG_ITEM',
+      itemId,
+      sellerId,
+      becknItem: catalogItem,
+      images: { raw: '', enhanced: '' },
+      status: 'ACTIVE',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      version: 1,
+    };
 
-    if (!sellerProfile) {
-      throw new Error(`Seller profile not found: ${event.sellerId}`);
-    }
+    await createCatalogItem(catalogItemToStore);
+    console.log('Catalog item stored with ID:', itemId);
 
-    console.log('Seller profile fetched:', sellerProfile.name);
-
-    // Step 3: Store validated catalog item in DynamoDB
-    console.log('Step 3: Storing catalog item in DynamoDB...');
-    const catalogItem = await storeCatalogItem(
-      event.catalogItem,
-      event.sellerId,
-      event.images
-    );
-
-    console.log('Catalog item stored with ID:', catalogItem.itemId);
-
-    // Step 4: Construct ONDC on_search payload
-    console.log('Step 4: Constructing ONDC on_search payload...');
-    const ondcPayload = constructONDCPayload(catalogItem, sellerProfile);
-
-    // Validate the complete ONDC payload
-    const payloadValidation = validateONDCCatalogPayload(ondcPayload);
-    if (!payloadValidation.valid) {
-      console.error('ONDC payload validation failed:', payloadValidation.errors);
-      throw new Error(
-        `ONDC payload validation failed: ${payloadValidation.errors.map((e) => e.message).join(', ')}`
-      );
-    }
-
-    console.log('ONDC payload constructed and validated');
-
-    // Step 5: Broadcast catalog to ONDC Registry via BPP Adapter
-    console.log('Step 5: Broadcasting catalog to ONDC Registry...');
-    await broadcastToONDC(ondcPayload);
-
-    console.log('Catalog broadcast successful');
-
-    // Step 6: Send confirmation WhatsApp message to seller
-    console.log('Step 6: Sending confirmation to seller...');
-    await sendConfirmationMessage(
-      event.sellerPhone,
-      event.language,
+    // Step 3: Send confirmation message to seller
+    console.log('Step 3: Sending confirmation message to seller...');
+    const confirmationSent = await sendConfirmationToSeller(
+      sellerId,
       catalogItem,
-      sellerProfile
+      eventDetail.language || 'en'
     );
-
-    console.log('Confirmation sent to seller');
 
     return {
       success: true,
-      itemId: catalogItem.itemId,
-      broadcast: true,
-      confirmationSent: true,
+      itemId,
+      broadcast: false,
+      confirmationSent,
     };
   } catch (error: any) {
     console.error('Catalog storage and broadcast failed:', error);
@@ -375,56 +349,69 @@ async function requestMissingInformation(
 }
 
 /**
- * Send confirmation WhatsApp message to seller
+ * Send confirmation WhatsApp message to seller via EventBridge
+ * Sends a single bilingual message (Hindi above, English below)
  */
-async function sendConfirmationMessage(
-  phone: string,
-  language: 'hi' | 'mr' | 'en',
-  catalogItem: CatalogItem,
-  sellerProfile: SellerProfile
-): Promise<void> {
-  // TODO: Implement WhatsApp message sending
-  // This would call the WhatsApp message sender Lambda
-  
-  const messages = {
-    hi: {
-      title: '✅ उत्पाद सफलतापूर्वक जोड़ा गया!',
-      product: 'उत्पाद',
-      price: 'कीमत',
-      quantity: 'मात्रा',
-      status: 'स्थिति: ONDC नेटवर्क पर सक्रिय',
-      footer: 'आपका उत्पाद अब खरीदारों को दिखाई देगा।',
-    },
-    mr: {
-      title: '✅ उत्पादन यशस्वीरित्या जोडले!',
-      product: 'उत्पादन',
-      price: 'किंमत',
-      quantity: 'प्रमाण',
-      status: 'स्थिती: ONDC नेटवर्कवर सक्रिय',
-      footer: 'तुमचे उत्पादन आता खरेदीदारांना दिसेल.',
-    },
-    en: {
-      title: '✅ Product added successfully!',
-      product: 'Product',
-      price: 'Price',
-      quantity: 'Quantity',
-      status: 'Status: Active on ONDC Network',
-      footer: 'Your product is now visible to buyers.',
-    },
-  };
+async function sendConfirmationToSeller(
+  sellerId: string,
+  catalogItem: BecknCatalogItem,
+  language: 'hi' | 'mr' | 'en'
+): Promise<boolean> {
+  // Create bilingual message: Hindi above, English below, properly aligned
+  const hindiText = `✅ उत्पाद सफलतापूर्वक जोड़ा गया!
 
-  const msg = messages[language];
-  const item = catalogItem.becknItem;
-  
-  const text = `${msg.title}\n\n${msg.product}: ${item.descriptor.name}\n${msg.price}: ₹${item.price.value}\n${msg.quantity}: ${item.quantity.available.count}\n\n${msg.status}\n\n${msg.footer}`;
+उत्पाद: ${catalogItem.descriptor.name}
+कीमत: ₹${catalogItem.price.value}
+मात्रा: ${catalogItem.quantity.available.count}
+स्थिति: सक्रिय
 
-  console.log('Sending confirmation to seller (simulated):', {
-    phone,
-    language,
-    itemId: catalogItem.itemId,
-    text,
-  });
+आपका उत्पाद अब खरीदारों को दिखाई देगा।`;
 
-  // Simulate sending message
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  const englishText = `✅ Product added successfully!
+
+Product: ${catalogItem.descriptor.name}
+Price: ₹${catalogItem.price.value}
+Quantity: ${catalogItem.quantity.available.count}
+Status: Active
+
+Your product is now visible to buyers.`;
+
+  // Combine Hindi and English in a single message
+  const bilingualText = `${hindiText}
+
+━━━━━━━━━━━━━━━━
+
+${englishText}`;
+
+  try {
+    // Publish WhatsApp message send event to EventBridge
+    const { EventBridgeClient, PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
+    const eventBridge = new EventBridgeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+
+    await eventBridge.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            Source: 'vyapar.vaani.internal',
+            DetailType: 'whatsapp.message.send',
+            Detail: JSON.stringify({
+              to: sellerId, // Using sellerId as phone number
+              type: 'text',
+              content: {
+                text: bilingualText,
+              },
+              language,
+            }),
+            EventBusName: process.env.EVENT_BUS_NAME,
+          },
+        ],
+      })
+    );
+
+    console.log('Bilingual confirmation message event published to EventBridge');
+    return true;
+  } catch (error) {
+    console.error('Failed to publish confirmation message event:', error);
+    return false;
+  }
 }

@@ -25,21 +25,25 @@ describe('Intent Classification Lambda', () => {
 
   describe('CREATE_CATALOG intent', () => {
     it('should classify Hindi catalog creation intent correctly', async () => {
-      // Mock Claude response
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.95,
-              language: 'hi',
-            }),
+      // Mock Nova response
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.95,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -59,20 +63,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should classify English catalog creation intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.92,
-              language: 'en',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.92,
+                  language: 'en',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -89,20 +97,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should classify Marathi catalog creation intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.88,
-              language: 'mr',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.88,
+                  language: 'mr',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -120,20 +132,24 @@ describe('Intent Classification Lambda', () => {
 
   describe('UPDATE_INVENTORY intent', () => {
     it('should classify inventory update intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'UPDATE_INVENTORY',
-              confidence: 0.91,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'UPDATE_INVENTORY',
+                  confidence: 0.91,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -150,20 +166,24 @@ describe('Intent Classification Lambda', () => {
 
   describe('Order management intents', () => {
     it('should classify ACCEPT_ORDER intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'ACCEPT_ORDER',
-              confidence: 0.96,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'ACCEPT_ORDER',
+                  confidence: 0.96,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -177,20 +197,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should classify REJECT_ORDER intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'REJECT_ORDER',
-              confidence: 0.94,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'REJECT_ORDER',
+                  confidence: 0.94,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -204,20 +228,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should classify UPDATE_FULFILLMENT intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'UPDATE_FULFILLMENT',
-              confidence: 0.89,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'UPDATE_FULFILLMENT',
+                  confidence: 0.89,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -231,20 +259,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should classify QUERY_STATUS intent correctly', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'QUERY_STATUS',
-              confidence: 0.87,
-              language: 'en',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'QUERY_STATUS',
+                  confidence: 0.87,
+                  language: 'en',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -260,20 +292,24 @@ describe('Intent Classification Lambda', () => {
 
   describe('Low confidence handling', () => {
     it('should flag for clarification when confidence is below 70%', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.65,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.65,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -288,20 +324,24 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should not flag for clarification when confidence is 70% or above', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.7,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.7,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -318,20 +358,24 @@ describe('Intent Classification Lambda', () => {
 
   describe('Code-mixed input handling', () => {
     it('should handle code-mixed Hindi-English input', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.93,
-              language: 'hi',
-            }),
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.93,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -356,7 +400,7 @@ describe('Intent Classification Lambda', () => {
 
       expect(response.success).toBe(false);
       expect(response.error).toBeDefined();
-      expect(response.error?.message).toContain('required');
+      expect(response.error?.message).toContain('No text content found in event');
     });
 
     it('should handle Bedrock API errors', async () => {
@@ -376,16 +420,20 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should handle invalid JSON response from Claude', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: 'This is not valid JSON',
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: 'This is not valid JSON',
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -400,16 +448,20 @@ describe('Intent Classification Lambda', () => {
     });
 
     it('should handle response with markdown code blocks', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: '```json\n{"intent": "CREATE_CATALOG", "confidence": 0.9, "language": "hi"}\n```',
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: '```json\n{"intent": "CREATE_CATALOG", "confidence": 0.9, "language": "hi"}\n```',
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -425,21 +477,25 @@ describe('Intent Classification Lambda', () => {
   });
 
   describe('Prompt construction', () => {
-    it('should invoke Claude with correct model ID and parameters', async () => {
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              intent: 'CREATE_CATALOG',
-              confidence: 0.9,
-              language: 'hi',
-            }),
+    it('should invoke Nova with correct model ID and parameters', async () => {
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  intent: 'CREATE_CATALOG',
+                  confidence: 0.9,
+                  language: 'hi',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: IntentClassificationRequest = {
@@ -451,13 +507,13 @@ describe('Intent Classification Lambda', () => {
       expect(bedrockClient.send).toHaveBeenCalledTimes(1);
       const callArgs = (bedrockClient.send as jest.Mock).mock.calls[0][0];
       
-      expect(callArgs.input.modelId).toBe('anthropic.claude-3-5-sonnet-20241022-v2:0');
+      expect(callArgs.input.modelId).toBe('amazon.nova-lite-v1:0');
       expect(callArgs.input.contentType).toBe('application/json');
       
       const requestBody = JSON.parse(callArgs.input.body);
-      expect(requestBody.temperature).toBe(0.0);
-      expect(requestBody.max_tokens).toBe(500);
-      expect(requestBody.messages[0].content).toContain('Test transcription');
+      expect(requestBody.inferenceConfig.temperature).toBe(0.0);
+      expect(requestBody.inferenceConfig.max_new_tokens).toBe(500);
+      expect(requestBody.messages[0].content[0].text).toContain('Test transcription');
     });
   });
 });

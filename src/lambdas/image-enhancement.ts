@@ -147,21 +147,21 @@ export const handler = async (
     console.log('Positive prompt:', positivePrompt);
     console.log('Negative prompt:', negativePrompt);
 
-    // Construct Titan Image Generator v2 request
+    // Construct Titan Image Generator v2 request with controlled preservation
     const titanRequest: TitanImageRequest = {
       taskType: 'IMAGE_VARIATION',
       imageVariationParams: {
         images: [base64Image],
         text: positivePrompt,
         negativeText: negativePrompt,
-        similarityStrength: 0.8, // High preservation of product structure
+        similarityStrength: 0.85, // Balanced - preserve product but allow visible background changes (85% similarity)
       },
       imageGenerationConfig: {
         numberOfImages: 1,
         quality: 'premium',
         height: 1024,
         width: 1024,
-        cfgScale: 8.0, // Guidance scale for prompt adherence
+        cfgScale: 7.5, // Higher guidance for more noticeable background transformation
       },
     };
 
@@ -303,39 +303,41 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
 
 /**
  * Generate positive prompt for professional product photography
+ * CRITICAL: Transform background completely while preserving product exactly
  */
 function generatePositivePrompt(
   productName: string,
   productCategory?: string
 ): string {
-  // Base prompt for professional product photography
-  let prompt = `Professional product photography, ${productName} on a clean`;
+  // Strong prompt for visible background transformation with solid colors
+  let prompt = 'Professional product photography, solid color background, studio lighting setup';
 
   // Add context-appropriate background based on category
   if (productCategory) {
     const category = productCategory.toLowerCase();
     if (category.includes('food') || category.includes('grocery')) {
-      prompt += ' kitchen counter with natural lighting';
+      prompt += ', clean solid white background, bright natural lighting, food photography style';
     } else if (category.includes('handicraft') || category.includes('textile')) {
-      prompt += ' wooden surface with soft studio lighting';
+      prompt += ', solid warm beige background, soft diffused lighting, craft photography style';
     } else {
-      prompt += ' neutral background with studio lighting';
+      prompt += ', solid neutral gray background, professional studio lighting, commercial photography style';
     }
   } else {
-    prompt += ' neutral background with studio lighting';
+    prompt += ', solid light gray background, professional studio lighting, commercial product photography';
   }
 
-  // Add quality descriptors
-  prompt += ', studio quality, commercial photography, high resolution, sharp focus, professional lighting, product showcase style';
+  // Add strong quality descriptors for background transformation
+  prompt += ', high-end product photography, professional backdrop, studio quality lighting, commercial grade photography';
 
   return prompt;
 }
 
 /**
- * Generate negative prompt to avoid unwanted modifications
+ * Generate negative prompt to prevent ANY product modifications
+ * CRITICAL: Prevent ALL changes to product, labels, text, colors, shape
  */
 function generateNegativePrompt(): string {
-  return 'text modifications, watermark, logo changes, label alterations, color distortion, shape distortion, unrealistic elements, extra objects, blurry, low quality, deformed, distorted text, changed packaging, modified labels, altered branding';
+  return 'modified product, changed product, altered product, different product, changed labels, altered text, modified text, different text, blurred text, unclear text, removed text, hidden text, different colors, changed colors, distorted shape, changed shape, fake appearance, unrealistic product, cartoon, illustration, painting, artistic style, changed packaging, modified branding, altered design, extra objects, added objects, watermarks, blurry product, low quality product, deformed product, changed product features, modified text on product, altered labels on product, different product appearance, changed product details, modified product surface, altered product texture, different product material, changed product size, modified product proportions';
 }
 
 /**

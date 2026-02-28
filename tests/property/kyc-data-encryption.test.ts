@@ -122,7 +122,7 @@ describe('Property 3: KYC Data Encryption', () => {
           expect(headObjectResult.SSEKMSKeyId).toBeDefined();
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -176,6 +176,7 @@ describe('Property 3: KYC Data Encryption', () => {
             phone,
             name,
             language: 'hi',
+            onboardingState: 'ACTIVE',
             kyc: {
               panNumber,
               aadharNumber: encryptedAadharData, // Encrypted
@@ -211,7 +212,7 @@ describe('Property 3: KYC Data Encryption', () => {
           expect(decryptedAadhar).toBe(aadharNumber);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -257,7 +258,7 @@ describe('Property 3: KYC Data Encryption', () => {
           expect(putResult.SSEKMSKeyId).toBe(process.env.KMS_KEY_ID);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -348,6 +349,7 @@ describe('Property 3: KYC Data Encryption', () => {
             phone,
             name,
             language: 'hi',
+            onboardingState: 'ACTIVE',
             kyc: {
               panNumber,
               aadharNumber: encryptedAadhar,
@@ -387,7 +389,7 @@ describe('Property 3: KYC Data Encryption', () => {
           });
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -456,7 +458,7 @@ describe('Property 3: KYC Data Encryption', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 });

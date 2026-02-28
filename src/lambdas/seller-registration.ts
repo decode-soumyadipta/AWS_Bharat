@@ -17,7 +17,7 @@
 
 import { randomUUID } from 'crypto';
 import * as crypto from 'crypto';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { EncryptCommand } from '@aws-sdk/client-kms';
 import { s3Client, kmsClient, KYC_BUCKET_NAME, KMS_KEY_ID } from '../config/aws-clients';
 import { createSellerProfile } from '../services/dynamodb-repository';
@@ -138,6 +138,7 @@ export const handler = async (
       phone: event.phone,
       name: event.extractedData.name?.value || '',
       language: event.language,
+      onboardingState: 'KYC_VERIFIED',
       kyc: {
         panNumber: event.extractedData.panNumber?.value || '',
         aadharNumber: encryptedAadhar,
@@ -237,7 +238,7 @@ export async function encryptAadharNumber(aadharNumber: string): Promise<string>
  * Store KYC documents in S3 with server-side encryption
  * 
  * @param sellerId - Seller ID
- * @param documentUrls - Array of source document URLs
+ * @param documentUrls - Array of source document URLs (s3:// format)
  * @returns Array of S3 URLs where documents are stored
  */
 export async function storeKYCDocuments(
@@ -249,25 +250,42 @@ export async function storeKYCDocuments(
   for (let i = 0; i < documentUrls.length; i++) {
     const sourceUrl = documentUrls[i];
     const timestamp = Date.now();
-    const key = `kyc-documents/${sellerId}/document_${i}_${timestamp}.jpg`;
+    const destKey = `kyc-documents/${sellerId}/document_${i}_${timestamp}.jpg`;
 
-    // Download document from source URL
-    const response = await fetch(sourceUrl);
-    const buffer = await response.arrayBuffer();
+    // Parse source S3 URL (format: s3://bucket/key)
+    const s3UrlMatch = sourceUrl.match(/^s3:\/\/([^\/]+)\/(.+)$/);
+    if (!s3UrlMatch) {
+      throw new Error(`Invalid S3 URL format: ${sourceUrl}`);
+    }
 
-    // Upload to S3 with server-side encryption
-    const command = new PutObjectCommand({
+    const [, sourceBucket, sourceKey] = s3UrlMatch;
+
+    // Get object from source
+    const getCommand = new GetObjectCommand({
+      Bucket: sourceBucket,
+      Key: sourceKey,
+    });
+    
+    const sourceObject = await s3Client.send(getCommand);
+    const buffer = await sourceObject.Body?.transformToByteArray();
+
+    if (!buffer) {
+      throw new Error(`Failed to read source document: ${sourceUrl}`);
+    }
+
+    // Upload to destination with server-side encryption
+    const putCommand = new PutObjectCommand({
       Bucket: KYC_BUCKET_NAME,
-      Key: key,
-      Body: Buffer.from(buffer),
+      Key: destKey,
+      Body: buffer,
       ServerSideEncryption: 'aws:kms',
       SSEKMSKeyId: KMS_KEY_ID,
       ContentType: 'image/jpeg',
     });
 
-    await s3Client.send(command);
+    await s3Client.send(putCommand);
 
-    const s3Url = `s3://${KYC_BUCKET_NAME}/${key}`;
+    const s3Url = `s3://${KYC_BUCKET_NAME}/${destKey}`;
     storedUrls.push(s3Url);
   }
 

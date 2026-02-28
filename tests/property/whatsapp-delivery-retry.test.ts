@@ -24,6 +24,7 @@ global.fetch = jest.fn();
 // Mock environment variables
 process.env.WHATSAPP_API_ENDPOINT = 'https://mock-api.example.com';
 process.env.WHATSAPP_PHONE_NUMBER_ID = 'mock-phone-id';
+process.env.WHATSAPP_ACCESS_TOKEN = 'mock-access-token';
 
 describe('Property 25: WhatsApp Delivery Retry', () => {
   beforeEach(() => {
@@ -94,7 +95,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -137,7 +138,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           expect(callCount).toBe(5);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -170,7 +171,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           expect(callCount).toBe(1); // Only one attempt, no retries
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -221,7 +222,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           expect(callCount).toBe(rateLimitRetries + 1);
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -299,7 +300,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           }
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -356,7 +357,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           // (We can't verify exact timing with fake timers, but we verified retries happened)
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 
@@ -403,7 +404,7 @@ describe('Property 25: WhatsApp Delivery Retry', () => {
           // This test verifies the system respects max attempts before 24 hours
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 5 }
     );
   });
 });

@@ -26,13 +26,15 @@ import {
   CatalogEntities,
   InventoryEntities,
   OrderEntities,
+  PriceUpdateEntities,
+  QuantityUpdateEntities,
 } from '../models/intent';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Claude 3 Haiku model ID - faster and more cost-effective
+ * Amazon Nova Lite model ID - faster, cost-effective, no marketplace subscription needed
  */
-const CLAUDE_MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
+const MODEL_ID = 'amazon.nova-lite-v1:0';
 
 /**
  * Maximum tokens for Claude response
@@ -94,20 +96,8 @@ export const handler = async (
     // Validate extracted entities
     const validationResult = validateEntities(claudeResponse, intent);
 
-    // Send response to user via WhatsApp
-    if (phoneNumber && messageId) {
-      await sendWhatsAppResponse({
-        phoneNumber,
-        messageId,
-        intent,
-        entities: claudeResponse,
-        language: language as 'hi' | 'mr' | 'en',
-        needsClarification: validationResult.missingFields.length > 0,
-        missingFields: validationResult.missingFields,
-      });
-    }
-
     // Publish entities extracted event for downstream processing
+    // Only publish if all required fields are present
     if (!validationResult.missingFields.length && phoneNumber && messageId) {
       await publishEntitiesExtractedEvent({
         messageId,
@@ -147,6 +137,10 @@ function constructEntityExtractionPrompt(
   switch (intent) {
     case 'CREATE_CATALOG':
       return constructCatalogPrompt(transcribedText);
+    case 'UPDATE_PRICE':
+      return constructPriceUpdatePrompt(transcribedText);
+    case 'UPDATE_QUANTITY':
+      return constructQuantityUpdatePrompt(transcribedText);
     case 'UPDATE_INVENTORY':
       return constructInventoryPrompt(transcribedText);
     case 'ACCEPT_ORDER':
@@ -170,16 +164,32 @@ Intent: CREATE_CATALOG
 
 Extract these fields:
 - product_name: string (the name of the product)
-- price: number (in INR, numeric value only)
-- quantity: number (numeric value only)
-- unit: string (one of: "kg", "liters", "pieces", "packets", "grams", "ml")
+- price: number (per-unit price in INR, numeric value only - e.g., if "500 per kg" then extract 500)
+- quantity: number (numeric value only - how many units available)
+- unit: string (one of: "kg", "liters", "pieces", "packets", "grams", "ml", "bottles", "dozen")
 - description: string (optional, any additional details about the product)
 - category: string (one of: "food", "grocery", "handicraft", "textile", "other")
 
-Rules:
-- Extract numeric values without currency symbols or units in the number itself
+CRITICAL RULES FOR PRICE EXTRACTION:
+- Extract ONLY the per-unit price, NOT the total price
+- If seller says "500 per kg" or "500 rupees per kg", extract price as 500
+- If seller says "2 kg at 500 per kg", extract price as 500 (NOT 1000)
+- Remove all currency symbols (₹, Rs, rupees) and extract only the number
+- If price includes decimals, keep them (e.g., 99.50 -> 99.5)
+
+EXAMPLES:
+Input: "मैं 2 kg आम ₹500 प्रति केजी के दर में बेचना चाहता हूँ"
+Output: {"product_name": "आम", "price": 500, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
+
+Input: "I want to sell 5 bottles of honey at 250 rupees each"
+Output: {"product_name": "honey", "price": 250, "quantity": 5, "unit": "bottles", "description": null, "category": "food"}
+
+Input: "10 pieces of handicraft items for 1500 per piece"
+Output: {"product_name": "handicraft items", "price": 1500, "quantity": 10, "unit": "pieces", "description": null, "category": "handicraft"}
+
+Other Rules:
 - If a field is not mentioned or cannot be determined, set it to null
-- For unit, normalize to standard units (e.g., "kilo" -> "kg", "liter" -> "liters")
+- For unit, normalize to standard units (e.g., "kilo" -> "kg", "liter" -> "liters", "bottle" -> "bottles")
 - For category, infer from product name if not explicitly stated
 - Preserve the original language of product_name and description
 
@@ -191,6 +201,88 @@ Respond with ONLY a JSON object in this exact format (no additional text):
   "unit": "kg",
   "description": "...",
   "category": "food"
+}`;
+}
+
+/**
+ * Construct prompt for price update entity extraction
+ */
+function constructPriceUpdatePrompt(transcribedText: string): string {
+  return `Extract price update information from this voice note.
+
+Transcription: ${transcribedText}
+Intent: UPDATE_PRICE
+
+Extract these fields:
+- new_price: number (the new per-unit price in INR, numeric value only)
+- product_name: string (optional, product name if mentioned)
+
+CRITICAL RULES FOR PRICE EXTRACTION:
+- Extract ONLY the per-unit price, NOT the total price
+- If seller says "update price to 600" or "change price to 600", extract new_price as 600
+- If seller says "price should be 700 per kg", extract new_price as 700
+- Remove all currency symbols (₹, Rs, rupees) and extract only the number
+- If price includes decimals, keep them (e.g., 99.50 -> 99.5)
+
+EXAMPLES:
+Input: "update price to 600"
+Output: {"new_price": 600, "product_name": null}
+
+Input: "कीमत 700 रुपये प्रति केजी करें"
+Output: {"new_price": 700, "product_name": null}
+
+Input: "change mango price to 550"
+Output: {"new_price": 550, "product_name": "mango"}
+
+Rules:
+- If a field is not mentioned or cannot be determined, set it to null
+- product_name is optional - only extract if explicitly mentioned
+
+Respond with ONLY a JSON object in this exact format (no additional text):
+{
+  "new_price": 600,
+  "product_name": null
+}`;
+}
+
+/**
+ * Construct prompt for quantity update entity extraction
+ */
+function constructQuantityUpdatePrompt(transcribedText: string): string {
+  return `Extract quantity update information from this voice note.
+
+Transcription: ${transcribedText}
+Intent: UPDATE_QUANTITY
+
+Extract these fields:
+- new_quantity: number (the new quantity value, numeric value only)
+- product_name: string (optional, product name if mentioned)
+
+CRITICAL RULES FOR QUANTITY EXTRACTION:
+- Extract ONLY the quantity number
+- If seller says "update quantity to 50" or "change quantity to 50", extract new_quantity as 50
+- If seller says "quantity should be 100", extract new_quantity as 100
+- Remove all unit names (kg, bottles, pieces, etc.) and extract only the number
+- If quantity includes decimals, keep them (e.g., 10.5 -> 10.5)
+
+EXAMPLES:
+Input: "update quantity to 50"
+Output: {"new_quantity": 50, "product_name": null}
+
+Input: "मात्रा 100 करें"
+Output: {"new_quantity": 100, "product_name": null}
+
+Input: "change mango quantity to 75"
+Output: {"new_quantity": 75, "product_name": "mango"}
+
+Rules:
+- If a field is not mentioned or cannot be determined, set it to null
+- product_name is optional - only extract if explicitly mentioned
+
+Respond with ONLY a JSON object in this exact format (no additional text):
+{
+  "new_quantity": 50,
+  "product_name": null
 }`;
 }
 
@@ -258,27 +350,32 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }
 
 /**
- * Invoke Claude model via Amazon Bedrock
+ * Invoke Amazon Nova model via Amazon Bedrock
  */
 async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
-  // Construct request body for Claude
+  // Construct request body for Nova (Converse API format)
   const requestBody = {
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: MAX_TOKENS,
     messages: [
       {
         role: 'user',
-        content: prompt,
+        content: [
+          {
+            text: prompt,
+          },
+        ],
       },
     ],
-    temperature: 0.0, // Use deterministic output for extraction
+    inferenceConfig: {
+      max_new_tokens: MAX_TOKENS,
+      temperature: 0.0, // Use deterministic output for extraction
+    },
   };
 
-  console.log('Invoking Claude model:', CLAUDE_MODEL_ID);
+  console.log('Invoking Nova model:', MODEL_ID);
 
   // Invoke model
   const command = new InvokeModelCommand({
-    modelId: CLAUDE_MODEL_ID,
+    modelId: MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify(requestBody),
@@ -288,21 +385,21 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
 
   // Parse response
   if (!response.body) {
-    throw new Error('Empty response from Claude');
+    throw new Error('Empty response from Nova');
   }
 
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-  console.log('Claude raw response:', JSON.stringify(responseBody, null, 2));
+  console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Claude response
-  const contentBlocks = responseBody.content;
-  if (!contentBlocks || contentBlocks.length === 0) {
-    throw new Error('No content in Claude response');
+  // Extract text from Nova response (Converse API format)
+  const output = responseBody.output;
+  if (!output || !output.message || !output.message.content) {
+    throw new Error('No content in Nova response');
   }
 
-  const textContent = contentBlocks[0].text;
+  const textContent = output.message.content[0]?.text;
   if (!textContent) {
-    throw new Error('No text in Claude response content');
+    throw new Error('No text in Nova response content');
   }
 
   // Parse JSON from text content
@@ -345,6 +442,10 @@ function validateEntities(
   switch (intent) {
     case 'CREATE_CATALOG':
       return validateCatalogEntities(entities as CatalogEntities);
+    case 'UPDATE_PRICE':
+      return validatePriceUpdateEntities(entities as PriceUpdateEntities);
+    case 'UPDATE_QUANTITY':
+      return validateQuantityUpdateEntities(entities as QuantityUpdateEntities);
     case 'UPDATE_INVENTORY':
       return validateInventoryEntities(entities as InventoryEntities);
     case 'ACCEPT_ORDER':
@@ -386,6 +487,48 @@ function validateCatalogEntities(entities: CatalogEntities): { missingFields: st
   }
   if (entities.quantity !== null && typeof entities.quantity !== 'number') {
     missingFields.push('quantity (must be a number)');
+  }
+
+  // Note: We store the per-unit price, not the total price
+  // For example, "500 per kg" for 2kg should be stored as price=500, quantity=2, unit=kg
+  // The buyer app will display the per-unit rate
+
+  return { missingFields };
+}
+
+/**
+ * Validate price update entities
+ */
+function validatePriceUpdateEntities(entities: PriceUpdateEntities): { missingFields: string[] } {
+  const missingFields: string[] = [];
+
+  // Required field for price update
+  if (entities.new_price === null || entities.new_price === undefined) {
+    missingFields.push('new_price');
+  }
+
+  // Validate data type
+  if (entities.new_price !== null && typeof entities.new_price !== 'number') {
+    missingFields.push('new_price (must be a number)');
+  }
+
+  return { missingFields };
+}
+
+/**
+ * Validate quantity update entities
+ */
+function validateQuantityUpdateEntities(entities: QuantityUpdateEntities): { missingFields: string[] } {
+  const missingFields: string[] = [];
+
+  // Required field for quantity update
+  if (entities.new_quantity === null || entities.new_quantity === undefined) {
+    missingFields.push('new_quantity');
+  }
+
+  // Validate data type
+  if (entities.new_quantity !== null && typeof entities.new_quantity !== 'number') {
+    missingFields.push('new_quantity (must be a number)');
   }
 
   return { missingFields };
@@ -485,6 +628,16 @@ async function sendWhatsAppResponse(data: {
         hi: `✅ स्टॉक अपडेट हो रहा है: ${data.entities.product_identifier}, नई मात्रा: ${data.entities.new_quantity}`,
         mr: `✅ स्टॉक अपडेट होत आहे: ${data.entities.product_identifier}, नवीन प्रमाण: ${data.entities.new_quantity}`,
         en: `✅ Updating stock: ${data.entities.product_identifier}, new quantity: ${data.entities.new_quantity}`,
+      },
+      UPDATE_PRICE: {
+        hi: `✅ कीमत अपडेट हो रही है: ₹${data.entities.new_price}`,
+        mr: `✅ किंमत अपडेट होत आहे: ₹${data.entities.new_price}`,
+        en: `✅ Updating price: ₹${data.entities.new_price}`,
+      },
+      UPDATE_QUANTITY: {
+        hi: `✅ मात्रा अपडेट हो रही है: ${data.entities.new_quantity}`,
+        mr: `✅ प्रमाण अपडेट होत आहे: ${data.entities.new_quantity}`,
+        en: `✅ Updating quantity: ${data.entities.new_quantity}`,
       },
       ACCEPT_ORDER: {
         hi: `✅ ऑर्डर स्वीकार किया जा रहा है: ${data.entities.order_id || 'नवीनतम'}`,

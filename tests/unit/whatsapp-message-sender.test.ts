@@ -32,6 +32,7 @@ describe('WhatsApp Message Sender', () => {
     // Set required environment variables
     process.env.WHATSAPP_API_ENDPOINT = 'https://api.whatsapp.test';
     process.env.WHATSAPP_PHONE_NUMBER_ID = 'test-phone-id';
+    process.env.WHATSAPP_ACCESS_TOKEN = 'test-access-token';
   });
 
   afterEach(() => {
@@ -39,6 +40,7 @@ describe('WhatsApp Message Sender', () => {
     process.env = { ...originalEnv };
     process.env.WHATSAPP_API_ENDPOINT = 'https://api.whatsapp.test';
     process.env.WHATSAPP_PHONE_NUMBER_ID = 'test-phone-id';
+    process.env.WHATSAPP_ACCESS_TOKEN = 'test-access-token';
   });
 
   describe('sendTextMessage', () => {

@@ -83,6 +83,23 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // GSI4: User State Lookup (for analytics and monitoring)
+    this.dataTable.addGlobalSecondaryIndex({
+      indexName: 'GSI4',
+      partitionKey: { name: 'GSI4PK', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'GSI4SK', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // Enable TTL for automatic cleanup of abandoned flows and temporary data
+    // TTL attribute should be set on items that need automatic expiration
+    // (e.g., user state records, partial catalog data)
+    const cfnTable = this.dataTable.node.defaultChild as dynamodb.CfnTable;
+    cfnTable.timeToLiveSpecification = {
+      attributeName: 'TTL',
+      enabled: true,
+    };
+
     // S3 Bucket for KYC Documents
     this.kycBucket = new s3.Bucket(this, 'KYCDocumentsBucket', {
       bucketName: `vyapar-vaani-kyc-${this.account}`,
@@ -230,6 +247,15 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
+    // Grant Lambda invoke permissions (for Lambda-to-Lambda calls)
+    lambdaExecutionRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['lambda:InvokeFunction'],
+        resources: ['*'],
+      })
+    );
+
     // Grant SNS permissions for error notifications
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
@@ -322,6 +348,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         
         WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
@@ -453,6 +480,12 @@ export class VyaparVaaniStack extends cdk.Stack {
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
         WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN || 'vyapar-vaani-webhook-token',
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
+        VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
+        KYC_FLOW_ENABLED: process.env.KYC_FLOW_ENABLED || 'true',
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
@@ -548,15 +581,14 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(whatsappSenderLambda)],
     });
 
-    // Rule 6: Entities extracted (CREATE_CATALOG) → Catalog Builder
+    // Rule 6: Catalog build requested (after confirmation) → Catalog Builder
+    // NOTE: Changed from 'entities.extracted' to 'catalog.build_requested'
+    // to prevent premature catalog creation before image and confirmation
     new events.Rule(this, 'CatalogCreationRule', {
       eventBus: this.eventBus,
       eventPattern: {
         source: ['vyapar.vaani.internal'],
-        detailType: ['entities.extracted'],
-        detail: {
-          intent: ['CREATE_CATALOG'],
-        },
+        detailType: ['catalog.build_requested'],
       },
       targets: [new targets.LambdaFunction(catalogBuilderLambda)],
     });
@@ -709,6 +741,211 @@ export class VyaparVaaniStack extends cdk.Stack {
     kycValidationLambda.grantInvoke(this.kycProcessingStateMachine);
     sellerRegistrationLambda.grantInvoke(this.kycProcessingStateMachine);
     whatsappSenderLambda.grantInvoke(this.kycProcessingStateMachine);
+
+    // Voice-First Workflow Handler Lambdas
+
+    // KYC Handler Lambda
+    const kycHandlerLambda = new lambda.Function(this, 'KYCHandlerLambda', {
+      functionName: 'vyapar-vaani-kyc-handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/kyc-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        MAX_IMAGE_SIZE_MB: process.env.MAX_IMAGE_SIZE_MB || '5',
+        STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
+        VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
+        KYC_FLOW_ENABLED: process.env.KYC_FLOW_ENABLED || 'true',
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Voice Handler Lambda
+    const voiceHandlerLambda = new lambda.Function(this, 'VoiceHandlerLambda', {
+      functionName: 'vyapar-vaani-voice-handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/voice-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.minutes(5), // Voice processing can take time
+      memorySize: 1024,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        MAX_AUDIO_SIZE_MB: process.env.MAX_AUDIO_SIZE_MB || '16',
+        STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
+        POLLY_VOICE_ID_HINDI: process.env.POLLY_VOICE_ID_HINDI || 'Kajal',
+        POLLY_VOICE_ID_MARATHI: process.env.POLLY_VOICE_ID_MARATHI || 'Aditi',
+        POLLY_VOICE_ID_ENGLISH: process.env.POLLY_VOICE_ID_ENGLISH || 'Joanna',
+        VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Image Handler Lambda
+    const imageHandlerLambda = new lambda.Function(this, 'ImageHandlerLambda', {
+      functionName: 'vyapar-vaani-image-handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/image-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.minutes(3), // Image enhancement can take time
+      memorySize: 1024,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        MAX_IMAGE_SIZE_MB: process.env.MAX_IMAGE_SIZE_MB || '5',
+        STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
+        IMAGE_ENHANCEMENT_ENABLED: process.env.IMAGE_ENHANCEMENT_ENABLED || 'true',
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Confirmation Handler Lambda
+    const confirmationHandlerLambda = new lambda.Function(this, 'ConfirmationHandlerLambda', {
+      functionName: 'vyapar-vaani-confirmation-handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/confirmation-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        POLLY_VOICE_ID_HINDI: process.env.POLLY_VOICE_ID_HINDI || 'Kajal',
+        POLLY_VOICE_ID_MARATHI: process.env.POLLY_VOICE_ID_MARATHI || 'Aditi',
+        POLLY_VOICE_ID_ENGLISH: process.env.POLLY_VOICE_ID_ENGLISH || 'Joanna',
+        STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
+        VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Grant Polly permissions to confirmation handler
+    confirmationHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['polly:SynthesizeSpeech'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant Polly permissions to voice handler for missing info prompts
+    voiceHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['polly:SynthesizeSpeech'],
+        resources: ['*'],
+      })
+    );
+
+    // EventBridge Rules for Voice-First Workflow State-Based Routing
+
+    // Rule: KYC Handler - Image messages in NEW or KYC_PENDING state
+    new events.Rule(this, 'KYCHandlerRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-kyc-handler-rule',
+      description: 'Routes image messages to KYC handler when user is in NEW or KYC_PENDING state',
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE],
+        detail: {
+          handler: ['KYC'],
+          state: ['NEW', 'KYC_PENDING'],
+        },
+      },
+      targets: [new targets.LambdaFunction(kycHandlerLambda)],
+    });
+
+    // Rule: Voice Handler - Audio/text messages in KYC_VERIFIED, VOICE_RECEIVED, or ACTIVE state
+    new events.Rule(this, 'VoiceHandlerRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-voice-handler-rule',
+      description: 'Routes voice/text messages to voice handler when user is in appropriate state',
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [
+          WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_VOICE,
+          WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_TEXT,
+        ],
+        detail: {
+          handler: ['VOICE'],
+          state: ['KYC_VERIFIED', 'VOICE_RECEIVED', 'ACTIVE', 'CONFIRMATION_PENDING'],
+        },
+      },
+      targets: [new targets.LambdaFunction(voiceHandlerLambda)],
+    });
+
+    // Rule: Image Handler - Image messages in IMAGE_PENDING or ACTIVE state
+    new events.Rule(this, 'ImageHandlerRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-image-handler-rule',
+      description: 'Routes image messages to image handler when user is in IMAGE_PENDING or ACTIVE state',
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE],
+        detail: {
+          handler: ['IMAGE'],
+          state: ['IMAGE_PENDING', 'ACTIVE'],
+        },
+      },
+      targets: [new targets.LambdaFunction(imageHandlerLambda)],
+    });
+
+    // Rule: Image Request - Send WhatsApp message requesting product image
+    new events.Rule(this, 'ImageRequestRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-image-request-rule',
+      description: 'Sends WhatsApp message requesting product image after voice processing',
+      eventPattern: {
+        source: [EVENT_SOURCES.INTERNAL],
+        detailType: ['voice.image_request.needed'],
+      },
+      targets: [new targets.LambdaFunction(whatsappSenderLambda)],
+    });
+
+    // Rule: Confirmation Handler - Button clicks in CONFIRMATION_PENDING state
+    new events.Rule(this, 'ConfirmationHandlerRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-confirmation-handler-rule',
+      description: 'Routes button clicks to confirmation handler when user is in CONFIRMATION_PENDING state',
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [WHATSAPP_EVENT_TYPES.BUTTON_CLICKED],
+        detail: {
+          handler: ['CONFIRMATION'],
+          state: ['CONFIRMATION_PENDING'],
+        },
+      },
+      targets: [new targets.LambdaFunction(confirmationHandlerLambda)],
+    });
 
     // Outputs
     new cdk.CfnOutput(this, 'DataTableName', {

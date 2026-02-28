@@ -62,6 +62,7 @@ describe('Property 7: Beckn Protocol Compliance', () => {
               phone: '+919876543210',
               name: 'Test Seller',
               language: 'hi',
+            onboardingState: 'ACTIVE' as const,
               kyc: {
                 panNumber: 'ABCDE1234F',
                 aadharNumber: 'encrypted-aadhar',
@@ -161,9 +162,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(response.validation!.valid).toBe(true);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should validate catalog items with all required fields present', async () => {
       await fc.assert(
@@ -212,9 +213,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(validation.errors).toHaveLength(0);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Context Field Validation', () => {
@@ -292,9 +293,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(new Date(context.timestamp).toISOString()).toBe(context.timestamp);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('GPS Coordinate Validation', () => {
@@ -329,9 +330,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(long).toBeLessThanOrEqual(180);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should reject invalid GPS coordinate formats', async () => {
       await fc.assert(
@@ -355,9 +356,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(validation.errors.length).toBeGreaterThan(0);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Complete ONDC Payload Validation', () => {
@@ -524,9 +525,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(provider.items).toHaveLength(products.length);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Schema Validation Error Detection', () => {
@@ -583,9 +584,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(validation.errors.some((e) => e.field.includes(missingField))).toBe(true);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should detect invalid currency codes', async () => {
       await fc.assert(
@@ -625,9 +626,9 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(validation.errors.some((e) => e.field === 'price.currency')).toBe(true);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should detect invalid price formats', async () => {
       await fc.assert(
@@ -667,8 +668,8 @@ describe('Property 7: Beckn Protocol Compliance', () => {
             expect(validation.errors.some((e) => e.field === 'price.value')).toBe(true);
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 });

@@ -51,6 +51,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
         phone: '+919876543210',
         name: 'Sunita Devi',
         language: 'hi',
+      onboardingState: 'ACTIVE' as const,
         kyc: {
           panNumber: 'ABCDE1234F',
           aadharNumber: 'encrypted-aadhar',
@@ -87,6 +88,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
         phone: '+919876543210',
         name: 'Sunita Devi',
         language: 'hi',
+      onboardingState: 'ACTIVE' as const,
         kyc: {
           panNumber: 'ABCDE1234F',
           aadharNumber: 'encrypted-aadhar',
@@ -124,6 +126,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
         phone: '+919876543210',
         name: 'Sunita Devi',
         language: 'hi',
+      onboardingState: 'ACTIVE' as const,
         kyc: {
           panNumber: 'ABCDE1234F',
           aadharNumber: 'encrypted-aadhar',
@@ -170,6 +173,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
         phone: '+919876543210',
         name: 'Sunita Devi',
         language: 'hi',
+      onboardingState: 'ACTIVE' as const,
         kyc: {
           panNumber: 'ABCDE1234F',
           aadharNumber: 'encrypted-aadhar',
@@ -215,6 +219,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
         phone: '+919876543210',
         name: 'Sunita Devi Updated',
         language: 'mr',
+      onboardingState: 'ACTIVE' as const,
         kyc: {
           panNumber: 'ABCDE1234F',
           aadharNumber: 'encrypted-aadhar',
@@ -237,6 +242,7 @@ describe('DynamoDB Repository - Seller Operations', () => {
       const result = await updateSellerProfile('seller-123', {
         name: 'Sunita Devi Updated',
         language: 'mr',
+      onboardingState: 'ACTIVE' as const,
       });
 
       expect(result.name).toBe('Sunita Devi Updated');

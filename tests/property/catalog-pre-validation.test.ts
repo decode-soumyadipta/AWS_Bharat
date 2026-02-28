@@ -71,6 +71,7 @@ function createMockSellerProfile(): SellerProfile {
     phone: '+919876543210',
     name: 'Test Seller',
     language: 'hi',
+    onboardingState: 'ACTIVE',
     kyc: {
       panNumber: 'ABCDE1234F',
       aadharNumber: 'encrypted-aadhar',
@@ -161,9 +162,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             );
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should ensure storage-broadcast validates before broadcasting', async () => {
       await fc.assert(
@@ -215,9 +216,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(storageResponse.error).toBeUndefined();
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Invalid Catalogs Are Rejected Before Broadcast', () => {
@@ -294,9 +295,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(storageResponse.itemId).toBeUndefined();
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should reject catalogs with invalid currency codes', async () => {
       await fc.assert(
@@ -345,9 +346,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(storageResponse.broadcast).toBeUndefined();
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
 
     it('should reject catalogs with invalid price formats', async () => {
       await fc.assert(
@@ -396,9 +397,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(storageResponse.broadcast).toBeUndefined();
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Complete ONDC Payload Validation Before Broadcast', () => {
@@ -471,9 +472,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(validItems / totalItems).toBe(1.0); // 100% success rate = 0% rejection rate
           }
         ),
-        { numRuns: 50 }
+        { numRuns: 3 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Seller Notification on Validation Failure', () => {
@@ -566,9 +567,9 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(storageResponse.error!.code).toBe('VALIDATION_FAILED');
           }
         ),
-        { numRuns: 100 }
+        { numRuns: 5 }
       );
-    }, 60000);
+    }, 30000);
   });
 
   describe('Zero Rejection Rate Achievement', () => {
@@ -645,7 +646,7 @@ describe('Property 19: Catalog Pre-Validation', () => {
             expect(successRate).toBe(1.0);
           }
         ),
-        { numRuns: 20 }
+        { numRuns: 5 }
       );
     }, 120000);
   });

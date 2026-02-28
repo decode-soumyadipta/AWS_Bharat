@@ -12,6 +12,8 @@
  */
 export type IntentType =
   | 'CREATE_CATALOG'
+  | 'UPDATE_PRICE'
+  | 'UPDATE_QUANTITY'
   | 'UPDATE_INVENTORY'
   | 'ACCEPT_ORDER'
   | 'REJECT_ORDER'
@@ -181,4 +183,20 @@ export interface OrderEntities {
   order_id: string | null;
   action: string | null;
   reason?: string | null;
+}
+
+/**
+ * Price update entities
+ */
+export interface PriceUpdateEntities {
+  new_price: number | null;
+  product_name?: string | null;
+}
+
+/**
+ * Quantity update entities
+ */
+export interface QuantityUpdateEntities {
+  new_quantity: number | null;
+  product_name?: string | null;
 }

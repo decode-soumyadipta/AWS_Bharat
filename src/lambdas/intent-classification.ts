@@ -27,9 +27,9 @@ import {
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
 /**
- * Claude 3 Haiku model ID - faster and more cost-effective
+ * Amazon Nova Lite model ID - faster, cost-effective, no marketplace subscription needed
  */
-const CLAUDE_MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
+const MODEL_ID = 'amazon.nova-lite-v1:0';
 
 /**
  * Confidence threshold for requiring clarification
@@ -136,6 +136,8 @@ The user is a rural merchant speaking in Hindi, Marathi, or English.
 
 Classify the following transcribed voice note into ONE of these intents:
 - CREATE_CATALOG: User wants to add a new product
+- UPDATE_PRICE: User wants to update/change the price of current product (e.g., "update price to 600", "change price", "price should be 700")
+- UPDATE_QUANTITY: User wants to update/change the quantity of current product (e.g., "update quantity to 50", "change quantity", "quantity should be 100")
 - UPDATE_INVENTORY: User wants to change stock quantity
 - ACCEPT_ORDER: User wants to accept an order
 - REJECT_ORDER: User wants to reject an order
@@ -152,34 +154,41 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }
 
 Rules:
-- intent must be one of the six options listed above
+- intent must be one of the seven options listed above
 - confidence must be a number between 0.0 and 1.0
 - language should be "hi" for Hindi, "mr" for Marathi, or "en" for English
+- UPDATE_PRICE is specifically for price changes during product creation/confirmation
+- UPDATE_QUANTITY is specifically for quantity changes during product creation/confirmation
 - Respond with ONLY the JSON object, no other text`;
 }
 
 /**
- * Invoke Claude model via Amazon Bedrock
+ * Invoke Amazon Nova model via Amazon Bedrock
  */
 async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> {
-  // Construct request body for Claude
+  // Construct request body for Nova (Converse API format)
   const requestBody = {
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: MAX_TOKENS,
     messages: [
       {
         role: 'user',
-        content: prompt,
+        content: [
+          {
+            text: prompt,
+          },
+        ],
       },
     ],
-    temperature: 0.0, // Use deterministic output for classification
+    inferenceConfig: {
+      max_new_tokens: MAX_TOKENS,
+      temperature: 0.0, // Use deterministic output for classification
+    },
   };
 
-  console.log('Invoking Claude model:', CLAUDE_MODEL_ID);
+  console.log('Invoking Nova model:', MODEL_ID);
 
   // Invoke model
   const command = new InvokeModelCommand({
-    modelId: CLAUDE_MODEL_ID,
+    modelId: MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify(requestBody),
@@ -189,21 +198,21 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
 
   // Parse response
   if (!response.body) {
-    throw new Error('Empty response from Claude');
+    throw new Error('Empty response from Nova');
   }
 
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-  console.log('Claude raw response:', JSON.stringify(responseBody, null, 2));
+  console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Claude response
-  const contentBlocks = responseBody.content;
-  if (!contentBlocks || contentBlocks.length === 0) {
-    throw new Error('No content in Claude response');
+  // Extract text from Nova response (Converse API format)
+  const output = responseBody.output;
+  if (!output || !output.message || !output.message.content) {
+    throw new Error('No content in Nova response');
   }
 
-  const textContent = contentBlocks[0].text;
+  const textContent = output.message.content[0]?.text;
   if (!textContent) {
-    throw new Error('No text in Claude response content');
+    throw new Error('No text in Nova response content');
   }
 
   // Parse JSON from text content
@@ -243,6 +252,8 @@ function parseIntentResponse(text: string): ClaudeIntentResponse {
 function validateIntentResponse(response: ClaudeIntentResponse): void {
   const validIntents: IntentType[] = [
     'CREATE_CATALOG',
+    'UPDATE_PRICE',
+    'UPDATE_QUANTITY',
     'UPDATE_INVENTORY',
     'ACCEPT_ORDER',
     'REJECT_ORDER',

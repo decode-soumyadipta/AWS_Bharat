@@ -45,6 +45,7 @@ describe('Data Model Interfaces', () => {
         phone: '+919876543210',
         name: 'Sunita Devi',
         language: 'hi',
+        onboardingState: 'ACTIVE',
         kyc: kycInfo,
         ondc: ondcRegistration,
         createdAt: Date.now(),

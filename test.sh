@@ -104,6 +104,7 @@ test_text_message_intent_classification() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {
@@ -172,7 +173,7 @@ test_dynamodb_storage() {
     local item_count=$(aws dynamodb scan \
         --table-name "$TABLE_NAME" \
         --filter-expression "begins_with(PK, :pk)" \
-        --expression-attribute-values '{":pk":{"S":"CATALOG#"}}' \
+        --expression-attribute-values '{":pk":{"S":"SELLER#"}}' \
         --select COUNT \
         --output json 2>/dev/null | jq -r '.Count' || echo "0")
     
@@ -191,6 +192,7 @@ test_english_inventory_update() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {
@@ -227,6 +229,7 @@ test_marathi_catalog_creation() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {
@@ -263,6 +266,7 @@ test_order_acceptance() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {
@@ -299,6 +303,7 @@ test_order_rejection() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {
@@ -350,6 +355,7 @@ test_lambda_error_handling() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
+            \"object\": \"whatsapp_business_account\",
             \"entry\": [{
                 \"changes\": [{
                     \"value\": {

@@ -27,24 +27,28 @@ describe('Entity Extraction Lambda', () => {
 
   describe('CREATE_CATALOG intent', () => {
     it('should extract product entities from Hindi voice note', async () => {
-      // Mock Claude response
-      const mockClaudeResponse = {
-        content: [
-          {
-            text: JSON.stringify({
-              product_name: 'आम का अचार',
-              price: 200,
-              quantity: 5,
-              unit: 'kg',
-              description: 'घर का बना हुआ',
-              category: 'food',
-            }),
+      // Mock Nova response (Converse API format)
+      const mockNovaResponse = {
+        output: {
+          message: {
+            content: [
+              {
+                text: JSON.stringify({
+                  product_name: 'आम का अचार',
+                  price: 200,
+                  quantity: 5,
+                  unit: 'kg',
+                  description: 'घर का बना हुआ',
+                  category: 'food',
+                }),
+              },
+            ],
           },
-        ],
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -67,7 +71,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should extract product entities from English voice note', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -80,10 +86,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -102,7 +110,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle code-mixed input', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -115,10 +125,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -135,7 +147,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should identify missing required fields', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -148,10 +162,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -167,7 +183,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle multiple missing fields', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -180,10 +198,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -204,7 +224,9 @@ describe('Entity Extraction Lambda', () => {
 
   describe('UPDATE_INVENTORY intent', () => {
     it('should extract inventory update entities', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -214,10 +236,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -236,7 +260,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle INCREMENT operation', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -246,10 +272,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -266,7 +294,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle DECREMENT operation', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -276,10 +306,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -295,7 +327,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should identify missing product identifier', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -305,10 +339,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -326,7 +362,9 @@ describe('Entity Extraction Lambda', () => {
 
   describe('Order intents', () => {
     it('should extract order acceptance entities', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -336,10 +374,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -356,7 +396,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should extract order rejection entities with reason', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -366,10 +408,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -386,7 +430,9 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should extract fulfillment update entities', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: JSON.stringify({
@@ -396,10 +442,12 @@ describe('Entity Extraction Lambda', () => {
             }),
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -458,16 +506,20 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle invalid JSON response from Claude', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: 'This is not valid JSON',
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {
@@ -482,16 +534,20 @@ describe('Entity Extraction Lambda', () => {
     });
 
     it('should handle Claude response with markdown code blocks', async () => {
-      const mockClaudeResponse = {
+      const mockNovaResponse = {
+        output: {
+          message: {
         content: [
           {
             text: '```json\n{"product_name": "Test", "price": 100, "quantity": 1, "unit": "pieces", "category": "other"}\n```',
           },
         ],
+          },
+        },
       };
 
       (bedrockClient.send as jest.Mock).mockResolvedValue({
-        body: new TextEncoder().encode(JSON.stringify(mockClaudeResponse)),
+        body: new TextEncoder().encode(JSON.stringify(mockNovaResponse)),
       });
 
       const request: EntityExtractionRequest = {

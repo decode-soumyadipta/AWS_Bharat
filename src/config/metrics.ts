@@ -16,6 +16,17 @@ export enum MetricName {
   BECKN_VALIDATION_FAILURE = 'Beckn/ValidationFailure',
   ONDC_REGISTRY_UNAVAILABLE = 'ONDC/RegistryUnavailable',
   WHATSAPP_DELIVERY_FAILURE = 'WhatsApp/DeliveryFailure',
+  // Voice-first workflow metrics
+  STATE_TRANSITION = 'StateTransition',
+  STATE_TRANSITION_DURATION = 'StateTransitionDuration',
+  ERROR_RATE = 'ErrorRate',
+  MEDIA_DOWNLOAD_DURATION = 'MediaDownloadDuration',
+  TRANSCRIPTION_DURATION = 'TranscriptionDuration',
+  KYC_PROCESSING_DURATION = 'KYCProcessingDuration',
+  IMAGE_ENHANCEMENT_DURATION = 'ImageEnhancementDuration',
+  CATALOG_CREATION_DURATION = 'CatalogCreationDuration',
+  RETRY_COUNT = 'RetryCount',
+  ACTIVE_USERS_BY_STATE = 'ActiveUsersByState',
 }
 
 export enum MetricUnit {

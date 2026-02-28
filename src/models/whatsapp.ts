@@ -16,8 +16,10 @@ export interface WhatsAppInboundEvent {
   content: {
     text?: string;
     mediaUrl?: string; // S3 pre-signed URL for audio/image
+    mediaId?: string; // WhatsApp media ID
     mimeType?: string;
     buttonPayload?: string; // For interactive button responses
+    buttonTitle?: string; // Button title for interactive responses
   };
   profile: {
     name: string;
@@ -61,4 +63,8 @@ export interface WhatsAppEventDetail {
     name: string;
     language?: string;
   };
+  // State routing information
+  state?: string; // User's current state in the workflow
+  handler?: string; // Handler that should process this message
+  language?: string; // User's language preference
 }

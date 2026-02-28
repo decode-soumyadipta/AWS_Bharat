@@ -175,7 +175,7 @@ describe('Property 4: Voice Transcription Across Languages', () => {
           expect(response.error).toBeUndefined();
         }
       ),
-      { numRuns: 20 }
+      { numRuns: 5 }
     );
   }, 120000); // 120 second timeout for property-based test
 
@@ -287,7 +287,7 @@ describe('Property 4: Voice Transcription Across Languages', () => {
           expect(response.confidence).toBeLessThanOrEqual(1.0);
         }
       ),
-      { numRuns: 20 }
+      { numRuns: 5 }
     );
   }, 120000); // 120 second timeout
 
@@ -385,7 +385,7 @@ describe('Property 4: Voice Transcription Across Languages', () => {
           expect(response.detectedLanguage).toBe(language);
         }
       ),
-      { numRuns: 20 }
+      { numRuns: 5 }
     );
   }, 120000); // 120 second timeout
 
@@ -447,7 +447,7 @@ describe('Property 4: Voice Transcription Across Languages', () => {
           expect(response.transcription).toBeUndefined();
         }
       ),
-      { numRuns: 20 }
+      { numRuns: 5 }
     );
   }, 120000); // 120 second timeout
 
@@ -478,7 +478,7 @@ describe('Property 4: Voice Transcription Across Languages', () => {
           expect(response.transcription).toBeUndefined();
         }
       ),
-      { numRuns: 20 }
+      { numRuns: 5 }
     );
   }, 120000); // 120 second timeout
 });

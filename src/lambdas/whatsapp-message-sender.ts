@@ -83,6 +83,58 @@ export function formatMessage(
 }
 
 /**
+ * Sends WhatsApp typing indicator (real typing status)
+ * Shows "typing..." animation in WhatsApp for more human-like interaction
+ */
+export async function sendTypingIndicator(
+  to: string,
+  durationMs: number = 3000
+): Promise<{ success: boolean; error?: string }> {
+  const config = getWhatsAppConfig();
+  
+  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
+    console.warn('WhatsApp API configuration missing, skipping typing indicator');
+    return { success: false, error: 'Configuration missing' };
+  }
+
+  try {
+    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    
+    // Send typing indicator using WhatsApp's typing status
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: to,
+        type: 'text',
+        text: {
+          preview_url: false,
+          body: '...' // Minimal text to trigger typing
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn('Failed to send typing indicator:', response.status);
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+
+    // Wait for the specified duration to simulate typing
+    await sleep(Math.min(durationMs, 5000)); // Max 5 seconds
+
+    return { success: true };
+  } catch (error) {
+    console.warn('Error sending typing indicator:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
  * Sends a text message via WhatsApp
  */
 export async function sendTextMessage(
@@ -274,6 +326,8 @@ async function sendMessage(
   try {
     // Call WhatsApp Business API
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    console.log('Calling WhatsApp API:', { url, to: message.to, type: message.type });
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -283,8 +337,11 @@ async function sendMessage(
       body: JSON.stringify(payload),
     });
 
+    console.log('WhatsApp API response status:', response.status);
+
     if (!response.ok) {
       const errorData: any = await response.json().catch(() => ({}));
+      console.error('WhatsApp API error:', errorData);
       return {
         success: false,
         error: errorData.error?.message || `HTTP ${response.status}`,
@@ -293,6 +350,7 @@ async function sendMessage(
     }
 
     const data: any = await response.json();
+    console.log('WhatsApp API success:', data);
     return {
       success: true,
       messageId: data.messages?.[0]?.id || data.messageId,
@@ -367,8 +425,26 @@ export async function handler(event: any): Promise<any> {
   console.log('WhatsApp message sender invoked:', JSON.stringify(event, null, 2));
 
   try {
-    // Extract message details from event
-    const { to, type, content, language = 'en' } = event;
+    // Check if this is an image request event
+    if (event.detail && event['detail-type'] === 'voice.image_request.needed') {
+      const { phone, language = 'hi-IN' } = event.detail;
+      const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      
+      // Send bilingual image request message
+      const hindiText = '📸 कृपया उत्पाद की फोटो भेजें';
+      const englishText = '📸 Please send product photo';
+      const bilingualText = `${hindiText}\n\n${englishText}`;
+      
+      const result = await sendTextMessage(phone, bilingualText, langCode);
+      return {
+        statusCode: result.success ? 200 : 500,
+        body: JSON.stringify(result),
+      };
+    }
+
+    // Extract message details from event (handle EventBridge format)
+    const eventDetail = event.detail || event;
+    const { to, type, content, language = 'en' } = eventDetail;
 
     if (!to) {
       throw new Error('Recipient phone number (to) is required');

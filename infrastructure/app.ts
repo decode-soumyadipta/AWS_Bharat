@@ -2,6 +2,10 @@
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
 import { VyaparVaaniStack } from './stacks/vyapar-vaani-stack';
+import * as dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 const app = new cdk.App();
 
