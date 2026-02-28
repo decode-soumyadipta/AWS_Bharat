@@ -1,0 +1,14 @@
+{
+  "VyaparVaaniStack": {
+    "MarketplaceFrontendUrl": "https://d29x1w2stzqkag.cloudfront.net",
+    "MarketplaceApiUrl": "https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/",
+    "MarketplaceBucketName": "marketplace-frontend-145023133719",
+    "MarketplaceProductsTableName": "marketplace-products",
+    "CloudFrontDistributionId": "E1G9YCVNJLYJ5E",
+    "WhatsAppWebhookUrl": "https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook",
+    "DataTableName": "vyapar-vaani-data",
+    "KYCBucketName": "vyapar-vaani-kyc-145023133719",
+    "ProductsBucketName": "vyapar-vaani-products-145023133719",
+    "EventBusName": "vyapar-vaani-events"
+  }
+}

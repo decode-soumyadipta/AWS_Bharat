@@ -12,6 +12,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import { MarketplaceIntegration } from './marketplace-integration';
 
 // Event pattern constants
 const EVENT_SOURCES = {
@@ -988,6 +989,32 @@ export class VyaparVaaniStack extends cdk.Stack {
       value: `${this.httpApi.url}whatsapp/webhook`,
       description: 'WhatsApp webhook URL for Meta Developer Portal',
       exportName: 'VyaparVaaniWhatsAppWebhookUrl',
+    });
+
+    // ========================================
+    // Marketplace Buyer Interface Integration
+    // ========================================
+    const marketplace = new MarketplaceIntegration(this, 'MarketplaceIntegration', {
+      dataTable: this.dataTable,
+      eventBus: this.eventBus,
+      lambdaExecutionRole,
+      whatsappConfig: {
+        apiEndpoint: process.env.WHATSAPP_API_ENDPOINT || '',
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+      },
+    });
+
+    new cdk.CfnOutput(this, 'MarketplaceFrontendUrl', {
+      value: `https://${marketplace.distribution.distributionDomainName}`,
+      description: 'Marketplace buyer interface URL',
+      exportName: 'MarketplaceFrontendUrl',
+    });
+
+    new cdk.CfnOutput(this, 'MarketplaceApiUrl', {
+      value: marketplace.marketplaceApi.url,
+      description: 'Marketplace API URL',
+      exportName: 'MarketplaceApiUrl',
     });
   }
 }
