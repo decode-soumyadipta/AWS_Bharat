@@ -1,321 +1,322 @@
 /**
  * Conversation Memory Service
  * 
- * Maintains conversation history and user context for more natural,
- * human-like interactions. Acts as a personal assistant with memory.
+ * Manages conversation history and memory for the agentic system.
+ * Allows the agent to remember past conversations, orders, and interactions.
  * 
  * Features:
- * - Stores conversation history per user
- * - Tracks user preferences and patterns
- * - Enables contextual responses
- * - Supports multi-turn conversations
+ * - Store conversation messages with timestamps
+ * - Retrieve conversation history
+ * - Query past orders
+ * - Track successful catalog additions
+ * - Support for "yesterday's order" type queries
  */
 
-import { DynamoDBClient, PutItemCommand, GetItemCommand, QueryCommand, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
-import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
-
-// Create DynamoDB client
-const dynamoDBClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
-const TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
+import {
+  PutCommand,
+  QueryCommand,
+  type PutCommandInput,
+  type QueryCommandInput,
+} from '@aws-sdk/lib-dynamodb';
+import { docClient, TABLE_NAME } from '../config/aws-clients';
 
 /**
- * Conversation message
+ * Conversation message record
  */
 export interface ConversationMessage {
+  phone: string;
+  messageId: string;
   timestamp: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'agent' | 'system';
   content: string;
-  intent?: string;
-  entities?: Record<string, any>;
-  messageType?: 'text' | 'voice' | 'image';
+  messageType?: 'text' | 'voice' | 'image' | 'button_reply';
+  metadata?: Record<string, any>;
+}
+
+interface ConversationMessageRecord extends ConversationMessage {
+  PK: string; // USER#<phone>
+  SK: string; // CONVERSATION#<timestamp>#<messageId>
+  entityType: 'CONVERSATION_MESSAGE';
+  TTL?: number;
 }
 
 /**
- * User conversation context
+ * TTL configuration - keep conversation history for 30 days
  */
-export interface UserConversationContext {
-  phone: string;
-  messages: ConversationMessage[];
-  preferences: {
-    language?: string;
-    preferredCategories?: string[];
-    typicalPriceRange?: { min: number; max: number };
-    commonUnits?: string[];
+const CONVERSATION_TTL_DAYS = 30;
+
+/**
+ * Store a conversation message
+ * 
+ * @param message - Conversation message to store
+ */
+export async function storeConversationMessage(
+  message: ConversationMessage
+): Promise<void> {
+  const ttl = Math.floor(Date.now() / 1000) + (CONVERSATION_TTL_DAYS * 24 * 60 * 60);
+
+  const record: ConversationMessageRecord = {
+    ...message,
+    PK: `USER#${message.phone}`,
+    SK: `CONVERSATION#${message.timestamp}#${message.messageId}`,
+    entityType: 'CONVERSATION_MESSAGE',
+    TTL: ttl,
   };
-  patterns: {
-    totalInteractions: number;
-    successfulCatalogs: number;
-    lastInteractionTime: number;
-    averageResponseTime?: number;
+
+  const params: PutCommandInput = {
+    TableName: TABLE_NAME,
+    Item: record,
   };
-  createdAt: number;
-  updatedAt: number;
+
+  await docClient.send(new PutCommand(params));
+  console.log(`Stored conversation message for ${message.phone}`);
 }
 
 /**
  * Get conversation history for a user
+ * 
+ * @param phone - User phone number
+ * @param limit - Maximum number of messages to retrieve (default: 50)
+ * @param startTime - Optional start timestamp for filtering
+ * @param endTime - Optional end timestamp for filtering
+ * @returns Array of conversation messages
  */
 export async function getConversationHistory(
   phone: string,
-  limit: number = 10
+  limit: number = 50,
+  startTime?: number,
+  endTime?: number
 ): Promise<ConversationMessage[]> {
-  try {
-    const command = new GetItemCommand({
-      TableName: TABLE_NAME,
-      Key: marshall({
-        PK: `USER#${phone}`,
-        SK: 'CONVERSATION',
-      }),
-    });
+  const params: QueryCommandInput = {
+    TableName: TABLE_NAME,
+    KeyConditionExpression: startTime && endTime
+      ? 'PK = :pk AND SK BETWEEN :startSk AND :endSk'
+      : 'PK = :pk AND begins_with(SK, :skPrefix)',
+    ExpressionAttributeValues: startTime && endTime
+      ? {
+          ':pk': `USER#${phone}`,
+          ':startSk': `CONVERSATION#${startTime}`,
+          ':endSk': `CONVERSATION#${endTime}`,
+        }
+      : {
+          ':pk': `USER#${phone}`,
+          ':skPrefix': 'CONVERSATION#',
+        },
+    Limit: limit,
+    ScanIndexForward: false, // Most recent first
+  };
 
-    const response = await dynamoDBClient.send(command);
+  const result = await docClient.send(new QueryCommand(params));
 
-    if (!response.Item) {
-      return [];
-    }
-
-    const context = unmarshall(response.Item) as UserConversationContext;
-    
-    // Return last N messages
-    return context.messages.slice(-limit);
-  } catch (error) {
-    console.error('Failed to get conversation history:', error);
+  if (!result.Items || result.Items.length === 0) {
     return [];
   }
+
+  return result.Items.map((item: any) => ({
+    phone: item.phone,
+    messageId: item.messageId,
+    timestamp: item.timestamp,
+    role: item.role,
+    content: item.content,
+    messageType: item.messageType,
+    metadata: item.metadata,
+  }));
 }
 
 /**
- * Add message to conversation history
+ * User conversation context with patterns and preferences
+ */
+export interface UserConversationContext {
+  messages: Array<{ role: string; content: string; timestamp: number }>;
+  patterns: {
+    totalInteractions: number;
+    successfulCatalogs: number;
+    lastInteractionTime?: number;
+  };
+  preferences: {
+    language?: string;
+    preferredCategories?: string[];
+    typicalPriceRange?: { min: number; max: number };
+  };
+}
+
+/**
+ * Get conversation context for agent
+ * Returns recent conversation history formatted for agent context with patterns
+ * 
+ * @param phone - User phone number
+ * @param messageCount - Number of recent messages to include (default: 10)
+ * @returns Formatted conversation context with patterns and preferences
+ */
+export async function getConversationContext(
+  phone: string,
+  messageCount: number = 10
+): Promise<UserConversationContext | null> {
+  const history = await getConversationHistory(phone, messageCount);
+
+  if (history.length === 0) {
+    return null;
+  }
+
+  const messages = history.reverse().map((msg) => ({
+    role: msg.role === 'agent' ? 'assistant' : msg.role,
+    content: msg.content,
+    timestamp: msg.timestamp,
+  }));
+
+  // Calculate patterns
+  const totalInteractions = history.length;
+  const successfulCatalogs = history.filter(
+    (msg) => msg.role === 'system' && msg.metadata?.event === 'catalog_added'
+  ).length;
+  const lastInteractionTime = history[0]?.timestamp;
+
+  // Extract preferences from conversation history
+  const categories = new Set<string>();
+  const prices: number[] = [];
+
+  history.forEach((msg) => {
+    if (msg.metadata?.category) {
+      categories.add(msg.metadata.category);
+    }
+    if (msg.metadata?.price) {
+      prices.push(msg.metadata.price);
+    }
+  });
+
+  const preferredCategories = Array.from(categories);
+  const typicalPriceRange =
+    prices.length > 0
+      ? {
+          min: Math.min(...prices),
+          max: Math.max(...prices),
+        }
+      : undefined;
+
+  return {
+    messages,
+    patterns: {
+      totalInteractions,
+      successfulCatalogs,
+      lastInteractionTime,
+    },
+    preferences: {
+      preferredCategories,
+      typicalPriceRange,
+    },
+  };
+}
+
+/**
+ * Add a conversation message (alias for storeConversationMessage)
+ * 
+ * @param phone - User phone number
+ * @param message - Message data
  */
 export async function addConversationMessage(
   phone: string,
-  message: ConversationMessage
+  message: {
+    timestamp: number;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    messageType?: 'text' | 'voice' | 'image' | 'button_reply';
+    metadata?: Record<string, any>;
+  }
 ): Promise<void> {
-  try {
-    // Get existing context
-    const existingContext = await getConversationContext(phone);
-
-    // Add new message
-    const messages = existingContext?.messages || [];
-    messages.push(message);
-
-    // Keep only last 50 messages to avoid data bloat
-    const recentMessages = messages.slice(-50);
-
-    // Update patterns
-    const patterns = existingContext?.patterns || {
-      totalInteractions: 0,
-      successfulCatalogs: 0,
-      lastInteractionTime: Date.now(),
-    };
-    patterns.totalInteractions += 1;
-    patterns.lastInteractionTime = Date.now();
-
-    // Save updated context
-    const command = new PutItemCommand({
-      TableName: TABLE_NAME,
-      Item: marshall({
-        PK: `USER#${phone}`,
-        SK: 'CONVERSATION',
-        phone,
-        messages: recentMessages,
-        preferences: existingContext?.preferences || {},
-        patterns,
-        createdAt: existingContext?.createdAt || Date.now(),
-        updatedAt: Date.now(),
-      }),
-    });
-
-    await dynamoDBClient.send(command);
-  } catch (error) {
-    console.error('Failed to add conversation message:', error);
-    throw error;
-  }
+  await storeConversationMessage({
+    phone,
+    messageId: `msg-${message.timestamp}`,
+    timestamp: message.timestamp,
+    role: message.role === 'assistant' ? 'agent' : message.role,
+    content: message.content,
+    messageType: message.messageType,
+    metadata: message.metadata,
+  });
 }
 
 /**
- * Get full conversation context
- */
-export async function getConversationContext(
-  phone: string
-): Promise<UserConversationContext | null> {
-  try {
-    const command = new GetItemCommand({
-      TableName: TABLE_NAME,
-      Key: marshall({
-        PK: `USER#${phone}`,
-        SK: 'CONVERSATION',
-      }),
-    });
-
-    const response = await dynamoDBClient.send(command);
-
-    if (!response.Item) {
-      return null;
-    }
-
-    return unmarshall(response.Item) as UserConversationContext;
-  } catch (error) {
-    console.error('Failed to get conversation context:', error);
-    return null;
-  }
-}
-
-/**
- * Update user preferences based on interactions
+ * Update user preferences
+ * 
+ * @param phone - User phone number
+ * @param preferences - Preferences to update
  */
 export async function updateUserPreferences(
   phone: string,
-  updates: Partial<UserConversationContext['preferences']>
+  preferences: { language?: string }
 ): Promise<void> {
-  try {
-    const context = await getConversationContext(phone);
+  // Store preference as a system message
+  await storeConversationMessage({
+    phone,
+    messageId: `pref-${Date.now()}`,
+    timestamp: Date.now(),
+    role: 'system',
+    content: `User preferences updated: ${JSON.stringify(preferences)}`,
+    metadata: {
+      event: 'preferences_updated',
+      preferences,
+    },
+  });
 
-    const preferences = {
-      ...(context?.preferences || {}),
-      ...updates,
-    };
-
-    const command = new UpdateItemCommand({
-      TableName: TABLE_NAME,
-      Key: marshall({
-        PK: `USER#${phone}`,
-        SK: 'CONVERSATION',
-      }),
-      UpdateExpression: 'SET preferences = :preferences, updatedAt = :updatedAt',
-      ExpressionAttributeValues: marshall({
-        ':preferences': preferences,
-        ':updatedAt': Date.now(),
-      }),
-    });
-
-    await dynamoDBClient.send(command);
-  } catch (error) {
-    console.error('Failed to update user preferences:', error);
-    throw error;
+  // Also update in state manager if language changed
+  if (preferences.language) {
+    const { updateUserLanguage } = await import('./state-manager');
+    await updateUserLanguage(phone, preferences.language as any);
   }
 }
 
 /**
- * Generate contextual greeting based on conversation history
+ * Get yesterday's orders for a user
+ * 
+ * @param phone - User phone number (seller)
+ * @returns Array of orders from yesterday
  */
-export function generateContextualGreeting(
-  context: UserConversationContext | null,
-  language: string
-): string {
-  const isHindi = language.startsWith('hi');
-  const isMarathi = language.startsWith('mr');
+export async function getYesterdayOrders(phone: string): Promise<any[]> {
+  // Get seller ID from user state
+  const { getUserState } = await import('./state-manager');
+  const userState = await getUserState(phone);
 
-  if (!context || context.patterns.totalInteractions === 0) {
-    // First time user
-    if (isHindi) {
-      return 'नमस्ते! मैं आपका व्यापार सहायक हूं। मैं आपके उत्पादों को ऑनलाइन बेचने में मदद करूंगा। आप क्या बेचना चाहते हैं?';
-    } else if (isMarathi) {
-      return 'नमस्कार! मी तुमचा व्यापार सहाय्यक आहे। मी तुमच्या उत्पादनांना ऑनलाइन विकण्यात मदत करेन। तुम्हाला काय विकायचे आहे?';
-    } else {
-      return 'Hello! I\'m your business assistant. I\'ll help you sell your products online. What would you like to sell?';
-    }
+  if (!userState?.sellerId) {
+    return [];
   }
 
-  // Returning user
-  const hoursSinceLastInteraction = (Date.now() - context.patterns.lastInteractionTime) / (1000 * 60 * 60);
+  // Calculate yesterday's date range
+  const now = new Date();
+  const yesterdayStart = new Date(now);
+  yesterdayStart.setDate(now.getDate() - 1);
+  yesterdayStart.setHours(0, 0, 0, 0);
 
-  if (hoursSinceLastInteraction < 24) {
-    // Recent interaction
-    if (isHindi) {
-      return 'फिर से आपका स्वागत है! आज क्या बेचना चाहते हैं?';
-    } else if (isMarathi) {
-      return 'पुन्हा स्वागत आहे! आज काय विकायचे आहे?';
-    } else {
-      return 'Welcome back! What would you like to sell today?';
-    }
-  } else if (hoursSinceLastInteraction < 168) {
-    // Within a week
-    if (isHindi) {
-      return `नमस्ते! अच्छा लगा आपको फिर से देखकर। ${context.patterns.successfulCatalogs > 0 ? `आपने ${context.patterns.successfulCatalogs} उत्पाद सफलतापूर्वक जोड़े हैं।` : ''} आज क्या नया है?`;
-    } else if (isMarathi) {
-      return `नमस्कार! तुम्हाला पुन्हा पाहून आनंद झाला। ${context.patterns.successfulCatalogs > 0 ? `तुम्ही ${context.patterns.successfulCatalogs} उत्पादने यशस्वीरित्या जोडली आहेत।` : ''} आज काय नवीन आहे?`;
-    } else {
-      return `Hello! Good to see you again. ${context.patterns.successfulCatalogs > 0 ? `You've successfully added ${context.patterns.successfulCatalogs} products.` : ''} What's new today?`;
-    }
-  } else {
-    // Long time user
-    if (isHindi) {
-      return 'नमस्ते! बहुत दिनों बाद! मैं आपकी मदद के लिए यहां हूं। आज क्या बेचना चाहते हैं?';
-    } else if (isMarathi) {
-      return 'नमस्कार! खूप दिवसांनंतर! मी तुमच्या मदतीसाठी येथे आहे। आज काय विकायचे आहे?';
-    } else {
-      return 'Hello! It\'s been a while! I\'m here to help. What would you like to sell today?';
-    }
-  }
+  const yesterdayEnd = new Date(now);
+  yesterdayEnd.setDate(now.getDate() - 1);
+  yesterdayEnd.setHours(23, 59, 59, 999);
+
+  // Query orders from DynamoDB
+  const { getOrdersBySeller } = await import('./dynamodb-repository');
+  const allOrders = await getOrdersBySeller(userState.sellerId);
+
+  // Filter orders from yesterday
+  const yesterdayOrders = allOrders.filter((order) => {
+    const orderDate = order.createdAt;
+    return orderDate >= yesterdayStart.getTime() && orderDate <= yesterdayEnd.getTime();
+  });
+
+  return yesterdayOrders;
 }
 
 /**
- * Generate contextual response based on conversation history
- */
-export function generateContextualResponse(
-  context: UserConversationContext | null,
-  currentIntent: string,
-  entities: Record<string, any>,
-  language: string
-): string {
-  const isHindi = language.startsWith('hi');
-  const isMarathi = language.startsWith('mr');
-
-  // Check if user has patterns we can reference
-  if (context && context.preferences.preferredCategories && context.preferences.preferredCategories.length > 0) {
-    const lastCategory = context.preferences.preferredCategories[context.preferences.preferredCategories.length - 1];
-    
-    if (currentIntent === 'CREATE_CATALOG' && entities.category === lastCategory) {
-      if (isHindi) {
-        return `अच्छा! फिर से ${lastCategory} बेच रहे हैं। बढ़िया!`;
-      } else if (isMarathi) {
-        return `छान! पुन्हा ${lastCategory} विकत आहात। उत्तम!`;
-      } else {
-        return `Great! Selling ${lastCategory} again. Excellent!`;
-      }
-    }
-  }
-
-  // Check for price patterns
-  if (context && context.preferences.typicalPriceRange && entities.price) {
-    const { min, max } = context.preferences.typicalPriceRange;
-    const currentPrice = entities.price;
-
-    if (currentPrice < min * 0.5 || currentPrice > max * 2) {
-      if (isHindi) {
-        return `यह कीमत आपकी सामान्य कीमत से अलग है। क्या यह सही है?`;
-      } else if (isMarathi) {
-        return `ही किंमत तुमच्या सामान्य किंमतीपेक्षा वेगळी आहे। हे बरोबर आहे का?`;
-      } else {
-        return `This price is different from your usual range. Is this correct?`;
-      }
-    }
-  }
-
-  return '';
-}
-
-/**
- * Track successful catalog creation
+ * Track successful catalog addition
+ * Stores a system message in conversation history
+ * 
+ * @param phone - User phone number
  */
 export async function trackSuccessfulCatalog(phone: string): Promise<void> {
-  try {
-    const command = new UpdateItemCommand({
-      TableName: TABLE_NAME,
-      Key: marshall({
-        PK: `USER#${phone}`,
-        SK: 'CONVERSATION',
-      }),
-      UpdateExpression: 'SET patterns.successfulCatalogs = patterns.successfulCatalogs + :inc, updatedAt = :updatedAt',
-      ExpressionAttributeValues: marshall({
-        ':inc': 1,
-        ':updatedAt': Date.now(),
-      }),
-    });
-
-    await dynamoDBClient.send(command);
-  } catch (error) {
-    console.error('Failed to track successful catalog:', error);
-  }
+  await storeConversationMessage({
+    phone,
+    messageId: `system-${Date.now()}`,
+    timestamp: Date.now(),
+    role: 'system',
+    content: 'Product successfully added to catalog',
+    metadata: {
+      event: 'catalog_added',
+    },
+  });
 }

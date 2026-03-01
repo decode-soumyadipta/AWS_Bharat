@@ -268,6 +268,9 @@ function renderProducts(products) {
     const imageUrl = product.imageUrl || '';
     const displayImage = imageUrl ? `<img src="${imageUrl}" alt="${product.name}" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'>📦</div>'" />` : '<div class="no-image">📦</div>';
     
+    // Truncate description to 60 characters
+    const shortDesc = product.description ? (product.description.length > 60 ? product.description.substring(0, 60) + '...' : product.description) : '';
+    
     return `
     <div class="product-card" data-product-id="${product.productId}">
       <div class="product-image">
@@ -275,6 +278,7 @@ function renderProducts(products) {
       </div>
       <div class="product-details">
         <h3 class="product-name">${product.name}</h3>
+        ${shortDesc ? `<p class="product-description">${shortDesc}</p>` : ''}
         <p class="product-seller">👤 ${product.seller.name}</p>
         <div class="product-price-section">
           <span class="product-price">₹${product.price}</span>

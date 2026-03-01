@@ -196,6 +196,7 @@ export const handler = async (event: any): Promise<any> => {
 
 /**
  * Generate confirmation message with text and voice
+ * Clean, concise format with actionable buttons
  * 
  * Requirements: 6.1, 6.2, 6.3, 6.4
  */
@@ -206,49 +207,76 @@ export async function generateConfirmation(
 ): Promise<ConfirmationMessage> {
   const lang = getLanguagePreference(language);
   
-  // Generate text summary
-  const details = formatCatalogDetails(partialData, lang);
+  // Generate concise product summary - no verbose instructions
+  const productName = partialData.productName || 'Product';
+  const price = partialData.price ? `₹${partialData.price}` : '—';
+  const unit = partialData.unit || 'unit';
+  const quantity = partialData.quantity ? `${partialData.quantity} ${unit}` : '—';
+  const category = partialData.category || '—';
   
-  // Add voice instructions for updates
-  const voiceInstructions = lang === 'hi-IN'
-    ? '\n\n💬 आवाज़ में बोलें:\n• कीमत बदलने के लिए: "कीमत 600 रुपये करें"\n• मात्रा बदलने के लिए: "मात्रा 50 करें"'
-    : lang === 'mr-IN'
-    ? '\n\n💬 आवाजात बोला:\n• किंमत बदलण्यासाठी: "किंमत 600 रुपये करा"\n• प्रमाण बदलण्यासाठी: "प्रमाण 50 करा"'
-    : '\n\n💬 Say in voice:\n• To change price: "change price to 600"\n• To change quantity: "change quantity to 50"';
+  // Fetch today's market price for the product
+  let marketPriceLine = '';
+  let marketVoiceLine = '';
+  try {
+    const { getLocalMarketPrice } = await import('../tools/web-search');
+    const marketPrice = getLocalMarketPrice(productName);
+    if (marketPrice.found) {
+      if (lang === 'hi-IN') {
+        marketPriceLine = `\n📈 आज का बाज़ार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketVoiceLine = `, आज बाज़ार भाव ${marketPrice.priceInfo}`;
+      } else if (lang === 'mr-IN') {
+        marketPriceLine = `\n📈 आजचा बाजार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketVoiceLine = `, आज बाजार भाव ${marketPrice.priceInfo}`;
+      } else {
+        marketPriceLine = `\n📈 Today's market: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketVoiceLine = `, today's market price ${marketPrice.priceInfo}`;
+      }
+    }
+  } catch (err) {
+    console.warn('Market price fetch failed for confirmation:', err);
+  }
   
-  const textSummary = translateMessage('CONFIRMATION_TEXT', lang, { details }) + voiceInstructions;
+  // Clean, formatted confirmation text with market price
+  let textSummary: string;
+  if (lang === 'hi-IN') {
+    textSummary = `📦 *${productName}*\n\n💰 कीमत: ${price}/${unit}\n📊 मात्रा: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ सही है? बटन दबाएं या बोलकर बदलें`;
+  } else if (lang === 'mr-IN') {
+    textSummary = `📦 *${productName}*\n\n💰 किंमत: ${price}/${unit}\n📊 प्रमाण: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ बरोबर आहे? बटण दाबा किंवा बोलून बदला`;
+  } else {
+    textSummary = `📦 *${productName}*\n\n💰 Price: ${price}/${unit}\n📊 Qty: ${quantity}\n🏷️ Category: ${category}${marketPriceLine}\n\n✅ Correct? Tap button or say to change`;
+  }
   
-  console.log('Generated text summary:', textSummary);
+  console.log('Generated concise confirmation with market price:', textSummary);
 
-  // Generate voice confirmation
+  // Generate voice confirmation - brief and friendly, includes market price
   let voiceUrl: string | undefined;
   try {
-    console.log('Attempting to generate voice confirmation');
-    voiceUrl = await convertToSpeech(textSummary, lang);
-    console.log('Voice confirmation generated successfully:', voiceUrl);
+    const voiceText = lang === 'hi-IN'
+      ? `${productName}, कीमत ${price} प्रति ${unit}, मात्रा ${quantity}${marketVoiceLine}। सही है तो ठीक है बटन दबाएं, या बोलकर बदलें।`
+      : lang === 'mr-IN'
+      ? `${productName}, किंमत ${price} प्रति ${unit}, प्रमाण ${quantity}${marketVoiceLine}। बरोबर असल्यास स्वीकार करा बटण दाबा, किंवा बोलून बदला.`
+      : `${productName}, price ${price} per ${unit}, quantity ${quantity}${marketVoiceLine}. Tap approve if correct, or say what to change.`;
+    
+    voiceUrl = await convertToSpeech(voiceText, lang);
+    console.log('Voice confirmation generated');
   } catch (error: any) {
-    console.error('Failed to generate voice confirmation, falling back to text-only:', {
-      error: error.message,
-      code: error.code,
-      language: lang,
-    });
-    // Continue without voice - text is sufficient
+    console.error('Voice confirmation failed:', error.message);
     voiceUrl = undefined;
   }
 
-  // Create interactive buttons with 3 action options
+  // Action buttons - clear and concise
   const buttons = [
     {
       id: 'approve',
-      title: lang === 'hi-IN' ? '✅ स्वीकार करें' : lang === 'mr-IN' ? '✅ स्वीकार करा' : '✅ Approve',
+      title: lang === 'hi-IN' ? '✅ ठीक है' : lang === 'mr-IN' ? '✅ चालेल' : '✅ Approve',
     },
     {
       id: 'edit_quantity',
-      title: lang === 'hi-IN' ? '✏️ मात्रा बदलें' : lang === 'mr-IN' ? '✏️ प्रमाण बदला' : '✏️ Edit Quantity',
+      title: lang === 'hi-IN' ? '✏️ बदलें' : lang === 'mr-IN' ? '✏️ बदला' : '✏️ Edit',
     },
     {
       id: 'view_products',
-      title: lang === 'hi-IN' ? '📋 उत्पाद देखें' : lang === 'mr-IN' ? '📋 उत्पादन पहा' : '📋 View Products',
+      title: lang === 'hi-IN' ? '📋 मेरे उत्पाद' : lang === 'mr-IN' ? '📋 माझी उत्पादने' : '📋 My Products',
     },
   ];
 
@@ -381,6 +409,51 @@ export async function generateConfirmation(
 }
 
 /**
+ * Clean text for voice synthesis
+ * - Remove emojis
+ * - Add pauses for better pacing
+ * - Make it sound more natural and friendly
+ * - Escape XML/SSML special characters
+ */
+function cleanTextForVoice(text: string): string {
+  // Remove all emojis
+  let cleaned = text.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FA6F}]|[\u{1FA70}-\u{1FAFF}]|[\u{2300}-\u{23FF}]|[\u{2B50}]|[\u{2B55}]|[\u{231A}]|[\u{231B}]|[\u{23E9}-\u{23EC}]|[\u{23F0}]|[\u{23F3}]|[\u{25FD}]|[\u{25FE}]|[\u{2614}]|[\u{2615}]|[\u{2648}-\u{2653}]|[\u{267F}]|[\u{2693}]|[\u{26A1}]|[\u{26AA}]|[\u{26AB}]|[\u{26BD}]|[\u{26BE}]|[\u{26C4}]|[\u{26C5}]|[\u{26CE}]|[\u{26D4}]|[\u{26EA}]|[\u{26F2}]|[\u{26F3}]|[\u{26F5}]|[\u{26FA}]|[\u{26FD}]|[\u{2705}]|[\u{270A}]|[\u{270B}]|[\u{2728}]|[\u{274C}]|[\u{274E}]|[\u{2753}-\u{2755}]|[\u{2757}]|[\u{2795}-\u{2797}]|[\u{27B0}]|[\u{27BF}]|[\u{2B1B}]|[\u{2B1C}]|[\u{3030}]|[\u{303D}]|[\u{3297}]|[\u{3299}]/gu, '');
+  
+  // Remove special symbols that sound weird
+  cleaned = cleaned.replace(/[✅❌💡💰📸📋✏️⚠️•]/g, '');
+  
+  // Replace currency symbols with words
+  cleaned = cleaned.replace(/₹/g, 'रुपये ');
+  cleaned = cleaned.replace(/\$/g, 'dollars ');
+  
+  // Add pauses after colons and newlines for better pacing
+  cleaned = cleaned.replace(/:/g, ','); // Replace colon with comma for natural pause
+  cleaned = cleaned.replace(/\n\n/g, '. '); // Double newline becomes period with pause
+  cleaned = cleaned.replace(/\n/g, ', '); // Single newline becomes comma pause
+  
+  // Add pauses after numbers for clarity
+  cleaned = cleaned.replace(/(\d+)/g, '$1 '); // Space after numbers
+  
+  // Clean up multiple spaces
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  
+  // Trim
+  cleaned = cleaned.trim();
+  
+  // Escape XML/SSML special characters
+  cleaned = cleaned
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+  
+  // Don't use SSML - Neural engine doesn't support all prosody features
+  // Just return plain text
+  return cleaned;
+}
+
+/**
  * Convert text to speech using Amazon Polly
  * 
  * Requirements: 6.2
@@ -388,23 +461,28 @@ export async function generateConfirmation(
 async function convertToSpeech(text: string, language: SupportedLanguage): Promise<string> {
   const voiceId = VOICE_IDS[language];
   
+  // Clean text for voice synthesis
+  const cleanedText = cleanTextForVoice(text);
+  
   console.log('Starting Polly synthesis:', {
     voiceId,
     language,
-    textLength: text.length,
+    originalLength: text.length,
+    cleanedLength: cleanedText.length,
   });
   
   try {
     // Map language codes to Polly language codes
     const pollyLanguageCode = language === 'mr-IN' ? 'hi-IN' : language; // Marathi uses Hindi voice
     
-    // Synthesize speech
+    // Synthesize speech with plain text (Neural engine doesn't support all SSML features)
     const command = new SynthesizeSpeechCommand({
-      Text: text,
+      Text: cleanedText,
       OutputFormat: 'mp3',
       VoiceId: voiceId as any, // Type assertion needed for custom voice IDs
       Engine: 'neural',
       LanguageCode: pollyLanguageCode as any,
+      TextType: 'text', // Use plain text instead of SSML
     });
 
     const response = await pollyClient.send(command);
@@ -488,6 +566,36 @@ export async function processApproval(
   const lang = getLanguagePreference(language);
   
   try {
+    // Generate price recommendation before publishing
+    try {
+      const { suggestOptimalPrice } = await import('../services/price-recommendation');
+      const priceRecommendation = await suggestOptimalPrice(
+        partialData.productName || 'product',
+        partialData.category || 'other',
+        partialData.quantity || 0,
+        partialData.unit || 'unit',
+        partialData.price || 0,
+        lang
+      );
+      
+      console.log('Price recommendation:', priceRecommendation);
+      
+      // Send price advice if not competitive
+      if (priceRecommendation.competitive !== 'good' && priceRecommendation.marketData.sampleSize > 0) {
+        const priceAdviceEmoji = priceRecommendation.competitive === 'too_high' ? '⚠️' : '💡';
+        const priceAdvice = `${priceAdviceEmoji} मूल्य सुझाव:\n\n${priceRecommendation.reasoning}\n\n💰 सुझाई गई कीमत: ₹${priceRecommendation.recommendedMin} - ₹${priceRecommendation.recommendedMax}\n\n💡 ${priceRecommendation.tip}`;
+        
+        const { sendTextWithVoice } = await import('./whatsapp-message-sender');
+        await sendTextWithVoice(phone, priceAdvice, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+        
+        // Wait 2 seconds before publishing
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    } catch (error) {
+      console.error('Price recommendation failed, continuing without it:', error);
+      // Continue without price recommendation
+    }
+
     // Call catalog-builder Lambda via EventBridge
     const eventBusName = process.env.EVENT_BUS_NAME;
     if (!eventBusName) {
@@ -529,10 +637,11 @@ export async function processApproval(
     await deletePartialData(phone);
     console.log('Deleted partial data');
 
-    // Send success message
+    // Send success message with voice
     const successMessage = translateMessage('CATALOG_SUCCESS', lang);
-    await sendTextMessage(phone, successMessage, lang.split('-')[0] as 'hi' | 'mr' | 'en');
-    console.log('Sent success message');
+    const { sendTextWithVoice } = await import('./whatsapp-message-sender');
+    await sendTextWithVoice(phone, successMessage, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+    console.log('Sent success message with voice');
 
     return {
       success: true,

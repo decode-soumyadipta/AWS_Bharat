@@ -34,7 +34,7 @@ export const INTERNAL_EVENT_TYPES = {
   VOICE_TRANSCRIPTION_COMPLETE: 'voice.transcription.complete',
   INTENT_CLASSIFIED: 'intent.classified',
   ENTITIES_EXTRACTED: 'entities.extracted',
-  CATALOG_BUILD_REQUESTED: 'catalog.build.requested',
+  CATALOG_BUILD_REQUESTED: 'catalog.build_requested',
   CATALOG_CREATED: 'catalog.created',
   IMAGE_ENHANCEMENT_COMPLETE: 'image.enhancement.complete',
   INVENTORY_UPDATED: 'inventory.updated',

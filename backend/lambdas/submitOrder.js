@@ -53,7 +53,35 @@ async function sendWhatsAppMessage(sellerPhone, message, retries = 3) {
 exports.handler = async (event) => {
     console.log('SubmitOrder Lambda invoked', { event });
 
+    // Handle CORS preflight (OPTIONS)
+    if (event.httpMethod === 'OPTIONS' || event.requestContext?.http?.method === 'OPTIONS') {
+        return {
+            statusCode: 200,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS'
+            },
+            body: JSON.stringify({ message: 'OK' })
+        };
+    }
+
     try {
+        if (!event.body) {
+            return {
+                statusCode: 400,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                body: JSON.stringify({
+                    success: false,
+                    error: { code: 'MISSING_BODY', message: 'Request body is required' }
+                })
+            };
+        }
+
         const orderData = JSON.parse(event.body);
         
         // Validate order data using Order model

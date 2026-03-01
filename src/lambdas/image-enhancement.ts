@@ -2,18 +2,19 @@
  * Image Enhancement Lambda
  * 
  * This Lambda function enhances product photos using Amazon Titan Image Generator v2
- * with CANNY_EDGE conditioning to preserve product structure while generating
- * professional backgrounds.
+ * with INPAINTING and maskPrompt to preserve exact product details while creating professional backgrounds.
+ * 
+ * Approach: INPAINTING with maskPrompt
+ * - Uses maskPrompt to target ONLY the background
+ * - Product remains 100% untouched (labels, text, colors, shape)
+ * - Replaces background with solid professional color
+ * - Improves lighting and overall presentation
  * 
  * Features:
  * - Downloads raw product photos from S3
- * - Encodes images to base64 for Bedrock API
- * - Constructs Titan Image Generator v2 requests with CANNY_EDGE conditioning
- * - Sets positive prompts for professional product photography
- * - Sets negative prompts to avoid label/text modifications
- * - Sets similarityStrength to 0.8 for high structure preservation
- * - Calls Amazon Bedrock InvokeModel API with Titan Image Generator v2
- * - Decodes generated images from base64
+ * - Uses maskPrompt to identify and modify only background
+ * - Preserves ALL product details exactly as photographed
+ * - Creates professional e-commerce product photography
  * - Uploads enhanced images to S3
  * 
  * Validates: Requirements 3.1, 3.2, 3.3, 3.4
@@ -23,6 +24,7 @@ import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { s3Client, bedrockClient, PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { Readable } from 'stream';
+import * as zlib from 'zlib';
 
 /**
  * Titan Image Generator v2 model ID
@@ -88,26 +90,29 @@ export interface ImageEnhancementResponse {
 }
 
 /**
- * Titan Image Generator v2 request structure
+ * Titan Image Generator v2 request structures
  */
-interface TitanImageRequest {
-  taskType: 'IMAGE_VARIATION' | 'BACKGROUND_REMOVAL';
-  imageVariationParams?: {
-    images: string[]; // Base64 encoded images
-    text: string; // Positive prompt
-    negativeText: string; // Negative prompt
-    similarityStrength: number; // 0.0-1.0, higher = more preservation
-  };
-  backgroundRemovalParams?: {
+interface TitanBackgroundRemovalRequest {
+  taskType: 'BACKGROUND_REMOVAL';
+  backgroundRemovalParams: {
     image: string; // Base64 encoded image
   };
+}
+
+interface TitanInpaintingRequest {
+  taskType: 'INPAINTING';
+  inPaintingParams: {
+    image: string; // Base64 encoded image
+    text: string; // What to generate in masked area
+    negativeText?: string;
+    maskPrompt: string; // What to mask
+  };
   imageGenerationConfig: {
-    numberOfImages: number;
     quality: 'standard' | 'premium';
+    numberOfImages: number;
     height: number;
     width: number;
-    cfgScale?: number; // Guidance scale
-    seed?: number; // For reproducibility
+    cfgScale: number;
   };
 }
 
@@ -121,6 +126,11 @@ interface TitanImageResponse {
 
 /**
  * Lambda handler for image enhancement
+ * 
+ * Two-step process for clean white professional background:
+ * Step 1: BACKGROUND_REMOVAL - isolates product with transparent background
+ * Step 2: Composite onto pure white canvas for professional e-commerce look
+ * Fallback: INPAINTING with aggressive white background prompt
  */
 export const handler = async (
   event: ImageEnhancementRequest
@@ -140,41 +150,49 @@ export const handler = async (
     const base64Image = rawImageBuffer.toString('base64');
     console.log(`Encoded image to base64: ${base64Image.length} characters`);
 
-    // Generate prompts based on product information
-    const positivePrompt = generatePositivePrompt(
-      event.productName,
-      event.productCategory
-    );
-    const negativePrompt = generateNegativePrompt();
+    let enhancedImageBuffer: Buffer;
 
-    console.log('Positive prompt:', positivePrompt);
-    console.log('Negative prompt:', negativePrompt);
+    // Step 1: Try BACKGROUND_REMOVAL for clean cutout
+    try {
+      console.log('Step 1: Removing background with Titan BACKGROUND_REMOVAL...');
+      const bgRemovalRequest: TitanBackgroundRemovalRequest = {
+        taskType: 'BACKGROUND_REMOVAL',
+        backgroundRemovalParams: {
+          image: base64Image,
+        },
+      };
 
-    // Use IMAGE_VARIATION to transform background to solid professional color
-    const titanRequest: TitanImageRequest = {
-      taskType: 'IMAGE_VARIATION',
-      imageVariationParams: {
-        images: [base64Image],
-        text: positivePrompt,
-        negativeText: negativePrompt,
-        similarityStrength: 0.95, // Maximum preservation - only change background
-      },
-      imageGenerationConfig: {
-        numberOfImages: 1,
-        quality: 'premium',
-        height: 1024,
-        width: 1024,
-      },
-    };
+      const cutoutBase64 = await invokeTitanImageGenerator(bgRemovalRequest);
+      console.log('Background removed successfully, compositing on white canvas...');
 
-    // Call Bedrock InvokeModel API
-    console.log('Calling Titan Image Generator v2...');
-    const enhancedImageBase64 = await invokeTitanImageGenerator(titanRequest);
-    console.log(`Generated enhanced image: ${enhancedImageBase64.length} characters`);
+      // Step 2: Composite the cutout onto pure white background
+      enhancedImageBuffer = compositeOnWhiteBackground(Buffer.from(cutoutBase64, 'base64'));
+      console.log(`White background composite: ${enhancedImageBuffer.length} bytes`);
+    } catch (bgRemovalError: any) {
+      console.warn('BACKGROUND_REMOVAL failed, falling back to INPAINTING:', bgRemovalError.message);
+      
+      // Fallback: Use INPAINTING with aggressive white background prompt
+      const inpaintRequest: TitanInpaintingRequest = {
+        taskType: 'INPAINTING',
+        inPaintingParams: {
+          image: base64Image,
+          text: 'pure solid white background, bright white studio backdrop, clean plain white, professional product photography, even white illumination, no shadows, bright white everywhere',
+          negativeText: 'color, pattern, texture, gradient, dark, shadow, floor, table, wall, clutter, objects, text, watermark, blur, noise',
+          maskPrompt: 'background, wall, floor, table, surface, surroundings, everything behind and around the main product, backdrop, environment, shadow',
+        },
+        imageGenerationConfig: {
+          quality: 'premium',
+          numberOfImages: 1,
+          height: 1024,
+          width: 1024,
+          cfgScale: 10.0, // High CFG for strict white background adherence
+        },
+      };
 
-    // Decode generated image from base64
-    const enhancedImageBuffer = Buffer.from(enhancedImageBase64, 'base64');
-    console.log(`Decoded enhanced image: ${enhancedImageBuffer.length} bytes`);
+      const inpaintBase64 = await invokeTitanImageGenerator(inpaintRequest);
+      enhancedImageBuffer = Buffer.from(inpaintBase64, 'base64');
+      console.log(`INPAINTING fallback result: ${enhancedImageBuffer.length} bytes`);
+    }
 
     // Upload enhanced image to S3
     console.log('Uploading enhanced image to S3...');
@@ -303,56 +321,249 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
   });
 }
 
+
+
 /**
- * Generate positive prompt for professional product photography
- * CRITICAL: ONLY change background, preserve product 100% exactly as-is
+ * Composite a PNG with transparent background onto pure white canvas
+ * Processes raw PNG pixel data: alpha-blends each pixel onto white (255,255,255)
+ * Result: RGBA PNG where all transparent areas are solid white, product colors preserved
  */
-function generatePositivePrompt(
-  productName: string,
-  productCategory?: string
-): string {
-  // Category-specific solid color backgrounds
-  let backgroundPrompt = '';
+function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
+  // Check if it's a PNG (starts with PNG signature: 137 80 78 71)
+  const isPng = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && 
+                imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
   
-  if (productCategory) {
-    const category = productCategory.toLowerCase();
-    if (category.includes('food') || category.includes('grocery')) {
-      backgroundPrompt = 'solid white background';
-    } else if (category.includes('handicraft') || category.includes('textile')) {
-      backgroundPrompt = 'solid beige background';
-    } else {
-      backgroundPrompt = 'solid light gray background';
-    }
-  } else {
-    backgroundPrompt = 'solid light gray background';
+  if (!isPng) {
+    console.log('Image is not PNG, returning as-is');
+    return imageBuffer;
   }
 
-  // Minimal prompt - only specify background change
-  const prompt = `${backgroundPrompt}, keep product exactly as is, professional studio lighting`;
-
-  return prompt;
+  try {
+    // Parse PNG chunks to extract image data
+    const { width, height, bitDepth, colorType, rawPixels } = decodePng(imageBuffer);
+    
+    // Only process if RGBA (colorType 6) — has alpha channel
+    if (colorType !== 6 || bitDepth !== 8) {
+      console.log(`PNG colorType=${colorType}, bitDepth=${bitDepth} - no alpha compositing needed`);
+      return imageBuffer;
+    }
+    
+    console.log(`Compositing ${width}x${height} RGBA PNG onto white background`);
+    
+    // Alpha-blend each pixel onto white background
+    // Formula: out = fg * alpha + bg * (1 - alpha), where bg = 255 (white)
+    for (let i = 0; i < rawPixels.length; i += 4) {
+      const r = rawPixels[i];
+      const g = rawPixels[i + 1];
+      const b = rawPixels[i + 2];
+      const a = rawPixels[i + 3];
+      
+      if (a === 0) {
+        // Fully transparent → white
+        rawPixels[i] = 255;
+        rawPixels[i + 1] = 255;
+        rawPixels[i + 2] = 255;
+        rawPixels[i + 3] = 255;
+      } else if (a < 255) {
+        // Semi-transparent → blend with white
+        const alpha = a / 255;
+        const invAlpha = 1 - alpha;
+        rawPixels[i] = Math.round(r * alpha + 255 * invAlpha);
+        rawPixels[i + 1] = Math.round(g * alpha + 255 * invAlpha);
+        rawPixels[i + 2] = Math.round(b * alpha + 255 * invAlpha);
+        rawPixels[i + 3] = 255; // Fully opaque
+      }
+      // a === 255: fully opaque, keep as-is (product pixels untouched)
+    }
+    
+    // Re-encode as PNG
+    const result = encodePng(width, height, rawPixels);
+    console.log(`White background composite complete: ${result.length} bytes`);
+    return result;
+  } catch (error: any) {
+    console.warn('PNG compositing failed, returning original:', error.message);
+    return imageBuffer;
+  }
 }
 
 /**
- * Generate negative prompt to prevent ANY product modifications
- * CRITICAL: Prevent ALL changes to product, labels, text, colors, shape
- * MAX LENGTH: 512 characters for Titan Image Generator v2
+ * Minimal PNG decoder - extracts raw RGBA pixel data
+ * Only supports 8-bit RGBA (colorType 6) which is what Titan outputs
  */
-function generateNegativePrompt(): string {
-  // Shortened to fit 512 char limit while preserving key constraints
-  return 'modified product, altered product, changed labels, modified text, blurred text, removed text, different colors, distorted shape, fake appearance, unrealistic, cartoon, illustration, painting, artistic, changed packaging, modified branding, extra objects, watermarks, blurry, low quality, deformed, changed features, altered appearance, modified surface, different material, changed size, modified proportions, pattern background, textured background, busy background';
+function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: number; colorType: number; rawPixels: Buffer } {
+  // Verify PNG signature
+  if (buffer.readUInt32BE(0) !== 0x89504E47 || buffer.readUInt32BE(4) !== 0x0D0A1A0A) {
+    throw new Error('Not a valid PNG');
+  }
+  
+  let offset = 8;
+  let width = 0, height = 0, bitDepth = 0, colorType = 0;
+  const idatChunks: Buffer[] = [];
+  
+  while (offset < buffer.length) {
+    const chunkLength = buffer.readUInt32BE(offset);
+    const chunkType = buffer.toString('ascii', offset + 4, offset + 8);
+    const chunkData = buffer.subarray(offset + 8, offset + 8 + chunkLength);
+    
+    if (chunkType === 'IHDR') {
+      width = chunkData.readUInt32BE(0);
+      height = chunkData.readUInt32BE(4);
+      bitDepth = chunkData[8];
+      colorType = chunkData[9];
+    } else if (chunkType === 'IDAT') {
+      idatChunks.push(chunkData);
+    } else if (chunkType === 'IEND') {
+      break;
+    }
+    
+    offset += 12 + chunkLength; // 4 length + 4 type + data + 4 crc
+  }
+  
+  if (!width || !height) {
+    throw new Error('PNG IHDR not found');
+  }
+  
+  // Decompress concatenated IDAT data
+  const compressedData = Buffer.concat(idatChunks);
+  const decompressed = zlib.inflateSync(compressedData);
+  
+  // Un-filter scanlines (each row starts with a filter byte)
+  const bpp = 4; // bytes per pixel for RGBA
+  const rowBytes = width * bpp;
+  const rawPixels = Buffer.alloc(width * height * bpp);
+  
+  for (let y = 0; y < height; y++) {
+    const filterType = decompressed[y * (rowBytes + 1)];
+    const scanlineStart = y * (rowBytes + 1) + 1;
+    const outStart = y * rowBytes;
+    
+    for (let x = 0; x < rowBytes; x++) {
+      const raw = decompressed[scanlineStart + x];
+      let val = raw;
+      
+      switch (filterType) {
+        case 0: // None
+          val = raw;
+          break;
+        case 1: // Sub
+          val = (raw + (x >= bpp ? rawPixels[outStart + x - bpp] : 0)) & 0xFF;
+          break;
+        case 2: // Up
+          val = (raw + (y > 0 ? rawPixels[outStart - rowBytes + x] : 0)) & 0xFF;
+          break;
+        case 3: // Average
+          const left = x >= bpp ? rawPixels[outStart + x - bpp] : 0;
+          const up = y > 0 ? rawPixels[outStart - rowBytes + x] : 0;
+          val = (raw + Math.floor((left + up) / 2)) & 0xFF;
+          break;
+        case 4: // Paeth
+          const pLeft = x >= bpp ? rawPixels[outStart + x - bpp] : 0;
+          const pUp = y > 0 ? rawPixels[outStart - rowBytes + x] : 0;
+          const pUpLeft = (x >= bpp && y > 0) ? rawPixels[outStart - rowBytes + x - bpp] : 0;
+          val = (raw + paethPredictor(pLeft, pUp, pUpLeft)) & 0xFF;
+          break;
+      }
+      
+      rawPixels[outStart + x] = val;
+    }
+  }
+  
+  return { width, height, bitDepth, colorType, rawPixels };
+}
+
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+/**
+ * Minimal PNG encoder - creates valid PNG from raw RGBA pixel data
+ * Uses filter type 0 (None) for simplicity + best compression for processed images
+ */
+function encodePng(width: number, height: number, rawPixels: Buffer): Buffer {
+  const bpp = 4;
+  const rowBytes = width * bpp;
+  
+  // Add filter byte (0 = None) to each scanline
+  const filtered = Buffer.alloc(height * (rowBytes + 1));
+  for (let y = 0; y < height; y++) {
+    filtered[y * (rowBytes + 1)] = 0; // filter type None
+    rawPixels.copy(filtered, y * (rowBytes + 1) + 1, y * rowBytes, (y + 1) * rowBytes);
+  }
+  
+  // Compress with zlib
+  const compressed = zlib.deflateSync(filtered, { level: 9 });
+  
+  // Build PNG file
+  const chunks: Buffer[] = [];
+  
+  // Signature
+  chunks.push(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
+  
+  // IHDR
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bitDepth
+  ihdr[9] = 6; // colorType RGBA
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = 0; // interlace
+  chunks.push(createPngChunk('IHDR', ihdr));
+  
+  // IDAT
+  chunks.push(createPngChunk('IDAT', compressed));
+  
+  // IEND
+  chunks.push(createPngChunk('IEND', Buffer.alloc(0)));
+  
+  return Buffer.concat(chunks);
+}
+
+function createPngChunk(type: string, data: Buffer): Buffer {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  
+  // CRC covers type + data
+  const crcData = Buffer.concat([typeBuffer, data]);
+  const crc = crc32(crcData);
+  const crcBuffer = Buffer.alloc(4);
+  crcBuffer.writeUInt32BE(crc, 0);
+  
+  return Buffer.concat([length, typeBuffer, data, crcBuffer]);
+}
+
+/**
+ * CRC-32 for PNG chunk verification
+ */
+function crc32(buf: Buffer): number {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) {
+    crc ^= buf[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
 /**
  * Invoke Titan Image Generator v2 via Bedrock
+ * Supports both BACKGROUND_REMOVAL and INPAINTING task types
  */
 async function invokeTitanImageGenerator(
-  request: TitanImageRequest
+  request: TitanBackgroundRemovalRequest | TitanInpaintingRequest
 ): Promise<string> {
   // Prepare the request body
   const requestBody = JSON.stringify(request);
 
-  console.log('Titan request body size:', requestBody.length, 'bytes');
+  console.log('Titan request:', { taskType: request.taskType, bodySize: requestBody.length });
 
   // Create InvokeModel command
   const command = new InvokeModelCommand({
@@ -371,7 +582,7 @@ async function invokeTitanImageGenerator(
 
   // Parse response
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-  console.log('Titan response received');
+  console.log('Titan response received for', request.taskType);
 
   // Check for errors
   if (responseBody.error) {
@@ -393,7 +604,7 @@ async function invokeTitanImageGenerator(
  */
 function generateEnhancedImageKey(sellerId: string, itemId: string): string {
   const timestamp = Date.now();
-  return `products/enhanced/${sellerId}/${itemId}_${timestamp}.jpg`;
+  return `products/enhanced/${sellerId}/${itemId}_${timestamp}.png`;
 }
 
 /**
@@ -403,16 +614,20 @@ async function uploadImageToS3(
   imageBuffer: Buffer,
   key: string
 ): Promise<string> {
+  // Detect content type from buffer
+  const isPng = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50;
+  const contentType = isPng ? 'image/png' : 'image/jpeg';
+  
   const command = new PutObjectCommand({
     Bucket: PRODUCTS_BUCKET_NAME,
     Key: key,
     Body: imageBuffer,
-    ContentType: 'image/jpeg',
+    ContentType: contentType,
   });
 
   await s3Client.send(command);
 
   // Return S3 URL
-  const region = process.env.AWS_REGION || 'ap-south-1';
+  const region = process.env.AWS_REGION || 'us-east-1';
   return `https://${PRODUCTS_BUCKET_NAME}.s3.${region}.amazonaws.com/${key}`;
 }

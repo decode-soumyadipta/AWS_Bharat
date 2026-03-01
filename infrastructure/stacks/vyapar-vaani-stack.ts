@@ -366,7 +366,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
         
-        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
       },
@@ -438,8 +438,8 @@ export class VyaparVaaniStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/catalog-builder.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
+      timeout: cdk.Duration.seconds(30), // Increased for AI processing
+      memorySize: 512, // Increased for AI processing
       role: lambdaExecutionRole,
       environment: {
         TABLE_NAME: this.dataTable.tableName,
@@ -447,6 +447,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
+        MARKETPLACE_PRODUCTS_TABLE: 'marketplace-products',
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
@@ -484,6 +485,13 @@ export class VyaparVaaniStack extends cdk.Stack {
     this.productsBucket.grantReadWrite(webhookLambdaRole);
     this.eventBus.grantPutEventsTo(webhookLambdaRole);
     this.encryptionKey.grantEncryptDecrypt(webhookLambdaRole);
+    
+    // Grant Polly permissions for voice synthesis
+    webhookLambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['polly:SynthesizeSpeech'],
+      resources: ['*'],
+    }));
 
     const whatsappWebhookLambda = new lambda.Function(this, 'WhatsAppWebhookLambda', {
       functionName: 'vyapar-vaani-whatsapp-webhook',
@@ -502,7 +510,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         WHATSAPP_VERIFY_TOKEN: process.env.WHATSAPP_VERIFY_TOKEN || 'vyapar-vaani-webhook-token',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
-        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
         VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
         KYC_FLOW_ENABLED: process.env.KYC_FLOW_ENABLED || 'true',
@@ -781,6 +789,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         KMS_KEY_ID: this.encryptionKey.keyId,
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         MAX_IMAGE_SIZE_MB: process.env.MAX_IMAGE_SIZE_MB || '5',
         STATE_TTL_DAYS: process.env.STATE_TTL_DAYS || '7',
         VOICE_FIRST_ENABLED: process.env.VOICE_FIRST_ENABLED || 'true',
@@ -831,7 +840,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
         MAX_IMAGE_SIZE_MB: process.env.MAX_IMAGE_SIZE_MB || '5',
@@ -856,7 +865,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || '',
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
         POLLY_VOICE_ID_HINDI: process.env.POLLY_VOICE_ID_HINDI || 'Kajal',
@@ -921,6 +930,98 @@ export class VyaparVaaniStack extends cdk.Stack {
         },
       },
       targets: [new targets.LambdaFunction(voiceHandlerLambda)],
+    });
+
+    // Agent Handler Lambda - Unified AI agent for all message types
+    const agentHandlerLambda = new lambda.Function(this, 'AgentHandlerLambda', {
+      functionName: 'vyapar-vaani-agent-handler',
+      description: 'Unified AI agent handler for natural language processing',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/agent-handler.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 1024,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
+        WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        WHATSAPP_BUSINESS_ACCOUNT_ID: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+        CONFIRMATION_HANDLER_FUNCTION_NAME: 'vyapar-vaani-confirmation-handler',
+      },
+      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // Grant permissions to agent handler
+    this.dataTable.grantReadWriteData(agentHandlerLambda);
+    this.eventBus.grantPutEventsTo(agentHandlerLambda);
+    this.productsBucket.grantReadWrite(agentHandlerLambda);
+    whatsappSenderLambda.grantInvoke(agentHandlerLambda);
+    voiceTranscriptionLambda.grantInvoke(agentHandlerLambda);
+    imageEnhancementLambda.grantInvoke(agentHandlerLambda);
+    confirmationHandlerLambda.grantInvoke(agentHandlerLambda);
+
+    // Grant Bedrock permissions for AI agent
+    agentHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['bedrock:InvokeModel'],
+        resources: ['arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0'],
+      })
+    );
+
+    // Grant Polly permissions for voice synthesis
+    agentHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['polly:SynthesizeSpeech'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant Transcribe permissions for voice transcription
+    agentHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'transcribe:StartTranscriptionJob',
+          'transcribe:GetTranscriptionJob',
+          'transcribe:DeleteTranscriptionJob',
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Grant CloudWatch Metrics permissions
+    agentHandlerLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['cloudwatch:PutMetricData'],
+        resources: ['*'],
+      })
+    );
+
+    // Rule: Agent Handler - ALL messages in ACTIVE state (natural language queries)
+    new events.Rule(this, 'AgentHandlerRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-agent-handler-rule',
+      description: 'Routes all messages to AI agent for natural language processing in ACTIVE state',
+      eventPattern: {
+        source: [EVENT_SOURCES.WHATSAPP],
+        detailType: [
+          WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_VOICE,
+          WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_TEXT,
+          WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE,
+          WHATSAPP_EVENT_TYPES.BUTTON_CLICKED,
+        ],
+        detail: {
+          state: ['ACTIVE'],
+          handler: ['AGENT'], // New handler type for agent
+        },
+      },
+      targets: [new targets.LambdaFunction(agentHandlerLambda)],
     });
 
     // Rule: Image Handler - Image messages in IMAGE_PENDING or ACTIVE state
@@ -1024,8 +1125,9 @@ export class VyaparVaaniStack extends cdk.Stack {
       dataTable: this.dataTable,
       eventBus: this.eventBus,
       lambdaExecutionRole,
+      productsBucket: this.productsBucket,
       whatsappConfig: {
-        apiEndpoint: process.env.WHATSAPP_API_ENDPOINT || '',
+        apiEndpoint: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
         phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
       },

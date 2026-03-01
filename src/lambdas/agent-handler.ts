@@ -15,7 +15,11 @@
 import { processWithEnhancedAgent, sendEnhancedAgentMessage } from '../services/enhanced-agent';
 import { getUserState, updateUserState } from '../services/state-manager';
 import { getPartialData, mergePartialData, deletePartialData } from '../services/partial-data-store';
-import { getConversationContext, trackSuccessfulCatalog } from '../services/conversation-memory';
+import { 
+  getConversationContext, 
+  trackSuccessfulCatalog, 
+  addConversationMessage,
+} from '../services/conversation-memory';
 import { sendImageMessage, sendInteractiveMessage } from './whatsapp-message-sender';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { eventBridgeClient } from '../config/aws-clients';
@@ -27,7 +31,7 @@ import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 interface AgentHandlerEvent {
   phone: string;
   messageId: string;
-  messageType: 'text' | 'voice' | 'image' | 'button_reply';
+  messageType: 'text' | 'voice' | 'audio' | 'image' | 'button_reply';
   content: {
     text?: string;
     mediaUrl?: string;
@@ -37,11 +41,33 @@ interface AgentHandlerEvent {
 }
 
 /**
+ * Global timeout wrapper for safety
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => {
+      console.warn(`⚠️ Handler timeout after ${ms}ms, returning fallback`);
+      resolve(fallback);
+    }, ms)),
+  ]);
+}
+
+/**
  * Main agent handler
  */
 export const handler = async (event: any): Promise<any> => {
   console.log('🤖 Agent handler invoked:', JSON.stringify(event, null, 2));
 
+  // Wrap entire handler in a 25-second timeout (Lambda has 30s)
+  return withTimeout(
+    processAgentEvent(event),
+    25000,
+    { success: false, error: 'Handler timeout' }
+  );
+};
+
+async function processAgentEvent(event: any): Promise<any> {
   try {
     const eventDetail = event.detail || event;
     const { phone, messageType, content, language = 'hi-IN' } = eventDetail;
@@ -49,6 +75,13 @@ export const handler = async (event: any): Promise<any> => {
     if (!phone) {
       throw new Error('Phone number is required');
     }
+
+    // Send typing indicator IMMEDIATELY to show we're processing
+    const { sendTypingIndicator, markMessageAsRead } = await import('./whatsapp-message-sender');
+    await Promise.all([
+      sendTypingIndicator(phone),
+      eventDetail.messageId ? markMessageAsRead(eventDetail.messageId) : Promise.resolve(),
+    ]);
 
     // Get user state and context
     const userState = await getUserState(phone);
@@ -65,25 +98,27 @@ export const handler = async (event: any): Promise<any> => {
     let userMessage = '';
     let shouldProcessWithAgent = true;
 
+    // Keep typing active during voice transcription
     switch (messageType) {
       case 'voice':
-        // Voice messages need transcription first
+      case 'audio':
+        await sendTypingIndicator(phone); // Refresh typing during transcription
         userMessage = await handleVoiceMessage(eventDetail);
+        await sendTypingIndicator(phone); // Refresh typing after transcription
         break;
 
       case 'image':
-        // Image messages
+        await sendTypingIndicator(phone);
         userMessage = await handleImageMessage(eventDetail, phone, language);
+        await sendTypingIndicator(phone);
         break;
 
       case 'button_reply':
-        // Button clicks
         userMessage = await handleButtonClick(eventDetail, phone, language);
-        shouldProcessWithAgent = content.buttonPayload !== 'approve'; // Skip agent for approve
+        shouldProcessWithAgent = content.buttonPayload !== 'approve';
         break;
 
       case 'text':
-        // Text messages
         userMessage = content.text || '';
         break;
 
@@ -96,6 +131,18 @@ export const handler = async (event: any): Promise<any> => {
       return { success: true };
     }
 
+    // For CONFIRMATION_PENDING state, detect price/quantity updates and handle them
+    if (userState?.state === 'CONFIRMATION_PENDING' && partialData) {
+      const updateResult = await detectAndApplyUpdate(userMessage, phone, partialData, language);
+      if (updateResult) {
+        console.log('📝 Applied update in CONFIRMATION_PENDING:', updateResult);
+        return { success: true, message: 'Update applied' };
+      }
+    }
+
+    // Keep typing indicator active while agent processes
+    await sendTypingIndicator(phone);
+
     // Process with agent
     if (shouldProcessWithAgent) {
       const agentResponse = await processWithEnhancedAgent(
@@ -107,8 +154,16 @@ export const handler = async (event: any): Promise<any> => {
 
       console.log('🤖 Agent response:', agentResponse);
 
-      // Send agent message
-      await sendEnhancedAgentMessage(phone, agentResponse.message, language);
+      // Refresh typing before sending response
+      await sendTypingIndicator(phone);
+
+      // Send agent message with correct response mode
+      await sendEnhancedAgentMessage(
+        phone, 
+        agentResponse.message, 
+        language, 
+        agentResponse.responseMode || 'voice'
+      );
 
       // Execute agent actions
       if (agentResponse.actions && agentResponse.actions.length > 0) {
@@ -129,8 +184,9 @@ export const handler = async (event: any): Promise<any> => {
       if (phone) {
         await sendEnhancedAgentMessage(
           phone,
-          '😔 माफ़ करें, मुझे कुछ समस्या हो रही है। कृपया फिर से कोशिश करें।',
-          'hi-IN'
+          'माफ़ करें, कुछ समस्या हो गई। कृपया फिर से बोलें।',
+          'hi-IN',
+          'voice'
         );
       }
     } catch (sendError) {
@@ -142,25 +198,130 @@ export const handler = async (event: any): Promise<any> => {
       error: error.message,
     };
   }
-};
+}
 
+/**
+ * Detect and apply price/quantity updates from user message during CONFIRMATION_PENDING
+ * Returns true if an update was detected and applied, false otherwise
+ */
+async function detectAndApplyUpdate(
+  message: string,
+  phone: string,
+  partialData: any,
+  language: string
+): Promise<string | null> {
+  const lower = message.toLowerCase();
+  
+  // Price update patterns (romanized Hindi, Devanagari, English)
+  const pricePatterns = [
+    /(?:keemat|kimat|price|daam|dam|rate)\s*(\d+)/i,
+    /(\d+)\s*(?:rupees?|rs|₹|rupi?ye?|mein|me)\b/i,
+    /कीमत\s*(?:₹)?(\d+)/,
+    /(\d+)\s*(?:रुपये|में)\b/,
+    /किंमत\s*(?:₹)?(\d+)/,
+  ];
+  
+  // Quantity update patterns
+  const quantityPatterns = [
+    /(?:matra|quantity|qty|kitna)\s*(\d+)/i,
+    /(\d+)\s*(?:kg|kilo|piece|pcs|dozen|liter|litre|packet|bag)\b/i,
+    /मात्रा\s*(\d+)/,
+    /(\d+)\s*(?:किलो|पीस|दर्जन|लीटर|पैकेट|बैग)\b/,
+    /प्रमाण\s*(\d+)/,
+  ];
+  
+  // Check for price update
+  for (const pattern of pricePatterns) {
+    const match = message.match(pattern);
+    if (match && match[1]) {
+      const newPrice = parseInt(match[1]);
+      if (newPrice > 0 && newPrice < 100000) {
+        console.log(`💰 Price update detected: ₹${newPrice}`);
+        await mergePartialData(phone, { price: newPrice, source: 'text' });
+        
+        // Re-generate confirmation
+        const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
+        const { InvokeCommand } = await import('@aws-sdk/client-lambda');
+        const { lambdaClient } = await import('../config/aws-clients');
+        await lambdaClient.send(new InvokeCommand({
+          FunctionName: confirmationFunctionName,
+          Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+        }));
+        
+        return `price updated to ₹${newPrice}`;
+      }
+    }
+  }
+  
+  // Check for quantity update
+  for (const pattern of quantityPatterns) {
+    const match = message.match(pattern);
+    if (match && match[1]) {
+      const newQty = parseInt(match[1]);
+      if (newQty > 0 && newQty < 100000) {
+        console.log(`📊 Quantity update detected: ${newQty}`);
+        await mergePartialData(phone, { quantity: newQty, source: 'text' });
+        
+        // Re-generate confirmation  
+        const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
+        const { InvokeCommand } = await import('@aws-sdk/client-lambda');
+        const { lambdaClient } = await import('../config/aws-clients');
+        await lambdaClient.send(new InvokeCommand({
+          FunctionName: confirmationFunctionName,
+          Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+        }));
+        
+        return `quantity updated to ${newQty}`;
+      }
+    }
+  }
+  
+  return null; // No update detected - let agent handle it
+}
 /**
  * Handle voice message
  */
 async function handleVoiceMessage(eventDetail: any): Promise<string> {
+  console.log('Handling voice message:', eventDetail.content.mediaUrl);
+  
+  // Download audio from WhatsApp first
+  const { downloadAudio } = await import('../services/media-download');
+  const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+  
+  if (!bucketName) {
+    throw new Error('PRODUCTS_BUCKET_NAME not configured');
+  }
+  
+  console.log('Downloading audio from WhatsApp...');
+  const downloadResult = await downloadAudio(eventDetail.content.mediaUrl, bucketName);
+  
+  if (!downloadResult.success || !downloadResult.s3Url) {
+    throw new Error(downloadResult.error || 'Failed to download audio');
+  }
+  
+  console.log('Audio downloaded successfully:', downloadResult.s3Url);
+  
   // Import voice transcription
   const { handler: transcriptionHandler } = await import('./voice-transcription');
   
+  console.log('Voice transcription request:', {
+    audioUrl: downloadResult.s3Url,
+    messageId: eventDetail.messageId,
+    languageCode: eventDetail.language,
+  });
+  
   const transcriptionResult = await transcriptionHandler({
-    audioUrl: eventDetail.content.mediaUrl,
+    audioUrl: downloadResult.s3Url,
     messageId: eventDetail.messageId,
     languageCode: eventDetail.language,
   });
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
+    console.error('Voice transcription failed:', transcriptionResult.error);
     throw new Error('Voice transcription failed');
   }
 
+  console.log('Transcription successful:', transcriptionResult.transcription);
   return transcriptionResult.transcription;
 }
 
@@ -340,5 +501,5 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     ? '🎉 खूप छान! तुमचे उत्पादन यशस्वीरित्या जोडले गेले आहे. आता ते ऑनलाइन विक्रीसाठी तयार आहे!'
     : '🎉 Excellent! Your product has been successfully added. It\'s now ready for online sale!';
 
-  await sendEnhancedAgentMessage(phone, successMsg, language as any);
+  await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
 }

@@ -179,180 +179,6 @@ export const handler = async (
 };
 
 /**
- * Store catalog item in DynamoDB
- */
-async function storeCatalogItem(
-  becknItem: BecknCatalogItem,
-  sellerId: string,
-  images?: { raw: string; enhanced: string }
-): Promise<CatalogItem> {
-  const itemId = becknItem.id;
-  const timestamp = Date.now();
-
-  const catalogItem: CatalogItem = {
-    PK: `SELLER#${sellerId}`,
-    SK: `ITEM#${itemId}`,
-    GSI3PK: `CATEGORY#${becknItem.category_id}`,
-    GSI3SK: `ITEM#${itemId}`,
-    entityType: 'CATALOG_ITEM',
-    itemId,
-    sellerId,
-    becknItem,
-    images: images || {
-      raw: becknItem.descriptor.symbol || '',
-      enhanced: becknItem.descriptor.symbol || '',
-    },
-    status: 'ACTIVE',
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    version: 1,
-  };
-
-  await createCatalogItem(catalogItem);
-  return catalogItem;
-}
-
-/**
- * Construct ONDC on_search payload
- */
-function constructONDCPayload(
-  catalogItem: CatalogItem,
-  sellerProfile: SellerProfile
-): ONDCCatalogPayload {
-  const transactionId = randomUUID();
-  const messageId = randomUUID();
-  const timestamp = new Date().toISOString();
-
-  // For this implementation, we use default location data
-  // In production, this would come from seller profile
-  const defaultLocation = {
-    id: sellerProfile.sellerId,
-    gps: '19.0760,72.8777', // Mumbai coordinates as default
-    address: {
-      locality: 'Default Locality',
-      street: 'Default Street',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      country: 'IND' as const,
-      area_code: '400001',
-    },
-  };
-
-  const payload: ONDCCatalogPayload = {
-    context: {
-      domain: 'nic2004:52110', // Retail domain
-      country: 'IND',
-      city: '*', // All cities
-      action: 'on_search',
-      core_version: '1.2.0',
-      bap_id: 'buyer-app.ondc.in', // This would come from the search request
-      bap_uri: 'https://api.buyer-app.ondc.in',
-      bpp_id: sellerProfile.ondc.subscriberId,
-      bpp_uri: sellerProfile.ondc.subscriberUrl,
-      transaction_id: transactionId,
-      message_id: messageId,
-      timestamp,
-    },
-    message: {
-      catalog: {
-        'bpp/descriptor': {
-          name: 'Vyapar Vaani',
-          symbol: 'https://vyapar-vaani.in/logo.png',
-          short_desc: 'Rural Merchant Network',
-          long_desc: 'Empowering rural merchants through voice-first commerce',
-          images: ['https://vyapar-vaani.in/banner.png'],
-        },
-        'bpp/providers': [
-          {
-            id: sellerProfile.sellerId,
-            descriptor: {
-              name: sellerProfile.name,
-              short_desc: `Products from ${sellerProfile.name}`,
-              long_desc: `Quality products from rural merchant ${sellerProfile.name}`,
-              images: [],
-            },
-            locations: [defaultLocation],
-            items: [catalogItem.becknItem],
-          },
-        ],
-      },
-    },
-  };
-
-  return payload;
-}
-
-/**
- * Broadcast catalog to ONDC Registry via BPP Adapter
- * 
- * In production, this would call the BPP Adapter Lambda or API
- * For now, we simulate the broadcast
- */
-async function broadcastToONDC(payload: ONDCCatalogPayload): Promise<void> {
-  // TODO: Implement actual BPP Adapter call
-  // This would involve:
-  // 1. Signing the payload with BPP private key
-  // 2. Sending HTTP POST to ONDC Registry
-  // 3. Handling response and retries
-  
-  console.log('Broadcasting to ONDC Registry (simulated):', {
-    bpp_id: payload.context.bpp_id,
-    transaction_id: payload.context.transaction_id,
-    items_count: payload.message.catalog['bpp/providers'][0].items.length,
-  });
-
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  console.log('Broadcast successful (simulated)');
-}
-
-/**
- * Request missing information from seller via WhatsApp
- */
-async function requestMissingInformation(
-  phone: string,
-  language: 'hi' | 'mr' | 'en',
-  missingFields: string[],
-  errors: Array<{ field: string; message: string }>
-): Promise<void> {
-  // TODO: Implement WhatsApp message sending
-  // This would call the WhatsApp message sender Lambda
-  
-  const messages = {
-    hi: {
-      title: '❌ कैटलॉग में कुछ जानकारी गायब है',
-      fields: 'कृपया निम्नलिखित जानकारी प्रदान करें:',
-      retry: 'कृपया फिर से प्रयास करें।',
-    },
-    mr: {
-      title: '❌ कॅटलॉगमध्ये काही माहिती गहाळ आहे',
-      fields: 'कृपया खालील माहिती प्रदान करा:',
-      retry: 'कृपया पुन्हा प्रयत्न करा.',
-    },
-    en: {
-      title: '❌ Some information is missing from the catalog',
-      fields: 'Please provide the following information:',
-      retry: 'Please try again.',
-    },
-  };
-
-  const msg = messages[language];
-  const fieldList = errors.map((e) => `• ${e.message}`).join('\n');
-  const text = `${msg.title}\n\n${msg.fields}\n${fieldList}\n\n${msg.retry}`;
-
-  console.log('Requesting missing information from seller (simulated):', {
-    phone,
-    language,
-    missingFields,
-    text,
-  });
-
-  // Simulate sending message
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
-
-/**
  * Publish catalog.created event to EventBridge for marketplace sync
  */
 async function publishCatalogCreatedEvent(
@@ -400,41 +226,36 @@ async function publishCatalogCreatedEvent(
 
 /**
  * Send confirmation WhatsApp message to seller via EventBridge
- * Sends a single bilingual message (Hindi above, English below)
+ * Sends a concise message with voice confirmation
  */
 async function sendConfirmationToSeller(
   sellerId: string,
   catalogItem: BecknCatalogItem,
   language: 'hi' | 'mr' | 'en'
 ): Promise<boolean> {
-  // Create bilingual message: Hindi above, English below, properly aligned
-  const hindiText = `✅ उत्पाद सफलतापूर्वक जोड़ा गया!
+  // Create short, concise message
+  const messages = {
+    hi: `🎉 बधाई हो! ${catalogItem.descriptor.name} सफलतापूर्वक जोड़ा गया।
 
-उत्पाद: ${catalogItem.descriptor.name}
-कीमत: ₹${catalogItem.price.value}
-मात्रा: ${catalogItem.quantity.available.count}
-स्थिति: सक्रिय
+₹${catalogItem.price.value} | ${catalogItem.quantity.available.count} ${catalogItem.quantity.unitized?.measure.unit || 'unit'}
 
-आपका उत्पाद अब खरीदारों को दिखाई देगा।`;
+आपका उत्पाद अब खरीदारों को दिखाई देगा।`,
+    mr: `🎉 अभिनंदन! ${catalogItem.descriptor.name} यशस्वीरित्या जोडले गेले।
 
-  const englishText = `✅ Product added successfully!
+₹${catalogItem.price.value} | ${catalogItem.quantity.available.count} ${catalogItem.quantity.unitized?.measure.unit || 'unit'}
 
-Product: ${catalogItem.descriptor.name}
-Price: ₹${catalogItem.price.value}
-Quantity: ${catalogItem.quantity.available.count}
-Status: Active
+तुमचे उत्पादन आता खरेदीदारांना दिसेल.`,
+    en: `🎉 Congratulations! ${catalogItem.descriptor.name} added successfully.
 
-Your product is now visible to buyers.`;
+₹${catalogItem.price.value} | ${catalogItem.quantity.available.count} ${catalogItem.quantity.unitized?.measure.unit || 'unit'}
 
-  // Combine Hindi and English in a single message
-  const bilingualText = `${hindiText}
+Your product is now visible to buyers.`,
+  };
 
-━━━━━━━━━━━━━━━━
-
-${englishText}`;
+  const text = messages[language] || messages.en;
 
   try {
-    // Publish WhatsApp message send event to EventBridge
+    // Publish WhatsApp message send event to EventBridge with voice enabled
     const { EventBridgeClient, PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
     const eventBridge = new EventBridgeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
@@ -446,9 +267,9 @@ ${englishText}`;
             DetailType: 'whatsapp.message.send',
             Detail: JSON.stringify({
               to: sellerId, // Using sellerId as phone number
-              type: 'text',
+              type: 'text_with_voice', // Enable voice confirmation
               content: {
-                text: bilingualText,
+                text,
               },
               language,
             }),
@@ -458,7 +279,7 @@ ${englishText}`;
       })
     );
 
-    console.log('Bilingual confirmation message event published to EventBridge');
+    console.log('Concise confirmation message with voice published to EventBridge');
     return true;
   } catch (error) {
     console.error('Failed to publish confirmation message event:', error);

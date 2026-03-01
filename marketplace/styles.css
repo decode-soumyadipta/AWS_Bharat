@@ -253,6 +253,14 @@ header {
     overflow: hidden;
 }
 
+.product-description {
+    color: #565959;
+    font-size: 0.8rem;
+    margin-bottom: 8px;
+    line-height: 1.4;
+    font-style: italic;
+}
+
 .product-seller {
     color: #565959;
     font-size: 0.85rem;

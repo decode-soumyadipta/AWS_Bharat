@@ -97,6 +97,9 @@ export const handler = withXRayTracing(async (
 
           // Send initial acknowledgment message
           await sendFeedbackMessage(phone, 'DOCUMENT_RECEIVED', language);
+          
+          // Wait 1 second before processing
+          await new Promise(resolve => setTimeout(resolve, 1000));
 
           // Step 1: Download image from WhatsApp
           logStructured('INFO', 'Downloading image from WhatsApp', { mediaId });
@@ -174,6 +177,9 @@ export const handler = withXRayTracing(async (
 
           // Send verification progress message
           await sendFeedbackMessage(phone, 'DOCUMENT_VERIFIED', language);
+          
+          // Wait 1.5 seconds before validation
+          await new Promise(resolve => setTimeout(resolve, 1500));
 
           // Step 4: Validate PAN format and Aadhaar presence
           const validation = validateKYCData(extractedData);
@@ -199,6 +205,9 @@ export const handler = withXRayTracing(async (
 
           // Send registration progress message
           await sendFeedbackMessage(phone, 'REGISTERING_SELLER', language);
+          
+          // Wait 1.5 seconds before registration
+          await new Promise(resolve => setTimeout(resolve, 1500));
 
           // Step 5: Call seller-registration Lambda
           logStructured('INFO', 'Calling seller-registration Lambda');
@@ -240,6 +249,8 @@ export const handler = withXRayTracing(async (
           logStructured('INFO', 'User state updated to KYC_VERIFIED');
 
           // Step 7: Send confirmation message
+          // Wait 2 seconds before final success message
+          await new Promise(resolve => setTimeout(resolve, 2000));
           await sendSuccessMessage(phone, language);
           logStructured('INFO', 'Confirmation message sent');
 

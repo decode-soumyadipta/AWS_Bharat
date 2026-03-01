@@ -38,6 +38,12 @@ export interface BecknQuantity {
   maximum: {
     count: number;
   };
+  unitized?: {
+    measure: {
+      unit: string; // e.g., "kilogram", "unit", "litre"
+      value: string; // e.g., "1"
+    };
+  };
 }
 
 /**

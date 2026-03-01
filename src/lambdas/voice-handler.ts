@@ -24,8 +24,6 @@ import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 import { 
   addConversationMessage, 
   getConversationContext, 
-  generateContextualGreeting,
-  generateContextualResponse,
   updateUserPreferences
 } from '../services/conversation-memory';
 
@@ -192,17 +190,22 @@ export const handler = async (
     const { entities, missingFields } = entityResult;
     console.log('Entities extracted:', { entities, missingFields });
 
-    // Check if user is trying to update multiple things or start new order during confirmation
+    // Check if user is trying to start a completely new product during confirmation
     if (currentState && currentState.state === 'CONFIRMATION_PENDING') {
-      // Check if transcription contains multiple intents (price AND quantity, or new product)
-      const lowerText = transcription.toLowerCase();
-      const hasPrice = lowerText.includes('price') || lowerText.includes('कीमत') || lowerText.includes('किंमत') || /\d+\s*(rupee|रुपये|रुपया)/.test(lowerText);
-      const hasQuantity = lowerText.includes('quantity') || lowerText.includes('मात्रा') || lowerText.includes('प्रमाण');
-      const hasNewProduct = lowerText.includes('new') || lowerText.includes('नया') || lowerText.includes('नवीन') || lowerText.includes('add') || lowerText.includes('जोड़');
+      // Get existing partial data to compare product names
+      const existingData = await getPartialData(phone);
+      const existingProductName = existingData?.productName?.toLowerCase();
+      const newProductName = entities.product_name?.toLowerCase();
       
-      // If multiple updates or new product mentioned, ask for clarification
-      if ((hasPrice && hasQuantity) || (hasNewProduct && (intent === 'UPDATE_PRICE' || intent === 'UPDATE_QUANTITY'))) {
-        console.log('Multiple intents detected, asking for clarification');
+      // Check if user mentioned a DIFFERENT product name
+      const isDifferentProduct = newProductName && existingProductName && newProductName !== existingProductName;
+      
+      // Only ask for clarification if user mentions a DIFFERENT product name
+      if (isDifferentProduct) {
+        console.log('Different product name detected, asking for clarification:', {
+          existing: existingProductName,
+          new: newProductName
+        });
         
         const clarificationMsg = detectedLanguage === 'hi-IN'
           ? 'क्या आप नया ऑर्डर शुरू करना चाहते हैं या मौजूदा ऑर्डर में बदलाव करना चाहते हैं? कृपया बताएं।'
@@ -228,6 +231,9 @@ export const handler = async (
           nextAction: 'REQUEST_INFO',
         };
       }
+      
+      // If same product or no product name mentioned, allow updates without asking
+      console.log('Same product or update without product name - allowing update');
     }
 
     // Handle state transitions based on intent
@@ -322,39 +328,37 @@ export const handler = async (
       timestamp: Date.now(),
       role: 'assistant',
       content: `Understood: ${intent}`,
-      intent,
-      entities,
       messageType: 'text',
+      metadata: { intent, entities },
     });
 
     // Check if user is filling missing fields for existing order
     const existingPartialData = await getPartialData(phone);
     const isFillingMissingFields = existingPartialData && existingPartialData.missingFields.length > 0;
 
-    // Generate contextual response ONLY if NOT filling missing fields
-    const contextualResponse = !isFillingMissingFields ? generateContextualResponse(
-      conversationContext,
-      intent,
-      entities,
-      detectedLanguage || 'hi-IN'
-    ) : '';
+    // Contextual response generation is now handled by enhanced agent
+    const contextualResponse = '';
 
     // Update user preferences based on current interaction
     if (entities.category) {
-      const existingCategories = conversationContext?.preferences.preferredCategories || [];
-      if (!existingCategories.includes(entities.category)) {
-        await updateUserPreferences(phone, {
-          preferredCategories: [...existingCategories, entities.category],
-        });
-      }
+      // Preferences are now tracked in conversation metadata
+      await addConversationMessage(phone, {
+        timestamp: Date.now(),
+        role: 'system',
+        content: `Category preference: ${entities.category}`,
+        messageType: 'text',
+        metadata: { category: entities.category },
+      });
     }
 
     if (entities.price) {
-      const existingRange = conversationContext?.preferences.typicalPriceRange;
-      const newMin = existingRange ? Math.min(existingRange.min, entities.price) : entities.price;
-      const newMax = existingRange ? Math.max(existingRange.max, entities.price) : entities.price;
-      await updateUserPreferences(phone, {
-        typicalPriceRange: { min: newMin, max: newMax },
+      // Price range is now tracked in conversation metadata
+      await addConversationMessage(phone, {
+        timestamp: Date.now(),
+        role: 'system',
+        content: `Price recorded: ${entities.price}`,
+        messageType: 'text',
+        metadata: { price: entities.price },
       });
     }
 
@@ -442,37 +446,50 @@ export const handler = async (
       let nextAction: 'REQUEST_INFO' | 'REQUEST_IMAGE' | 'ERROR';
 
       if (mergedData.missingFields.length > 0) {
-        // Still missing required fields - request more info conversationally
+        // Still missing required fields - ask conversationally via AI agent
         nextAction = 'REQUEST_INFO';
         await updateUserState(phone, 'VOICE_RECEIVED', {
           missingFields: mergedData.missingFields,
         });
 
-        // Generate conversational missing info prompt
-        const { generateMissingFieldsPrompt } = await import('../services/language-manager');
-        const missingPrompt = generateMissingFieldsPrompt(
-          mergedData.missingFields,
-          detectedLanguage as 'hi-IN' | 'mr-IN' | 'en-IN'
-        );
-        
-        // Add contextual response if available
-        const finalPrompt = contextualResponse 
-          ? `${contextualResponse}\n\n${missingPrompt}`
-          : missingPrompt;
-        
-        // Send the prompt with voice
-        const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
-        
-        // Show typing indicator before response
+        // Use AI agent to generate a natural, conversational request for missing info
         await sendTypingIndicator(phone, messageId);
         
-        await sendTextWithVoice(
-          phone,
-          finalPrompt,
-          detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
-        );
-        
-        console.log('Sent missing fields prompt with voice:', finalPrompt);
+        try {
+          const { processWithEnhancedAgent, sendEnhancedAgentMessage } = await import('../services/enhanced-agent');
+          
+          // Tell agent what we have and what we need
+          const contextMsg = `User is adding product "${mergedData.productName || 'unknown'}". ` +
+            `We have: ${mergedData.productName ? 'product name' : ''} ${mergedData.price ? 'price=₹' + mergedData.price : ''} ${mergedData.quantity ? 'quantity=' + mergedData.quantity : ''} ${mergedData.unit ? 'unit=' + mergedData.unit : ''}. ` +
+            `Still missing: ${mergedData.missingFields.join(', ')}. ` +
+            `Ask the user conversationally for the missing info. Be friendly and brief.`;
+          
+          const agentResponse = await processWithEnhancedAgent(
+            phone,
+            contextMsg,
+            'voice',
+            (detectedLanguage as any) || 'hi-IN'
+          );
+          
+          await sendEnhancedAgentMessage(
+            phone,
+            agentResponse.message,
+            (detectedLanguage as any) || 'hi-IN',
+            'voice'  // Always voice for conversational flow
+          );
+          
+          console.log('Sent LLM-generated missing fields request:', agentResponse.message.substring(0, 100));
+        } catch (agentError) {
+          console.error('Agent missing fields prompt failed, using fallback:', agentError);
+          // Fallback to template-based prompt
+          const { generateMissingFieldsPrompt } = await import('../services/language-manager');
+          const missingPrompt = generateMissingFieldsPrompt(
+            mergedData.missingFields,
+            detectedLanguage as 'hi-IN' | 'mr-IN' | 'en-IN'
+          );
+          const { sendVoiceOnly } = await import('./whatsapp-message-sender');
+          await sendVoiceOnly(phone, missingPrompt, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+        }
       } else {
         // All required fields present - request product image
         nextAction = 'REQUEST_IMAGE';
@@ -599,7 +616,43 @@ export const handler = async (
       };
     }
 
-    // For non-catalog intents, just return success
+    // For non-catalog intents, route through the AI agent for conversational handling
+    console.log(`Non-catalog intent "${intent}" - routing to AI agent for conversational response`);
+    
+    try {
+      const { processWithEnhancedAgent, sendEnhancedAgentMessage } = await import('../services/enhanced-agent');
+      
+      // Send typing indicator while agent processes
+      await sendTypingIndicator(phone);
+      
+      const agentResponse = await processWithEnhancedAgent(
+        phone,
+        transcription,
+        'voice',
+        (detectedLanguage as any) || 'hi-IN'
+      );
+      
+      console.log('Agent response for non-catalog intent:', agentResponse.message.substring(0, 100));
+      
+      // Send response as voice (agent default)
+      await sendEnhancedAgentMessage(
+        phone,
+        agentResponse.message,
+        (detectedLanguage as any) || 'hi-IN',
+        agentResponse.responseMode || 'voice'
+      );
+    } catch (agentError) {
+      console.error('Agent fallback failed:', agentError);
+      // Send a friendly fallback message via voice
+      const { sendVoiceOnly } = await import('./whatsapp-message-sender');
+      const fallbackMsg = detectedLanguage === 'hi-IN'
+        ? 'माफ़ करें दोस्त, समझ नहीं आया। कृपया फिर से बताइए।'
+        : detectedLanguage === 'mr-IN'
+        ? 'माफ करा मित्रा, समजले नाही. कृपया पुन्हा सांगा.'
+        : 'Sorry, I didn\'t understand. Please try again.';
+      await sendVoiceOnly(phone, fallbackMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+    }
+
     const totalResponseTime = Date.now() - transcriptionStartTime;
     console.log(`Total response time: ${totalResponseTime}ms`);
     
@@ -608,10 +661,19 @@ export const handler = async (
       transcription,
       detectedLanguage,
       entities,
-      nextAction: 'ERROR', // Other intents not yet implemented
+      nextAction: 'REQUEST_INFO',
     };
   } catch (error: any) {
     console.error('Voice handler failed:', error);
+    
+    // Try to send a friendly error message
+    try {
+      const { phone } = parseEvent(event);
+      const { sendVoiceOnly } = await import('./whatsapp-message-sender');
+      await sendVoiceOnly(phone, 'माफ़ करें, कुछ समस्या हो गई। कृपया फिर से बोलें।', 'hi');
+    } catch (sendErr) {
+      console.error('Failed to send error voice message:', sendErr);
+    }
 
     return {
       success: false,
@@ -732,78 +794,4 @@ async function invokeEntityExtraction(params: {
 
   const result = JSON.parse(new TextDecoder().decode(response.Payload));
   return result;
-}
-
-/**
- * Publish missing info event to trigger prompt generation
- */
-async function publishMissingInfoEvent(params: {
-  phone: string;
-  messageId: string;
-  missingFields: string[];
-  language: string;
-}): Promise<void> {
-  const eventBusName = process.env.EVENT_BUS_NAME;
-  if (!eventBusName) {
-    console.warn('EVENT_BUS_NAME not configured - skipping event publication');
-    return;
-  }
-
-  const command = new PutEventsCommand({
-    Entries: [
-      {
-        Source: EVENT_SOURCES.INTERNAL,
-        DetailType: 'voice.missing_info.detected',
-        Detail: JSON.stringify({
-          phone: params.phone,
-          messageId: params.messageId,
-          missingFields: params.missingFields,
-          language: params.language,
-        }),
-        EventBusName: eventBusName,
-      },
-    ],
-  });
-
-  const response = await eventBridgeClient.send(command);
-  console.log('Published missing info event:', {
-    phone: params.phone,
-    eventId: response.Entries?.[0]?.EventId,
-  });
-}
-
-/**
- * Publish image request event
- */
-async function publishImageRequestEvent(params: {
-  phone: string;
-  messageId: string;
-  language: string;
-}): Promise<void> {
-  const eventBusName = process.env.EVENT_BUS_NAME;
-  if (!eventBusName) {
-    console.warn('EVENT_BUS_NAME not configured - skipping event publication');
-    return;
-  }
-
-  const command = new PutEventsCommand({
-    Entries: [
-      {
-        Source: EVENT_SOURCES.INTERNAL,
-        DetailType: 'voice.image_request.needed',
-        Detail: JSON.stringify({
-          phone: params.phone,
-          messageId: params.messageId,
-          language: params.language,
-        }),
-        EventBusName: eventBusName,
-      },
-    ],
-  });
-
-  const response = await eventBridgeClient.send(command);
-  console.log('Published image request event:', {
-    phone: params.phone,
-    eventId: response.Entries?.[0]?.EventId,
-  });
 }

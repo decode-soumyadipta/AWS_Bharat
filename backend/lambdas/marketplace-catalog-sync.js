@@ -34,7 +34,7 @@ exports.handler = async (event) => {
     const sellerInfo = await getSellerInfo(sellerId);
 
     // Transform Beckn catalog item to marketplace product format
-    const marketplaceProduct = transformToMarketplaceProduct(
+    const marketplaceProduct = await transformToMarketplaceProduct(
       catalogItem,
       sellerId,
       sellerInfo
@@ -139,8 +139,70 @@ async function getSellerInfo(sellerId) {
 /**
  * Transform Beckn catalog item to marketplace product format
  */
-function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) {
+async function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) {
   const now = new Date().toISOString();
+
+  // Extract image URL from descriptor
+  let imageUrl = '';
+  if (catalogItem.descriptor.symbol) {
+    imageUrl = catalogItem.descriptor.symbol;
+  } else if (catalogItem.descriptor.images && catalogItem.descriptor.images.length > 0) {
+    imageUrl = catalogItem.descriptor.images[0];
+  }
+
+  // Convert S3 URL to store the S3 key for fresh pre-signed URL generation at read time
+  let imageS3Key = '';
+  let imageS3Bucket = '';
+  if (imageUrl && (imageUrl.startsWith('s3://') || (imageUrl.includes('.s3.') && imageUrl.includes('.amazonaws.com/')))) {
+    try {
+      // Extract bucket and key from s3:// URL
+      if (imageUrl.startsWith('s3://')) {
+        const s3Match = imageUrl.match(/s3:\/\/([^\/]+)\/(.+)/);
+        if (s3Match) {
+          imageS3Bucket = s3Match[1];
+          imageS3Key = s3Match[2];
+        }
+      } else {
+        // Extract from HTTPS URL: https://bucket.s3.region.amazonaws.com/key
+        const httpsMatch = imageUrl.match(/https:\/\/([^.]+)\.s3\.[^.]+\.amazonaws\.com\/(.+)/);
+        if (httpsMatch) {
+          imageS3Bucket = httpsMatch[1];
+          imageS3Key = httpsMatch[2];
+        }
+      }
+      
+      if (imageS3Bucket && imageS3Key) {
+        const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+        const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+        const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+        const command = new GetObjectCommand({
+          Bucket: imageS3Bucket,
+          Key: imageS3Key,
+        });
+        
+        // Generate pre-signed URL valid for 7 days for immediate use
+        imageUrl = await getSignedUrl(s3Client, command, { expiresIn: 604800 });
+        console.log('Generated pre-signed URL for S3 image');
+      }
+    } catch (error) {
+      console.error('Failed to generate pre-signed URL:', error);
+      // Keep original URL as fallback
+    }
+  }
+
+  // Extract unit from tags or quantity.unitized
+  let unit = 'piece';
+  if (catalogItem.quantity && catalogItem.quantity.unitized && catalogItem.quantity.unitized.measure) {
+    unit = catalogItem.quantity.unitized.measure.unit;
+  } else if (catalogItem.tags) {
+    const unitTag = catalogItem.tags.find(tag => tag.code === 'unit');
+    if (unitTag && unitTag.list) {
+      const unitValue = unitTag.list.find(item => item.code === 'value');
+      if (unitValue) {
+        unit = unitValue.value;
+      }
+    }
+  }
 
   return {
     productId: catalogItem.id,
@@ -148,9 +210,11 @@ function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) {
     description: catalogItem.descriptor.long_desc || catalogItem.descriptor.short_desc || '',
     price: parseFloat(catalogItem.price.value),
     quantity: catalogItem.quantity.available.count,
-    unit: extractUnit(catalogItem.descriptor.short_desc) || 'piece',
+    unit: unit,
     category: catalogItem.category_id || 'Other',
-    imageUrl: catalogItem.descriptor.symbol || (catalogItem.descriptor.images && catalogItem.descriptor.images[0]) || '',
+    imageUrl: imageUrl,
+    imageS3Key: imageS3Key || '',
+    imageS3Bucket: imageS3Bucket || '',
     seller: {
       name: sellerInfo.name,
       phone: sellerInfo.phone,
@@ -159,23 +223,6 @@ function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-/**
- * Extract unit from product description
- */
-function extractUnit(description) {
-  if (!description) return 'piece';
-
-  const lowerDesc = description.toLowerCase();
-
-  if (lowerDesc.includes('kg')) return 'kg';
-  if (lowerDesc.includes('gram') || lowerDesc.includes('gm')) return 'gram';
-  if (lowerDesc.includes('liter') || lowerDesc.includes('litre')) return 'liter';
-  if (lowerDesc.includes('dozen')) return 'dozen';
-  if (lowerDesc.includes('box')) return 'box';
-
-  return 'piece';
 }
 
 /**

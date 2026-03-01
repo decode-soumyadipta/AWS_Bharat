@@ -25,6 +25,7 @@ import { SellerProfile } from '../models/seller';
 import { validateCatalogItem, ValidationResult } from '../services/ondc-schema-validator';
 import { eventBridgeClient } from '../config/aws-clients';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
+import { generateProductDescription, ProductInfo, validateDescription } from '../services/ai-description-generator';
 
 /**
  * Request to build a catalog item
@@ -106,7 +107,7 @@ export const handler = async (
   try {
     // Parse EventBridge event format
     const eventDetail = event.detail || event;
-    const { entities, phone, messageId, intent, language } = eventDetail;
+    const { entities, phone, messageId, intent, language, imageUrl } = eventDetail;
 
     // Create minimal seller profile from phone number
     const sellerProfile: Partial<SellerProfile> = {
@@ -121,16 +122,28 @@ export const handler = async (
       throw new Error('Entities are required');
     }
 
+    // Validate required entity fields
+    if (!entities.product_name) {
+      throw new Error('Product name is required');
+    }
+    if (!entities.price && entities.price !== 0) {
+      throw new Error('Price is required');
+    }
+    if (!entities.quantity && entities.quantity !== 0) {
+      throw new Error('Quantity is required');
+    }
+
     // Generate unique item ID
     const itemId = randomUUID();
     console.log('Generated item ID:', itemId);
 
-    // Construct Beckn catalog item
-    const catalogItem = constructBecknCatalogItem(
+    // Construct Beckn catalog item with AI-generated descriptions
+    const catalogItem = await constructBecknCatalogItem(
       itemId,
       entities,
       phone || 'unknown',
-      undefined // imageUrl
+      language || 'hi-IN',
+      imageUrl // Pass imageUrl from event
     );
 
     console.log('Constructed catalog item:', JSON.stringify(catalogItem, null, 2));
@@ -215,29 +228,63 @@ function validateCatalogBuilderRequest(request: CatalogBuilderRequest): void {
 }
 
 /**
- * Construct Beckn catalog item from entities
+ * Construct Beckn catalog item from entities with AI-generated descriptions
  */
-function constructBecknCatalogItem(
+async function constructBecknCatalogItem(
   itemId: string,
   entities: CatalogEntities,
   sellerId: string,
+  language: string,
   imageUrl?: string
-): BecknCatalogItem {
+): Promise<BecknCatalogItem> {
   // Map category to ONDC taxonomy
   const ondcCategory = mapCategoryToONDC(entities.category!);
 
   // Format price as decimal string
   const priceValue = formatPrice(entities.price!);
 
-  // Generate short and long descriptions
-  const shortDesc = generateShortDescription(entities);
-  const longDesc = generateLongDescription(entities);
+  // Generate AI-powered descriptions
+  let shortDesc: string;
+  let longDesc: string;
+  let aiGenerated = false;
+
+  try {
+    console.log('Generating AI-powered product description...');
+    
+    const productInfo: ProductInfo = {
+      name: entities.product_name!,
+      price: entities.price!,
+      quantity: entities.quantity!,
+      unit: entities.unit!,
+      category: entities.category!,
+      language: language || 'hi-IN',
+      imageUrl,
+    };
+
+    const aiDescription = await generateProductDescription(productInfo);
+    
+    // Validate AI-generated description
+    const validation = validateDescription(aiDescription);
+    
+    if (validation.valid && aiDescription.confidence > 0.5) {
+      shortDesc = aiDescription.shortDescription;
+      longDesc = aiDescription.longDescription;
+      aiGenerated = true;
+      console.log('✅ Using AI-generated description (confidence:', aiDescription.confidence, ')');
+    } else {
+      console.warn('⚠️ AI description validation failed or low confidence, using fallback');
+      shortDesc = generateShortDescription(entities);
+      longDesc = generateLongDescription(entities);
+    }
+  } catch (error) {
+    console.error('AI description generation failed, using fallback:', error);
+    shortDesc = generateShortDescription(entities);
+    longDesc = generateLongDescription(entities);
+  }
 
   // Get default fulfillment and location IDs
-  // In a real implementation, these would come from seller profile
-  // For now, we use default values
   const fulfillmentId = 'F1';
-  const locationId = sellerId; // Use seller ID as location ID
+  const locationId = sellerId;
 
   // Construct the catalog item
   const catalogItem: BecknCatalogItem = {
@@ -259,7 +306,13 @@ function constructBecknCatalogItem(
         count: entities.quantity!,
       },
       maximum: {
-        count: Math.min(entities.quantity!, 10), // Max order quantity per transaction
+        count: Math.min(entities.quantity!, 10),
+      },
+      unitized: {
+        measure: {
+          unit: entities.unit!,
+          value: '1',
+        },
       },
     },
     category_id: ondcCategory,
@@ -269,14 +322,22 @@ function constructBecknCatalogItem(
       label: 'enable',
       timestamp: new Date().toISOString(),
     },
-    tags: [],
-    // ONDC-specific fields
-    '@ondc/org/returnable': false, // Food items typically not returnable
+    tags: [
+      ...(aiGenerated ? [{
+        code: 'ai_enhanced',
+        list: [{ code: 'description', value: 'true' }]
+      }] : []),
+      {
+        code: 'unit',
+        list: [{ code: 'value', value: entities.unit! }]
+      }
+    ],
+    '@ondc/org/returnable': false,
     '@ondc/org/cancellable': true,
-    '@ondc/org/return_window': 'P0D', // 0 days return window
+    '@ondc/org/return_window': 'P0D',
     '@ondc/org/seller_pickup_return': false,
-    '@ondc/org/time_to_ship': 'P2D', // 2 days to ship
-    '@ondc/org/available_on_cod': true, // Cash on delivery available
+    '@ondc/org/time_to_ship': 'P2D',
+    '@ondc/org/available_on_cod': true,
     '@ondc/org/contact_details_consumer_care': `${sellerId},support@vyapar-vaani.in`,
   };
 

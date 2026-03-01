@@ -127,61 +127,21 @@ export async function markMessageAsRead(
 }
 
 /**
- * Sends WhatsApp typing indicator (real typing status)
- * Shows "typing..." animation in WhatsApp continuously during processing
- * 
- * Uses the correct WhatsApp Business API format with typing_indicator field
+ * Sends WhatsApp typing indicator (marks message as read)
+ * Note: WhatsApp Business API doesn't support real-time typing indicators
+ * This function just marks the message as read to acknowledge receipt
  */
 export async function sendTypingIndicator(
   to: string,
   messageId?: string
 ): Promise<{ success: boolean; error?: string }> {
-  const config = getWhatsAppConfig();
+  // Mark message as read if messageId provided
+  if (messageId) {
+    return await markMessageAsRead(messageId);
+  }
   
-  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
-    console.warn('WhatsApp API configuration missing, skipping typing indicator');
-    return { success: false, error: 'Configuration missing' };
-  }
-
-  try {
-    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
-    
-    const payload: any = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to,
-      typing_indicator: {
-        type: 'text'
-      },
-    };
-
-    // If messageId provided, also mark as read
-    if (messageId) {
-      payload.status = 'read';
-      payload.message_id = messageId;
-    }
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.accessToken}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.warn('Failed to send typing indicator:', response.status, errorText);
-      return { success: false, error: `HTTP ${response.status}` };
-    }
-
-    console.log('Typing indicator sent successfully');
-    return { success: true };
-  } catch (error) {
-    console.warn('Error sending typing indicator:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-  }
+  // No-op if no messageId
+  return { success: true };
 }
 
 /**
@@ -553,6 +513,13 @@ export async function handler(event: any): Promise<any> {
         result = await sendImageMessage(to, content.imageUrl, content.text, language);
         break;
 
+      case 'audio':
+        if (!content?.audioUrl) {
+          throw new Error('Audio URL is required for audio messages');
+        }
+        result = await sendAudioMessage(to, content.audioUrl, language);
+        break;
+
       default:
         throw new Error(`Unsupported message type: ${type}`);
     }
@@ -581,6 +548,43 @@ export function getMessageTemplates(language: 'hi' | 'mr' | 'en') {
 }
 
 /**
+ * Clean text for voice synthesis
+ * - Remove emojis
+ * - Add pauses for better pacing
+ * - Make it sound more natural and friendly
+ * - Escape XML/SSML special characters
+ */
+function cleanTextForVoice(text: string): string {
+  // Remove all emojis
+  let cleaned = text.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FA6F}]|[\u{1FA70}-\u{1FAFF}]|[\u{2300}-\u{23FF}]|[\u{2B50}]|[\u{2B55}]|[\u{231A}]|[\u{231B}]|[\u{23E9}-\u{23EC}]|[\u{23F0}]|[\u{23F3}]|[\u{25FD}]|[\u{25FE}]|[\u{2614}]|[\u{2615}]|[\u{2648}-\u{2653}]|[\u{267F}]|[\u{2693}]|[\u{26A1}]|[\u{26AA}]|[\u{26AB}]|[\u{26BD}]|[\u{26BE}]|[\u{26C4}]|[\u{26C5}]|[\u{26CE}]|[\u{26D4}]|[\u{26EA}]|[\u{26F2}]|[\u{26F3}]|[\u{26F5}]|[\u{26FA}]|[\u{26FD}]|[\u{2705}]|[\u{270A}]|[\u{270B}]|[\u{2728}]|[\u{274C}]|[\u{274E}]|[\u{2753}-\u{2755}]|[\u{2757}]|[\u{2795}-\u{2797}]|[\u{27B0}]|[\u{27BF}]|[\u{2B1B}]|[\u{2B1C}]|[\u{3030}]|[\u{303D}]|[\u{3297}]|[\u{3299}]/gu, '');
+  
+  // Remove special symbols that sound weird
+  cleaned = cleaned.replace(/[✅❌💡💰📸📋✏️⚠️•]/g, '');
+  
+  // Replace currency symbols with words
+  cleaned = cleaned.replace(/₹/g, 'रुपये ');
+  cleaned = cleaned.replace(/\$/g, 'dollars ');
+  
+  // Add pauses after colons and newlines for better pacing
+  cleaned = cleaned.replace(/:/g, ','); // Replace colon with comma for natural pause
+  cleaned = cleaned.replace(/\n\n/g, '. '); // Double newline becomes period with pause
+  cleaned = cleaned.replace(/\n/g, ', '); // Single newline becomes comma pause
+  
+  // Add pauses after numbers for clarity
+  cleaned = cleaned.replace(/(\d+)/g, '$1 '); // Space after numbers
+  
+  // Clean up multiple spaces
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  
+  // Trim
+  cleaned = cleaned.trim();
+  
+  // Don't escape or use SSML - Neural engine doesn't support all features
+  // Just return plain text
+  return cleaned;
+}
+
+/**
  * Send text message with voice response
  * Sends both text and voice audio for better accessibility
  */
@@ -598,62 +602,7 @@ export async function sendTextWithVoice(
     }
 
     // Generate and send voice
-    try {
-      const { PollyClient, SynthesizeSpeechCommand } = await import('@aws-sdk/client-polly');
-      const { PutObjectCommand, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
-      
-      const pollyClient = new PollyClient({ region: process.env.AWS_REGION || 'us-east-1' });
-      const voiceId = language === 'mr' ? 'Aditi' : language === 'hi' ? 'Kajal' : 'Joanna';
-      const languageCode = language === 'mr' ? 'hi-IN' : language === 'hi' ? 'hi-IN' : 'en-IN';
-      
-      const command = new SynthesizeSpeechCommand({
-        Text: text,
-        OutputFormat: 'mp3',
-        VoiceId: voiceId,
-        Engine: 'neural',
-        LanguageCode: languageCode,
-      });
-      
-      const response = await pollyClient.send(command);
-      if (response.AudioStream) {
-        const chunks: Uint8Array[] = [];
-        const stream = response.AudioStream as AsyncIterable<Uint8Array>;
-        for await (const chunk of stream) {
-          chunks.push(chunk);
-        }
-        const audioBuffer = Buffer.concat(chunks);
-        
-        // Upload to S3
-        const { s3Client } = await import('../config/aws-clients');
-        const bucketName = process.env.PRODUCTS_BUCKET_NAME;
-        if (!bucketName) {
-          console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
-          return { success: true };
-        }
-        
-        const key = `voice-responses/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
-        await s3Client.send(new PutObjectCommand({
-          Bucket: bucketName,
-          Key: key,
-          Body: audioBuffer,
-          ContentType: 'audio/mpeg',
-        }));
-        
-        // Generate presigned URL
-        const getObjectCommand = new GetObjectCommand({
-          Bucket: bucketName,
-          Key: key,
-        });
-        const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
-        
-        // Send voice message
-        await sendAudioMessage(to, voiceUrl, language);
-      }
-    } catch (voiceError) {
-      console.warn('Failed to generate/send voice, text sent successfully:', voiceError);
-      // Don't fail the whole operation if voice fails
-    }
+    await generateAndSendVoice(to, text, language);
     
     return { success: true };
   } catch (error) {
@@ -662,5 +611,113 @@ export async function sendTextWithVoice(
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
     };
+  }
+}
+
+/**
+ * Send voice-only message (no text) - keeps WhatsApp chat clean
+ * Used for most agent responses. Text is only sent for visual confirmations.
+ */
+export async function sendVoiceOnly(
+  to: string,
+  text: string,
+  language: 'hi' | 'mr' | 'en' = 'hi'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const sent = await generateAndSendVoice(to, text, language);
+    if (!sent) {
+      // Fallback to text if voice generation fails
+      console.warn('Voice generation failed, falling back to text');
+      await sendTextMessage(to, text, language);
+    }
+    return { success: true };
+  } catch (error) {
+    console.error('Error in sendVoiceOnly:', error);
+    // Always fallback to text on error so user gets something
+    try {
+      await sendTextMessage(to, text, language);
+      return { success: true };
+    } catch (fallbackError) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+}
+
+/**
+ * Internal: Generate Polly audio and send as WhatsApp audio message
+ */
+async function generateAndSendVoice(
+  to: string,
+  text: string,
+  language: 'hi' | 'mr' | 'en'
+): Promise<boolean> {
+  try {
+    const { PollyClient, SynthesizeSpeechCommand } = await import('@aws-sdk/client-polly');
+    const { PutObjectCommand, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    
+    const pollyClient = new PollyClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    const voiceId = language === 'mr' ? 'Aditi' : language === 'hi' ? 'Kajal' : 'Joanna';
+    const languageCode = language === 'mr' ? 'hi-IN' : language === 'hi' ? 'hi-IN' : 'en-IN';
+    
+    // Clean text for voice synthesis
+    const cleanedText = cleanTextForVoice(text);
+    
+    if (!cleanedText || cleanedText.length < 2) {
+      return false;
+    }
+    
+    const command = new SynthesizeSpeechCommand({
+      Text: cleanedText,
+      OutputFormat: 'mp3',
+      VoiceId: voiceId,
+      Engine: 'neural',
+      LanguageCode: languageCode,
+      TextType: 'text',
+    });
+    
+    const response = await pollyClient.send(command);
+    if (response.AudioStream) {
+      const chunks: Uint8Array[] = [];
+      const stream = response.AudioStream as AsyncIterable<Uint8Array>;
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      const audioBuffer = Buffer.concat(chunks);
+      
+      // Upload to S3
+      const { s3Client } = await import('../config/aws-clients');
+      const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+      if (!bucketName) {
+        console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
+        return false;
+      }
+      
+      const key = `voice-responses/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
+      await s3Client.send(new PutObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+        Body: audioBuffer,
+        ContentType: 'audio/mpeg',
+      }));
+      
+      // Generate presigned URL
+      const getObjectCommand = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+      });
+      const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
+      
+      // Send voice message
+      await sendAudioMessage(to, voiceUrl, language);
+      return true;
+    }
+    return false;
+  } catch (voiceError) {
+    console.warn('Failed to generate/send voice:', voiceError);
+    return false;
   }
 }

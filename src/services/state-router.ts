@@ -10,7 +10,7 @@
 import { UserState, UserStateType } from './state-manager';
 import { translateMessage, SupportedLanguage } from './language-manager';
 
-export type HandlerType = 'KYC' | 'VOICE' | 'IMAGE' | 'CONFIRMATION' | 'ERROR';
+export type HandlerType = 'KYC' | 'VOICE' | 'IMAGE' | 'CONFIRMATION' | 'AGENT' | 'ERROR';
 export type MessageType = 'text' | 'audio' | 'image' | 'button_reply';
 
 export interface RouteDecision {
@@ -53,24 +53,24 @@ const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', Handl
   },
   IMAGE_PENDING: {
     image: 'IMAGE',
-    text: 'ERROR',
-    audio: 'ERROR',
+    text: 'AGENT',   // Allow questions/queries while waiting for image
+    audio: 'AGENT',  // Allow voice queries while waiting for image
     button_reply: 'ERROR',
     default: 'ERROR',
   },
   CONFIRMATION_PENDING: {
     button_reply: 'CONFIRMATION',
-    text: 'VOICE', // Allow price updates and new orders via text
-    audio: 'VOICE', // Allow price updates and new orders via voice
-    image: 'ERROR',
+    text: 'AGENT',  // Route to AI agent for flexible conversational handling
+    audio: 'AGENT', // Route to AI agent for flexible conversational handling  
+    image: 'AGENT', // Allow image even in confirmation (new product photo)
     default: 'ERROR',
   },
   ACTIVE: {
-    audio: 'VOICE',
-    text: 'VOICE',
-    image: 'IMAGE',
-    button_reply: 'ERROR',
-    default: 'ERROR',
+    audio: 'AGENT', // Route to AI agent for natural language processing
+    text: 'AGENT',  // Route to AI agent for natural language processing
+    image: 'AGENT', // Route to AI agent for natural language processing
+    button_reply: 'AGENT', // Route to AI agent for natural language processing
+    default: 'AGENT',
   },
 };
 

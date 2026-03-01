@@ -36,13 +36,13 @@ import {
  * - 4 digits
  * - 1 uppercase letter
  */
-const PAN_REGEX = /[A-Z]{5}[0-9]{4}[A-Z]/g;
+const PAN_REGEX = /[A-Z]{5}[0-9]{4}[A-Z]/;
 
 /**
  * Aadhar card number format: 9999 9999 9999 or 999999999999
  * - 12 digits with optional spaces
  */
-const AADHAR_REGEX = /\d{4}\s?\d{4}\s?\d{4}/g;
+const AADHAR_REGEX = /\d{4}\s?\d{4}\s?\d{4}/;
 
 /**
  * Lambda handler for document extraction

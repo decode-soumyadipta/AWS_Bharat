@@ -23,7 +23,7 @@ import { sendTextMessage } from './whatsapp-message-sender';
 import { PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { ImageEnhancementRequest, ImageEnhancementResponse } from './image-enhancement';
 
-const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 export interface ImageHandlerRequest {
   phone: string;

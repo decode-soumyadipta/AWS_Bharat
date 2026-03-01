@@ -144,7 +144,7 @@ Classify the following transcribed voice note into ONE of these intents:
 - REJECT_ORDER: User wants to reject an order
 - UPDATE_FULFILLMENT: User wants to update order status (packed, shipped, delivered)
 - QUERY_STATUS: User wants to check order or catalog status
-- CONFIRM_CATALOG: User confirms/accepts the catalog creation (e.g., 'swikar hai', 'yes', 'accept', 'ok')
+- CONFIRM_CATALOG: User confirms/accepts the catalog creation (e.g., 'swikar hai', 'स्वीकार है', 'yes', 'accept', 'ok', 'haan', 'हां', 'theek hai', 'ठीक है')
 - CANCEL_ORDER: User wants to cancel the current order/product creation (e.g., 'cancel', 'रद्द करो', 'रद्द', 'cancel karo', 'nahi chahiye')
 
 CRITICAL RULES:
@@ -279,6 +279,7 @@ function validateIntentResponse(response: ClaudeIntentResponse): void {
     'UPDATE_INVENTORY',
     'ACCEPT_ORDER',
     'REJECT_ORDER',
+    'CANCEL_ORDER',
     'UPDATE_FULFILLMENT',
     'QUERY_STATUS',
     'CONFIRM_CATALOG',
