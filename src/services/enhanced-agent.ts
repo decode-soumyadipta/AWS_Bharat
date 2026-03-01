@@ -52,7 +52,7 @@ export interface EnhancedAgentResponse {
 }
 
 export interface AgentAction {
-  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT';
+  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI';
   data?: any;
 }
 
@@ -120,6 +120,18 @@ export async function processWithEnhancedAgent(
     analyticsInfo = await getAnalyticsInfo(phone, analyticsQuery, currentLanguage);
   }
 
+  // Fetch seller profile for UPI status
+  let sellerInfo: { upiId?: string; name?: string } = {};
+  try {
+    const { getSellerByPhone } = await import('./dynamodb-repository');
+    const seller = await getSellerByPhone(phone);
+    if (seller) {
+      sellerInfo = { upiId: seller.upiId, name: seller.name };
+    }
+  } catch (e) {
+    console.warn('Could not fetch seller info for prompt:', e);
+  }
+
   // Build enhanced agent prompt
   const agentPrompt = buildEnhancedPrompt(
     userMessage,
@@ -129,7 +141,8 @@ export async function processWithEnhancedAgent(
     userState,
     currentLanguage,
     marketInfo,
-    analyticsInfo
+    analyticsInfo,
+    sellerInfo
   );
 
   // Keep typing active while model thinks
@@ -420,7 +433,8 @@ function buildEnhancedPrompt(
   userState: any,
   language: LanguageCode,
   marketInfo: string,
-  analyticsInfo: string
+  analyticsInfo: string,
+  sellerInfo: { upiId?: string; name?: string } = {}
 ): string {
   const langName = {
     'hi-IN': 'Hindi',
@@ -522,10 +536,11 @@ Your responsibilities:
   if (partialData) {
     prompt += `\n\n📦 Current order being tracked:
 - Product: ${partialData.productName || '❓ Unknown'}
-- Price: ${partialData.price ? `₹${partialData.price}/${partialData.unit}` : '❓ Unknown'}
-- Quantity: ${partialData.quantity ? `${partialData.quantity} ${partialData.unit}` : '❓ Unknown'}
+- Price: ${partialData.price ? `₹${partialData.price}/${partialData.unit}` : '❓ Not set'}
+- Quantity: ${partialData.quantity ? `${partialData.quantity} ${partialData.unit}` : '❓ Not set'}
 - Category: ${partialData.category || '❓ Unknown'}
-- Photo: ${partialData.originalImageUrl ? '✅ Received' : '❌ Not received'}`;
+- Photo: ${partialData.originalImageUrl ? '✅ Received' : '❌ Not received'}
+- Missing fields: ${partialData.missingFields?.length ? partialData.missingFields.join(', ') : 'NONE - all fields complete'}`;
     
     if (userState?.state === 'CONFIRMATION_PENDING') {
       prompt += `\n\n⚠️ STATE: CONFIRMATION_PENDING - User is reviewing the above product.
@@ -534,9 +549,15 @@ Your responsibilities:
 - If they talk about something completely different → assume they want a general answer, don't force them back to the product`;
     } else if (userState?.state === 'IMAGE_PENDING') {
       prompt += `\n\n⚠️ STATE: IMAGE_PENDING - Waiting for product photo.
-- If user asks something else → answer and gently remind to send a product photo`;
+- User needs to send a product photo next
+- If user asks something else → answer and gently remind to send a product photo
+- DO NOT say "product added" or "bahut badhiya" - product is NOT added yet, we need the photo first`;
     }
   }
+
+  // Add UPI status
+  prompt += `\n\n💳 Seller UPI Status: ${sellerInfo.upiId ? `✅ Registered: ${sellerInfo.upiId}` : '❌ Not registered'}`;
+  prompt += `\n🔑 User State: ${userState?.state || 'UNKNOWN'}`;
 
   // Add market info if available
   if (marketInfo) {
@@ -552,33 +573,87 @@ Your responsibilities:
   prompt += `\n\n💬 User's new message (${messageType}):
 "${userMessage}"
 
+🧠 INTENT INFERENCE RULES (LangChain-like reasoning):
+- If message is a greeting (hi, hello, namaste, namaskar, haan, ji) → greet warmly, mention their name if known, ask how you can help
+- If message is garbled / unclear / too short → DON'T ignore. Ask sweetly: "Mujhe samajh nahi aaya, kya aap thoda detail mein bata sakte hain?" NEVER return empty/generic
+- If message mentions a PRODUCT with DETAILS (name, price, quantity, unit) → use STORE_DATA with all extracted fields
+- If message is partial (e.g., just "tomato" or "100 rupees") → infer context from conversation history. If adding product, treat as product info. Use STORE_DATA to save what you have.
+- If message mentions numbers → treat as price/quantity based on context. "sau" = 100, "do sau" = 200, "hazaar" = 1000
+- If message asks "kya kar sakte ho" or "help" or "kaise" → explain ALL features: add products, UPI setup, marketplace link, price check, analytics, delete products
+- ALWAYS respond — never return empty or stay silent
+
+🔄 CRITICAL WORKFLOW RULES (MUST FOLLOW):
+The product addition workflow has STRICT steps. You must follow them IN ORDER:
+1. User describes product → YOU extract productName, price, quantity, unit, category → use STORE_DATA action
+2. After STORE_DATA: the system automatically checks completeness and asks for photo if ready
+3. If fields are missing → ask for the SPECIFIC missing field (check "Missing fields" above). Use STORE_DATA when user provides it.
+4. User sends photo → system handles confirmation automatically (you don't need to do anything)
+5. User clicks approve button → product is created
+
+⛔ NEVER DO THESE:
+- NEVER say "product added" / "उत्पाद जोड़ा गया" / "बहुत बढ़िया जोड़ दिया" unless you are using CREATE_CATALOG action AND all fields + photo exist
+- NEVER say "photo mil gayi, add kar diya" — receiving a photo does NOT mean the product is added
+- NEVER ask for UPI ID if UPI is already registered (check status above)
+- NEVER ask for product photo in your message — the system will ask automatically when all text fields are complete
+- NEVER use CREATE_CATALOG unless ALL fields (productName, price, quantity, unit) AND photo exist in partial data
+- NEVER use REQUEST_IMAGE — the system handles image requests automatically
+
 🎯 STRICT RULES:
 1. Give a DIRECT, COMPLETE answer immediately - NEVER say "wait", "let me check", "one moment", "rukiye" etc.
 2. If market info is provided above, use it directly to answer with actual numbers.
 3. Keep response SHORT - max 2-3 sentences. Rural users prefer brief answers spoken aloud.
-4. If user is adding a product and market price data exists above, mention the current market price naturally (e.g., "आज बाज़ार में टमाटर ₹40-50/kg चल रहा है, आप कितने में बेचना चाहते हैं?")
-5. If anything is missing for a product catalog, ask ONE clear question.
+4. If user is adding a product and market price data exists above, mention the current market price naturally.
+5. If anything is missing for a product catalog, ask ONE clear question about the FIRST missing field.
 6. Be warm but concise - like a knowledgeable friend talking.
 7. NEVER use the WEB_SEARCH action.
 8. Include actual price numbers if available.
 9. Remember this user's history/preferences from conversation above. Reference past interactions naturally.
 10. For analytics responses, be concise - just state the numbers clearly.
+11. ALWAYS end with a friendly follow-up question like "Aur kya madad chahiye?" / "Aur kuch?" / "What else can I help with?" — never leave a dead-end.
+12. NEVER show errors, technical messages, or stack traces. If something fails internally, casually ask the user to try again.
 
-🎙️ RESPONSE_MODE rules:
-- Use "voice" for: general chat, price queries, analytics, order queries, greetings, advice
-- Use "both" for: product catalog confirmations (CREATE_CATALOG), image requests (REQUEST_IMAGE), product deletion confirmations (DELETE_PRODUCT), anything user needs to visually verify
-- Use "text" for: sending links/URLs the user needs to click
+💳 UPI GUIDANCE:
+${sellerInfo.upiId 
+  ? `- UPI is ALREADY registered (${sellerInfo.upiId}). Do NOT ask user to set up UPI again. If they ask about UPI, confirm it's already set.`
+  : `- UPI is NOT registered. If user sends a UPI ID (like name@upi, phone@paytm) → use REGISTER_UPI action
+- If user state is KYC_VERIFIED, gently mention: "UPI ID bhej dijiye toh customers seedha payment kar payenge!"
+- If user mentions "payment", "paisa", "paise kaise milenge" → guide them to set up UPI`
+}
+
+� ORDER & PAYMENT GUIDANCE:
+- When seller asks about orders, tell them buyers can order from the marketplace and they'll get WhatsApp notifications with Accept/Reject buttons.
+- If seller asks about payments: UPI payments are verified automatically via screenshot AI, or buyer sends transaction reference. COD is collected on delivery.
+- If seller asks "order kaise aayega" → explain: "Jab koi customer marketplace se order karega toh aapko WhatsApp pe Accept/Reject button aayega. Accept karne pe aapko delivery ki taiyari karni hogi."
+- If seller asks "paisa kab milega" → explain: "UPI se order hua toh payment turant verify ho jaata hai, COD mein delivery ke waqt milega."
+- Keep all payment/order explanations conversational and brief — like talking to a friend.
+
+�📦 STORE_DATA RULES (MOST IMPORTANT):
+- When user describes a product, ALWAYS use STORE_DATA to save the information
+- Extract ALL fields you can: productName, price, quantity, unit, category, description
+- Common units: "kilo"/"kg", "piece"/"pcs", "dozen", "liter", "packet", "bag", "bundle"
+- If user says "tamatar 50 rupaye kilo, 10 kilo" → DATA: {"productName": "Tomato", "price": 50, "quantity": 10, "unit": "kg", "category": "vegetables"}
+- If user says "50 rupees" and product context exists → DATA: {"price": 50}
+- If user mentions only a product name → DATA: {"productName": "Tomato"} and ask for price
+- ALWAYS include ALL fields you can extract in a single STORE_DATA call
 
 🗑️ DELETE_PRODUCT rules:
 - When user says "delete", "remove", "hatao", "nikalo", "हटाओ", "निकालो" a product → use DELETE_PRODUCT action
 - ALWAYS include DATA with {"productName": "<exact product name>"}
-- Confirm which product to delete if unclear
-- After deletion, reassure the user it's been removed from marketplace too
+
+💳 REGISTER_UPI rules:
+- When user sends a UPI ID (like xyz@upi, phone@paytm) → use REGISTER_UPI action
+- ALWAYS include DATA with {"upiId": "<their UPI ID>"}
+- Only use this when UPI is NOT already registered (check status above)
+
+🎙️ RESPONSE_MODE rules:
+- Use "voice" for: general chat, price queries, analytics, greetings, asking questions
+- Use "both" for: product deletion confirmations, UPI registration
+- Use "text" for: sending links/URLs
 
 📝 Response format:
 MESSAGE: [Your concise answer in ${langName}]
-ACTION: [NONE/STORE_DATA/REQUEST_IMAGE/CREATE_CATALOG/ASK_QUESTION/DELETE_PRODUCT]
-DATA: {"productName": "<name of product to delete>"}
+ACTION: [NONE/STORE_DATA/CREATE_CATALOG/ASK_QUESTION/DELETE_PRODUCT/REGISTER_UPI]
+DATA: {"productName": "<name>", "price": <num>, "quantity": <num>, "unit": "<unit>", "category": "<cat>", "upiId": "<upi@id>"}
 RESPONSE_MODE: [voice/text/both]
 CONFIDENCE: [0-100]
 REASONING: [Brief reason]
@@ -587,6 +662,7 @@ Respond now in ${langName}:`;
 
   return prompt;
 }
+
 
 /**
  * Call agent model with timeout protection
@@ -600,9 +676,9 @@ async function callAgentModel(prompt: string): Promise<string> {
       },
     ],
     inferenceConfig: {
-      max_new_tokens: 400, // Shorter for faster responses
-      temperature: 0.6, // Lower for more consistent, concise answers
-      top_p: 0.9,
+      max_new_tokens: 600, // More room for detailed, helpful responses
+      temperature: 0.7, // Slightly creative for natural conversation
+      top_p: 0.92,
     },
   };
 
@@ -613,9 +689,9 @@ async function callAgentModel(prompt: string): Promise<string> {
     body: JSON.stringify(requestBody),
   });
 
-  // Timeout protection: 8 seconds max for model inference
+  // Timeout protection: 12 seconds max for model inference (upgraded for better quality)
   const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Model inference timeout')), 8000)
+    setTimeout(() => reject(new Error('Model inference timeout')), 12000)
   );
 
   try {
@@ -668,7 +744,7 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
   }
 
   // Force text+voice for actions that need visual confirmation
-  if (action === 'CREATE_CATALOG' || action === 'REQUEST_IMAGE' || action === 'DELETE_PRODUCT') {
+  if (action === 'CREATE_CATALOG' || action === 'DELETE_PRODUCT' || action === 'REGISTER_UPI') {
     responseMode = 'both';
   }
 
@@ -676,11 +752,46 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
   let actionData: any = undefined;
   for (const line of lines) {
     if (line.startsWith('DATA:')) {
+      const dataStr = line.replace('DATA:', '').trim();
       try {
-        actionData = JSON.parse(line.replace('DATA:', '').trim());
+        actionData = JSON.parse(dataStr);
       } catch (e) {
-        console.warn('Failed to parse DATA line:', line);
+        console.warn('Failed to parse DATA line as JSON, trying regex fallback:', line);
+        // Fallback: extract UPI ID via regex (handles non-JSON agent outputs)
+        const upiMatch = dataStr.match(/[\w.\-]+@[\w]+/);
+        if (upiMatch && action === 'REGISTER_UPI') {
+          actionData = { upiId: upiMatch[0] };
+          console.log('✅ Extracted UPI ID via fallback regex:', upiMatch[0]);
+        }
+        // Fallback: extract productName from quoted text
+        const nameMatch = dataStr.match(/"([^"]+)"/);
+        if (nameMatch && (action === 'DELETE_PRODUCT' || action === 'STORE_DATA')) {
+          actionData = { ...(actionData || {}), productName: nameMatch[1] };
+          console.log('✅ Extracted productName via fallback regex:', nameMatch[1]);
+        }
+        // Fallback: extract price/quantity numbers
+        const priceMatch = dataStr.match(/price["\s:]*(\d+)/i);
+        if (priceMatch && action === 'STORE_DATA') {
+          actionData = { ...(actionData || {}), price: parseInt(priceMatch[1]) };
+        }
+        const qtyMatch = dataStr.match(/quantity["\s:]*(\d+)/i);
+        if (qtyMatch && action === 'STORE_DATA') {
+          actionData = { ...(actionData || {}), quantity: parseInt(qtyMatch[1]) };
+        }
+        const unitMatch = dataStr.match(/unit["\s:]*"?(\w+)"?/i);
+        if (unitMatch && action === 'STORE_DATA') {
+          actionData = { ...(actionData || {}), unit: unitMatch[1] };
+        }
       }
+    }
+  }
+
+  // Extra fallback: if REGISTER_UPI action but no upiId in data, try to extract from the full response
+  if (action === 'REGISTER_UPI' && (!actionData || !actionData.upiId)) {
+    const upiMatch = response.match(/[\w.\-]+@[\w]+/);
+    if (upiMatch) {
+      actionData = { ...(actionData || {}), upiId: upiMatch[0] };
+      console.log('✅ Extracted UPI ID from full response:', upiMatch[0]);
     }
   }
 

@@ -81,6 +81,24 @@
         </div>
     </div>
 
+    <!-- Checkout Modal -->
+    <div id="checkoutModal" class="modal hidden">
+        <div class="modal-content checkout-modal-content">
+            <span class="close" id="closeCheckout">&times;</span>
+            <div id="checkoutContainer"></div>
+        </div>
+    </div>
+
+    <!-- Order Tracking Modal -->
+    <div id="orderTrackingModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close" onclick="document.getElementById('orderTrackingModal').classList.add('hidden')">&times;</span>
+            <div id="orderTrackingContainer"></div>
+        </div>
+    </div>
+
+    <!-- QR Code library for UPI payment -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <script src="ShoppingCart.js"></script>
     <script src="CartUI.js"></script>
     <script src="app.js"></script>

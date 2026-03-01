@@ -150,9 +150,10 @@ export const handler = async (
     const base64Image = rawImageBuffer.toString('base64');
     console.log(`Encoded image to base64: ${base64Image.length} characters`);
 
-    let enhancedImageBuffer: Buffer;
+    let enhancedImageBuffer: Buffer | undefined;
+    let whiteBackgroundApplied = false;
 
-    // Step 1: Try BACKGROUND_REMOVAL for clean cutout
+    // Step 1: Try BACKGROUND_REMOVAL for clean cutout + white composite
     try {
       console.log('Step 1: Removing background with Titan BACKGROUND_REMOVAL...');
       const bgRemovalRequest: TitanBackgroundRemovalRequest = {
@@ -166,32 +167,55 @@ export const handler = async (
       console.log('Background removed successfully, compositing on white canvas...');
 
       // Step 2: Composite the cutout onto pure white background
-      enhancedImageBuffer = compositeOnWhiteBackground(Buffer.from(cutoutBase64, 'base64'));
-      console.log(`White background composite: ${enhancedImageBuffer.length} bytes`);
+      const cutoutBuffer = Buffer.from(cutoutBase64, 'base64');
+      const compositedBuffer = compositeOnWhiteBackground(cutoutBuffer);
+      
+      // Check if compositing actually applied (returns NEW buffer when successful, same ref when skipped)
+      if (compositedBuffer !== cutoutBuffer) {
+        enhancedImageBuffer = compositedBuffer;
+        whiteBackgroundApplied = true;
+        console.log(`White background composite SUCCESS: ${enhancedImageBuffer.length} bytes`);
+      } else {
+        console.warn('White compositing skipped (non-RGBA format from Titan), falling through to INPAINTING...');
+        // Don't use the cutout as-is — it may look identical to original without white bg
+      }
     } catch (bgRemovalError: any) {
       console.warn('BACKGROUND_REMOVAL failed, falling back to INPAINTING:', bgRemovalError.message);
-      
-      // Fallback: Use INPAINTING with aggressive white background prompt
-      const inpaintRequest: TitanInpaintingRequest = {
-        taskType: 'INPAINTING',
-        inPaintingParams: {
-          image: base64Image,
-          text: 'pure solid white background, bright white studio backdrop, clean plain white, professional product photography, even white illumination, no shadows, bright white everywhere',
-          negativeText: 'color, pattern, texture, gradient, dark, shadow, floor, table, wall, clutter, objects, text, watermark, blur, noise',
-          maskPrompt: 'background, wall, floor, table, surface, surroundings, everything behind and around the main product, backdrop, environment, shadow',
-        },
-        imageGenerationConfig: {
-          quality: 'premium',
-          numberOfImages: 1,
-          height: 1024,
-          width: 1024,
-          cfgScale: 10.0, // High CFG for strict white background adherence
-        },
-      };
+    }
 
-      const inpaintBase64 = await invokeTitanImageGenerator(inpaintRequest);
-      enhancedImageBuffer = Buffer.from(inpaintBase64, 'base64');
-      console.log(`INPAINTING fallback result: ${enhancedImageBuffer.length} bytes`);
+    // Step 2 (Fallback): Use INPAINTING if BACKGROUND_REMOVAL didn't produce white background
+    if (!whiteBackgroundApplied) {
+      try {
+        console.log('Step 2: Applying INPAINTING for white background...');
+        const inpaintRequest: TitanInpaintingRequest = {
+          taskType: 'INPAINTING',
+          inPaintingParams: {
+            image: base64Image,
+            text: 'pure solid white background, bright white studio backdrop, clean plain white, professional product photography, even white illumination, no shadows, bright white everywhere',
+            negativeText: 'color, pattern, texture, gradient, dark, shadow, floor, table, wall, clutter, objects, text, watermark, blur, noise',
+            maskPrompt: 'background, wall, floor, table, surface, surroundings, everything behind and around the main product, backdrop, environment, shadow',
+          },
+          imageGenerationConfig: {
+            quality: 'premium',
+            numberOfImages: 1,
+            height: 1024,
+            width: 1024,
+            cfgScale: 10.0, // High CFG for strict white background adherence
+          },
+        };
+
+        const inpaintBase64 = await invokeTitanImageGenerator(inpaintRequest);
+        enhancedImageBuffer = Buffer.from(inpaintBase64, 'base64');
+        console.log(`INPAINTING result: ${enhancedImageBuffer.length} bytes`);
+      } catch (inpaintError: any) {
+        console.error('INPAINTING also failed:', inpaintError.message);
+        throw new Error(`Both BACKGROUND_REMOVAL and INPAINTING failed. Last error: ${inpaintError.message}`);
+      }
+    }
+
+    // Safety check — should never reach here with undefined buffer
+    if (!enhancedImageBuffer) {
+      throw new Error('No enhanced image produced (should not happen)');
     }
 
     // Upload enhanced image to S3
@@ -327,6 +351,9 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
  * Composite a PNG with transparent background onto pure white canvas
  * Processes raw PNG pixel data: alpha-blends each pixel onto white (255,255,255)
  * Result: RGBA PNG where all transparent areas are solid white, product colors preserved
+ * 
+ * Returns NEW buffer if processing succeeded, SAME buffer reference if skipped.
+ * Caller uses reference equality to detect if compositing was applied.
  */
 function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
   // Check if it's a PNG (starts with PNG signature: 137 80 78 71)
@@ -334,52 +361,115 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
                 imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
   
   if (!isPng) {
-    console.log('Image is not PNG, returning as-is');
+    console.log('Image is not PNG, returning as-is (same ref)');
     return imageBuffer;
   }
 
   try {
     // Parse PNG chunks to extract image data
-    const { width, height, bitDepth, colorType, rawPixels } = decodePng(imageBuffer);
+    const { width, height, bitDepth, colorType, rawPixels, bpp } = decodePng(imageBuffer);
     
-    // Only process if RGBA (colorType 6) — has alpha channel
-    if (colorType !== 6 || bitDepth !== 8) {
-      console.log(`PNG colorType=${colorType}, bitDepth=${bitDepth} - no alpha compositing needed`);
+    if (bitDepth !== 8) {
+      console.log(`PNG bitDepth=${bitDepth} (not 8) - cannot process, returning as-is`);
       return imageBuffer;
     }
     
-    console.log(`Compositing ${width}x${height} RGBA PNG onto white background`);
-    
-    // Alpha-blend each pixel onto white background
-    // Formula: out = fg * alpha + bg * (1 - alpha), where bg = 255 (white)
-    for (let i = 0; i < rawPixels.length; i += 4) {
-      const r = rawPixels[i];
-      const g = rawPixels[i + 1];
-      const b = rawPixels[i + 2];
-      const a = rawPixels[i + 3];
+    // Handle RGBA (colorType 6) — has alpha channel → composite on white
+    if (colorType === 6) {
+      console.log(`Compositing ${width}x${height} RGBA PNG onto white background`);
       
-      if (a === 0) {
-        // Fully transparent → white
-        rawPixels[i] = 255;
-        rawPixels[i + 1] = 255;
-        rawPixels[i + 2] = 255;
-        rawPixels[i + 3] = 255;
-      } else if (a < 255) {
-        // Semi-transparent → blend with white
-        const alpha = a / 255;
-        const invAlpha = 1 - alpha;
-        rawPixels[i] = Math.round(r * alpha + 255 * invAlpha);
-        rawPixels[i + 1] = Math.round(g * alpha + 255 * invAlpha);
-        rawPixels[i + 2] = Math.round(b * alpha + 255 * invAlpha);
-        rawPixels[i + 3] = 255; // Fully opaque
+      // Convert to RGBA pixels for output
+      const rgbaPixels = Buffer.alloc(width * height * 4);
+      for (let i = 0; i < width * height; i++) {
+        const srcIdx = i * 4;
+        const dstIdx = i * 4;
+        const r = rawPixels[srcIdx];
+        const g = rawPixels[srcIdx + 1];
+        const b = rawPixels[srcIdx + 2];
+        const a = rawPixels[srcIdx + 3];
+        
+        if (a === 0) {
+          // Fully transparent → white
+          rgbaPixels[dstIdx] = 255;
+          rgbaPixels[dstIdx + 1] = 255;
+          rgbaPixels[dstIdx + 2] = 255;
+          rgbaPixels[dstIdx + 3] = 255;
+        } else if (a < 255) {
+          // Semi-transparent → blend with white
+          const alpha = a / 255;
+          const invAlpha = 1 - alpha;
+          rgbaPixels[dstIdx] = Math.round(r * alpha + 255 * invAlpha);
+          rgbaPixels[dstIdx + 1] = Math.round(g * alpha + 255 * invAlpha);
+          rgbaPixels[dstIdx + 2] = Math.round(b * alpha + 255 * invAlpha);
+          rgbaPixels[dstIdx + 3] = 255;
+        } else {
+          // Fully opaque — keep as-is
+          rgbaPixels[dstIdx] = r;
+          rgbaPixels[dstIdx + 1] = g;
+          rgbaPixels[dstIdx + 2] = b;
+          rgbaPixels[dstIdx + 3] = 255;
+        }
       }
-      // a === 255: fully opaque, keep as-is (product pixels untouched)
+      
+      const result = encodePng(width, height, rgbaPixels);
+      console.log(`White background composite complete: ${result.length} bytes`);
+      return result;
     }
     
-    // Re-encode as PNG
-    const result = encodePng(width, height, rawPixels);
-    console.log(`White background composite complete: ${result.length} bytes`);
-    return result;
+    // Handle RGB (colorType 2) — no alpha channel, Titan bg removal already set bg color
+    // Convert RGB to RGBA and return as new buffer
+    if (colorType === 2) {
+      console.log(`Converting ${width}x${height} RGB PNG to RGBA with white bg check`);
+      const rgbaPixels = Buffer.alloc(width * height * 4);
+      for (let i = 0; i < width * height; i++) {
+        const srcIdx = i * 3;
+        const dstIdx = i * 4;
+        rgbaPixels[dstIdx] = rawPixels[srcIdx];
+        rgbaPixels[dstIdx + 1] = rawPixels[srcIdx + 1];
+        rgbaPixels[dstIdx + 2] = rawPixels[srcIdx + 2];
+        rgbaPixels[dstIdx + 3] = 255; // Fully opaque
+      }
+      const result = encodePng(width, height, rgbaPixels);
+      console.log(`RGB→RGBA conversion complete: ${result.length} bytes`);
+      return result;
+    }
+    
+    // Handle Grayscale+Alpha (colorType 4)
+    if (colorType === 4) {
+      console.log(`Converting ${width}x${height} Grayscale+Alpha PNG onto white background`);
+      const rgbaPixels = Buffer.alloc(width * height * 4);
+      for (let i = 0; i < width * height; i++) {
+        const srcIdx = i * 2;
+        const dstIdx = i * 4;
+        const gray = rawPixels[srcIdx];
+        const a = rawPixels[srcIdx + 1];
+        
+        if (a === 0) {
+          rgbaPixels[dstIdx] = 255;
+          rgbaPixels[dstIdx + 1] = 255;
+          rgbaPixels[dstIdx + 2] = 255;
+          rgbaPixels[dstIdx + 3] = 255;
+        } else if (a < 255) {
+          const alpha = a / 255;
+          const blended = Math.round(gray * alpha + 255 * (1 - alpha));
+          rgbaPixels[dstIdx] = blended;
+          rgbaPixels[dstIdx + 1] = blended;
+          rgbaPixels[dstIdx + 2] = blended;
+          rgbaPixels[dstIdx + 3] = 255;
+        } else {
+          rgbaPixels[dstIdx] = gray;
+          rgbaPixels[dstIdx + 1] = gray;
+          rgbaPixels[dstIdx + 2] = gray;
+          rgbaPixels[dstIdx + 3] = 255;
+        }
+      }
+      const result = encodePng(width, height, rgbaPixels);
+      console.log(`Grayscale+Alpha→RGBA conversion complete: ${result.length} bytes`);
+      return result;
+    }
+    
+    console.log(`PNG colorType=${colorType} - unsupported, returning as-is`);
+    return imageBuffer;
   } catch (error: any) {
     console.warn('PNG compositing failed, returning original:', error.message);
     return imageBuffer;
@@ -387,10 +477,10 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
 }
 
 /**
- * Minimal PNG decoder - extracts raw RGBA pixel data
- * Only supports 8-bit RGBA (colorType 6) which is what Titan outputs
+ * Minimal PNG decoder - extracts raw pixel data
+ * Supports 8-bit RGBA (colorType 6), RGB (colorType 2), Grayscale+Alpha (colorType 4)
  */
-function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: number; colorType: number; rawPixels: Buffer } {
+function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: number; colorType: number; rawPixels: Buffer; bpp: number } {
   // Verify PNG signature
   if (buffer.readUInt32BE(0) !== 0x89504E47 || buffer.readUInt32BE(4) !== 0x0D0A1A0A) {
     throw new Error('Not a valid PNG');
@@ -427,8 +517,18 @@ function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: n
   const compressedData = Buffer.concat(idatChunks);
   const decompressed = zlib.inflateSync(compressedData);
   
+  // Determine bytes per pixel based on color type
+  // colorType 0 = Grayscale (1 bpp), 2 = RGB (3 bpp), 4 = Grayscale+Alpha (2 bpp), 6 = RGBA (4 bpp)
+  let bpp: number;
+  switch (colorType) {
+    case 0: bpp = 1; break;
+    case 2: bpp = 3; break;
+    case 4: bpp = 2; break;
+    case 6: bpp = 4; break;
+    default: throw new Error(`Unsupported PNG colorType: ${colorType}`);
+  }
+  
   // Un-filter scanlines (each row starts with a filter byte)
-  const bpp = 4; // bytes per pixel for RGBA
   const rowBytes = width * bpp;
   const rawPixels = Buffer.alloc(width * height * bpp);
   
@@ -468,7 +568,7 @@ function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: n
     }
   }
   
-  return { width, height, bitDepth, colorType, rawPixels };
+  return { width, height, bitDepth, colorType, rawPixels, bpp };
 }
 
 function paethPredictor(a: number, b: number, c: number): number {

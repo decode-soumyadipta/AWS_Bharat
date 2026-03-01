@@ -22,9 +22,104 @@ import {
 } from '../services/conversation-memory';
 import { sendImageMessage, sendInteractiveMessage } from './whatsapp-message-sender';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { eventBridgeClient } from '../config/aws-clients';
+import { eventBridgeClient, docClient, TABLE_NAME } from '../config/aws-clients';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
-import { getCatalogItemsBySeller, deleteCatalogItem } from '../services/dynamodb-repository';
+import { getCatalogItemsBySeller, deleteCatalogItem, getSellerByPhone, updateSellerProfile } from '../services/dynamodb-repository';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, ScanCommand, UpdateCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+
+const marketplaceDdbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+
+/**
+ * Normalize Hindi/Hinglish number words to digits in transcribed text.
+ * Handles common Transcribe outputs like "sau" (100), "hazaar" (1000), etc.
+ */
+function normalizeHindiNumbers(text: string): string {
+  // Hindi number word mappings (romanized + Devanagari)
+  const numberWords: Record<string, number> = {
+    // Basic numbers
+    'ek': 1, 'एक': 1,
+    'do': 2, 'दो': 2,
+    'teen': 3, 'तीन': 3,
+    'char': 4, 'चार': 4,
+    'panch': 5, 'पाँच': 5, 'paanch': 5,
+    'cheh': 6, 'छह': 6, 'chhe': 6,
+    'saat': 7, 'सात': 7,
+    'aath': 8, 'आठ': 8,
+    'nau': 9, 'नौ': 9,
+    'das': 10, 'दस': 10,
+    'gyarah': 11, 'ग्यारह': 11,
+    'barah': 12, 'बारह': 12,
+    'terah': 13, 'तेरह': 13,
+    'chaudah': 14, 'चौदह': 14,
+    'pandrah': 15, 'पंद्रह': 15,
+    'solah': 16, 'सोलह': 16,
+    'satrah': 17, 'सत्रह': 17,
+    'atharah': 18, 'अठारह': 18,
+    'unnis': 19, 'उन्नीस': 19,
+    'bees': 20, 'बीस': 20,
+    'pachees': 25, 'पच्चीस': 25,
+    'tees': 30, 'तीस': 30,
+    'paintees': 35, 'पैंतीस': 35,
+    'chaalees': 40, 'चालीस': 40,
+    'pachaas': 50, 'पचास': 50,
+    'saath': 60, 'साठ': 60,
+    'sattar': 70, 'सत्तर': 70,
+    'assi': 80, 'अस्सी': 80,
+    'nabbe': 90, 'नब्बे': 90,
+    // Hundred variants
+    'sau': 100, 'सौ': 100,
+    // Thousand variants
+    'hazaar': 1000, 'हज़ार': 1000, 'hazar': 1000, 'hajaar': 1000, 'हजार': 1000,
+    // Lakh/Crore
+    'lakh': 100000, 'लाख': 100000, 'lac': 100000,
+    'crore': 10000000, 'करोड़': 10000000, 'karod': 10000000,
+    // Common compound patterns
+    'dedh sau': 150, 'डेढ़ सौ': 150,
+    'dhai sau': 250, 'ढाई सौ': 250,
+    'dedh': 1.5, 'डेढ़': 1.5,
+    'dhai': 2.5, 'ढाई': 2.5,
+    'sadhe': 0.5, 'साढ़े': 0.5,  // used as prefix: "sadhe teen sau" = 350
+  };
+
+  let result = text;
+
+  // Handle compound patterns first (e.g., "do sau pachaas" → 250, "paanch hazaar" → 5000)
+  // Pattern: <multiplier> sau/hazaar/lakh [additional]
+  const compoundPattern = /\b(ek|do|teen|char|panch|paanch|cheh|chhe|saat|aath|nau|das|bees|tees|chaalees|pachaas|एक|दो|तीन|चार|पाँच|छह|सात|आठ|नौ|दस|बीस|तीस|चालीस|पचास)\s+(sau|hazaar|hazar|hajaar|lakh|lac|crore|सौ|हज़ार|हजार|लाख|करोड़|karod)\b/gi;
+  
+  result = result.replace(compoundPattern, (match, multiplierWord, unitWord) => {
+    const multiplier = numberWords[multiplierWord.toLowerCase()] || numberWords[multiplierWord] || 1;
+    const unit = numberWords[unitWord.toLowerCase()] || numberWords[unitWord] || 1;
+    return String(multiplier * unit);
+  });
+
+  // Handle standalone number words (replace remaining uncompounded ones)
+  // Sort by length descending so longer matches go first
+  const sortedWords = Object.entries(numberWords)
+    .filter(([_, v]) => v >= 10) // Only replace substantial numbers standalone
+    .sort((a, b) => b[0].length - a[0].length);
+
+  for (const [word, num] of sortedWords) {
+    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    result = result.replace(regex, String(num));
+  }
+
+  // Clean up "dedh sau", "dhai sau" patterns that may have been partially replaced
+  result = result.replace(/\b1\.5\s+100\b/g, '150');
+  result = result.replace(/\b2\.5\s+100\b/g, '250');
+  result = result.replace(/\b1\.5\s+1000\b/g, '1500');
+  result = result.replace(/\b2\.5\s+1000\b/g, '2500');
+
+  // Handle "X rupaye" or "X kilo" where X contains spaces between number words
+  // e.g., "100 50" → "150" when consecutive
+  result = result.replace(/(\d+)\s+(\d+)(?=\s*(rupaye|rupee|kilo|kg|gram|रुपये|किलो|ग्राम|rupaiye))/gi, 
+    (match, n1, n2) => String(parseInt(n1) + parseInt(n2))
+  );
+
+  console.log(`🔢 Number normalization: "${text}" → "${result}"`);
+  return result;
+}
 
 /**
  * Agent handler event
@@ -42,30 +137,12 @@ interface AgentHandlerEvent {
 }
 
 /**
- * Global timeout wrapper for safety
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => {
-      console.warn(`⚠️ Handler timeout after ${ms}ms, returning fallback`);
-      resolve(fallback);
-    }, ms)),
-  ]);
-}
-
-/**
  * Main agent handler
+ * Lambda timeout is 5 minutes — no artificial timeout wrapper needed.
  */
 export const handler = async (event: any): Promise<any> => {
   console.log('🤖 Agent handler invoked:', JSON.stringify(event, null, 2));
-
-  // Wrap entire handler in a 25-second timeout (Lambda has 30s)
-  return withTimeout(
-    processAgentEvent(event),
-    25000,
-    { success: false, error: 'Handler timeout' }
-  );
+  return processAgentEvent(event);
 };
 
 async function processAgentEvent(event: any): Promise<any> {
@@ -111,6 +188,10 @@ async function processAgentEvent(event: any): Promise<any> {
       case 'image':
         await sendTypingIndicator(phone);
         userMessage = await handleImageMessage(eventDetail, phone, language);
+        if (userMessage === '__CONFIRMATION_TRIGGERED__' || userMessage === '__HANDLED__') {
+          console.log('📸 Image handled directly, skipping agent processing');
+          return { success: true, message: 'Image processed directly' };
+        }
         await sendTypingIndicator(phone);
         break;
 
@@ -124,11 +205,25 @@ async function processAgentEvent(event: any): Promise<any> {
         break;
 
       default:
-        throw new Error(`Unknown message type: ${messageType}`);
+        // Never error out on unknown message types — respond helpfully
+        console.warn('⚠️ Unknown message type:', messageType);
+        userMessage = `[User sent a ${messageType || 'unknown'} message]`;
+        break;
     }
 
     if (!userMessage) {
-      console.log('⚠️ No user message to process');
+      console.log('⚠️ No user message to process, sending helpful response');
+      // NEVER fail silently — always respond to the user
+      const emptyMsgResponse: Record<string, string> = {
+        'hi-IN': '🤔 मुझे आपका मैसेज समझ नहीं आया। कृपया दुबारा वॉइस मैसेज भेजें या टाइप करके बताएं की आपको क्या चाहिए 🙏',
+        'mr-IN': '🤔 मला तुमचा मेसेज समजला नाही. कृपया पुन्हा  व्हॉइस मेसेज पाठवा 🙏',
+        'en-IN': '🤔 I couldn\'t understand your message. Please send a voice message again or type what you need 🙏',
+      };
+      try {
+        await sendEnhancedAgentMessage(phone, emptyMsgResponse[language] || emptyMsgResponse['hi-IN'], language, 'voice');
+      } catch (e) {
+        console.error('Failed to send empty message response:', e);
+      }
       return { success: true };
     }
 
@@ -179,16 +274,33 @@ async function processAgentEvent(event: any): Promise<any> {
   } catch (error: any) {
     console.error('❌ Agent handler error:', error);
     
-    // Send error message to user
+    // Send specific, helpful error message to user — NEVER fail silently
     try {
       const phone = event.detail?.phone || event.phone;
+      const language = event.detail?.language || event.language || 'hi-IN';
       if (phone) {
-        await sendEnhancedAgentMessage(
-          phone,
-          'माफ़ करें, कुछ समस्या हो गई। कृपया फिर से बोलें।',
-          'hi-IN',
-          'voice'
-        );
+        let errorMessage = '';
+        const errMsg = error.message || '';
+        
+        if (errMsg.includes('transcription') || errMsg.includes('audio') || errMsg.includes('download')) {
+          errorMessage = language === 'en-IN' 
+            ? '🎙️ I couldn\'t catch that voice message clearly. Could you send it again, a bit louder? I\'m all ears! 😊' 
+            : '🎙️ वॉइस मैसेज अच्छे से सुनाई नहीं दिया। क्या आप थोड़ा ज़ोर से दुबारा भेज सकते हैं? मैं सुन रहा हूँ! 😊';
+        } else if (errMsg.includes('image') || errMsg.includes('Image')) {
+          errorMessage = language === 'en-IN'
+            ? '📷 That photo didn\'t come through properly. Could you send it once more? 😊'
+            : '📷 फोटो ठीक से नहीं मिली। क्या आप दुबारा भेज सकते हैं? 😊';
+        } else if (errMsg.includes('timeout') || errMsg.includes('Timeout')) {
+          errorMessage = language === 'en-IN'
+            ? '⏳ That took a bit long! I\'m ready now — what would you like to do? 😊'
+            : '⏳ थोड़ी देर हो गई! अब मैं तैयार हूँ — बताइए क्या करना है? 😊';
+        } else {
+          errorMessage = language === 'en-IN'
+            ? '🙏 Oops, let me try again! What were you saying? Send a voice message or type your question 😊'
+            : '🙏 अरे, एक बार फिर बताइए! वॉइस मैसेज भेजें या टाइप करें — मैं यहाँ हूँ! 😊';
+        }
+
+        await sendEnhancedAgentMessage(phone, errorMessage, language, 'voice');
       }
     } catch (sendError) {
       console.error('Failed to send error message:', sendError);
@@ -290,14 +402,16 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
   
   if (!bucketName) {
-    throw new Error('PRODUCTS_BUCKET_NAME not configured');
+    console.error('PRODUCTS_BUCKET_NAME not configured for voice');
+    return ''; // Will trigger the friendly "couldn\'t understand" response
   }
   
   console.log('Downloading audio from WhatsApp...');
   const downloadResult = await downloadAudio(eventDetail.content.mediaUrl, bucketName);
   
   if (!downloadResult.success || !downloadResult.s3Url) {
-    throw new Error(downloadResult.error || 'Failed to download audio');
+    console.error('Audio download failed:', downloadResult.error);
+    return ''; // Will trigger the friendly "couldn\'t understand" response
   }
   
   console.log('Audio downloaded successfully:', downloadResult.s3Url);
@@ -319,11 +433,14 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
     console.error('Voice transcription failed:', transcriptionResult.error);
-    throw new Error('Voice transcription failed');
+    return ''; // Will trigger the friendly "couldn\'t understand" response
   }
 
   console.log('Transcription successful:', transcriptionResult.transcription);
-  return transcriptionResult.transcription;
+  
+  // Normalize Hindi number words to digits
+  const normalizedText = normalizeHindiNumbers(transcriptionResult.transcription);
+  return normalizedText;
 }
 
 /**
@@ -336,8 +453,15 @@ async function handleImageMessage(
 ): Promise<string> {
   const partialData = await getPartialData(phone);
 
-  if (!partialData) {
-    return 'मैंने फोटो भेजी है';
+  if (!partialData || !partialData.productName) {
+    // No product context — send guidance directly and return skip flag
+    const guidance: Record<string, string> = {
+      'hi-IN': '📸 फोटो मिल गई! लेकिन पहले मुझे बताइए कि यह किस उत्पाद की फोटो है? कृपया वॉइस मैसेज से बताएं — जैसे "टमाटर 50 रुपये किलो"। फिर मैं यह फोटो उसमें जोड़ दूंगा! 😊',
+      'mr-IN': '📸 फोटो मिळाला! पण आधी सांगा हे कोणत्या उत्पादाचे आहे? कृपया व्हॉइस मेसेज पाठवा — जसे "टोमॅटो 50 रुपये किलो". मग मी फोटो जोडतो! 😊',
+      'en-IN': '📸 Got the photo! But first tell me which product this is for. Please send a voice message — like "tomato 50 rupees per kilo". Then I\'ll add this photo to it! 😊',
+    };
+    await sendEnhancedAgentMessage(phone, guidance[language] || guidance['hi-IN'], language as any, 'voice');
+    return '__HANDLED__';
   }
 
   // Download and enhance image
@@ -346,13 +470,27 @@ async function handleImageMessage(
 
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
   if (!bucketName) {
-    throw new Error('PRODUCTS_BUCKET_NAME not configured');
+    console.error('PRODUCTS_BUCKET_NAME not configured for image');
+    const errMsg: Record<string, string> = {
+      'hi-IN': '📸 फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया दुबारा भेजें! 🙏',
+      'mr-IN': '📸 फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया पुन्हा पाठवा! 🙏',
+      'en-IN': '📸 Got the photo but had trouble processing it. Please send it again! 🙏',
+    };
+    await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
+    return '__HANDLED__';
   }
 
   // Download image
   const downloadResult = await downloadImage(eventDetail.content.mediaUrl, bucketName);
   if (!downloadResult.success || !downloadResult.s3Url) {
-    throw new Error('Image download failed');
+    console.error('Image download failed');
+    const errMsg: Record<string, string> = {
+      'hi-IN': '📸 फोटो डाउनलोड नहीं हो पाई। कृपया दुबारा भेजें! 🙏',
+      'mr-IN': '📸 फोटो डाउनलोड झालं नाही. कृपया पुन्हा पाठवा! 🙏',
+      'en-IN': '📸 Couldn\'t download the photo. Please send it again! 🙏',
+    };
+    await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
+    return '__HANDLED__';
   }
 
   // Store original image URL
@@ -379,7 +517,43 @@ async function handleImageMessage(
     console.error('Image enhancement failed, using original:', error);
   }
 
-  return 'मैंने उत्पाद की फोटो भेजी है';
+  // Check if all required fields are present → trigger confirmation flow
+  const updatedPartial = await getPartialData(phone);
+  const hasMissingFields = updatedPartial?.missingFields && updatedPartial.missingFields.length > 0;
+  
+  if (updatedPartial && !hasMissingFields) {
+    // All product data + image → trigger confirmation handler directly
+    console.log('✅ All fields + image present, triggering confirmation flow');
+    await updateUserState(phone, 'CONFIRMATION_PENDING');
+    
+    try {
+      const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
+      const { InvokeCommand } = await import('@aws-sdk/client-lambda');
+      const { lambdaClient } = await import('../config/aws-clients');
+      await lambdaClient.send(new InvokeCommand({
+        FunctionName: confirmationFunctionName,
+        Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+      }));
+      console.log('✅ Confirmation handler invoked successfully');
+    } catch (confErr) {
+      console.error('⚠️ Confirmation handler invoke failed, sending manual confirmation:', confErr);
+      // Fallback: send a text summary
+      const summary = `📋 *${updatedPartial.productName}*\n💰 ₹${updatedPartial.price}/${updatedPartial.unit}\n📦 ${updatedPartial.quantity} ${updatedPartial.unit}\n\nक्या यह सही है? "हां" बोलें या बदलाव बताएं।`;
+      await sendEnhancedAgentMessage(phone, summary, language as any, 'both');
+    }
+    return '__CONFIRMATION_TRIGGERED__';
+  }
+
+  // Image received but some product fields still missing → ask for them
+  const missingStr = updatedPartial?.missingFields?.join(', ') || 'details';
+  console.log('📸 Image received but missing fields:', missingStr);
+  const askMissing: Record<string, string> = {
+    'hi-IN': `📸 फोटो मिल गई! अब बस ${missingStr === 'price' ? 'कीमत' : missingStr === 'quantity' ? 'मात्रा' : missingStr === 'unit' ? 'इकाई (किलो/पीस)' : 'कुछ जानकारी'} बता दीजिए तो उत्पाद जोड़ देता हूँ! 😊`,
+    'mr-IN': `📸 फोटो मिळाला! आता फक्त ${missingStr} सांगा म्हणजे उत्पादन जोडतो! 😊`,
+    'en-IN': `📸 Got the photo! Just tell me the ${missingStr} and I'll add your product! 😊`,
+  };
+  await sendEnhancedAgentMessage(phone, askMissing[language] || askMissing['hi-IN'], language as any, 'voice');
+  return '__HANDLED__';
 }
 
 /**
@@ -394,6 +568,19 @@ async function handleButtonClick(
 
   // Convert button clicks to natural language messages for enhanced agent processing
   let userMessage = '';
+  
+  // Handle order accept/reject buttons (from marketplace orders)
+  if (buttonPayload.startsWith('accept_order_')) {
+    const orderId = buttonPayload.replace('accept_order_', '');
+    await handleOrderAcceptReject(phone, orderId, 'ACCEPTED', language);
+    return '__HANDLED__';
+  }
+  
+  if (buttonPayload.startsWith('reject_order_')) {
+    const orderId = buttonPayload.replace('reject_order_', '');
+    await handleOrderAcceptReject(phone, orderId, 'REJECTED', language);
+    return '__HANDLED__';
+  }
   
   switch (buttonPayload) {
     case 'approve':
@@ -420,6 +607,129 @@ async function handleButtonClick(
 }
 
 /**
+ * Handle order accept/reject from seller.
+ * Updates order status, notifies buyer via voice, and guides payment flow.
+ */
+async function handleOrderAcceptReject(
+  sellerPhone: string,
+  orderId: string,
+  decision: 'ACCEPTED' | 'REJECTED',
+  language: string
+): Promise<void> {
+  try {
+    console.log(`📦 Order ${decision}: ${orderId} by seller ${sellerPhone}`);
+
+    // Fetch the order record
+    const orderResult = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
+    }));
+
+    const order = orderResult.Item;
+    if (!order) {
+      console.error('Order not found:', orderId);
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const notFoundMsg = lang === 'hi'
+        ? '⚠️ यह ऑर्डर नहीं मिला। शायद पहले से प्रोसेस हो चुका है।'
+        : '⚠️ Order not found. It may have already been processed.';
+      await sendEnhancedAgentMessage(sellerPhone, notFoundMsg, language as any, 'voice');
+      return;
+    }
+
+    // If order is already CONFIRMED (e.g., auto-accepted UPI), inform the seller
+    if (order.status === 'CONFIRMED' || order.status === 'CANCELLED') {
+      console.log(`Order ${orderId} already ${order.status}, skipping accept/reject`);
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const alreadyMsg = order.status === 'CONFIRMED'
+        ? (lang === 'hi'
+          ? `✅ यह ऑर्डर पहले से कन्फ़र्म है (${order.payment?.method === 'UPI' ? 'UPI ऑटो-स्वीकार' : 'स्वीकृत'})। कृपया ऑर्डर पैक करें! 📦`
+          : `✅ This order is already confirmed (${order.payment?.method === 'UPI' ? 'UPI auto-accepted' : 'accepted'}). Please pack the order! 📦`)
+        : (lang === 'hi'
+          ? '❌ यह ऑर्डर पहले से रद्द हो चुका है।'
+          : '❌ This order has already been cancelled.');
+      await sendEnhancedAgentMessage(sellerPhone, alreadyMsg, language as any, 'voice');
+      return;
+    }
+
+    const now = Date.now();
+    const newStatus = decision === 'ACCEPTED' ? 'CONFIRMED' : 'CANCELLED';
+    const buyerPhone = order.buyer?.phone || order.fulfillment?.contact?.phone;
+
+    // Update order status in DynamoDB
+    await docClient.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
+      UpdateExpression: 'SET #status = :status, #timeline = list_append(#timeline, :event), updatedAt = :now',
+      ExpressionAttributeNames: {
+        '#status': 'status',
+        '#timeline': 'timeline',
+      },
+      ExpressionAttributeValues: {
+        ':status': newStatus,
+        ':event': [{
+          status: newStatus,
+          timestamp: now,
+          actor: 'SELLER',
+          notes: decision === 'ACCEPTED' 
+            ? `Order accepted by seller ${sellerPhone}`
+            : `Order rejected by seller ${sellerPhone}`,
+        }],
+        ':now': now,
+      },
+    }));
+
+    console.log(`✅ Order ${orderId} updated to ${newStatus}`);
+
+    const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+    const items = order.items || [];
+    const itemSummary = items.map((i: any) => `${i.name} x${i.quantity}`).join(', ');
+    const totalAmount = order.payment?.amount || 0;
+    const paymentMethod = order.payment?.method || 'COD';
+
+    if (decision === 'ACCEPTED') {
+      // -- Seller confirmation --
+      const sellerMsg = lang === 'hi'
+        ? `✅ ऑर्डर स्वीकार किया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI भुगतान' : 'कैश ऑन डिलीवरी'}\n\n${paymentMethod === 'UPI' ? '💡 UPI भुगतान आने का इंतजार करें। भुगतान मिलने पर आपको सूचना मिलेगी।' : '📦 कृपया ऑर्डर पैक करें और डिलीवरी की तैयारी करें!'}`
+        : `✅ Order Accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI Payment' : 'Cash on Delivery'}\n\n${paymentMethod === 'UPI' ? '💡 Wait for UPI payment. You will be notified when payment is received.' : '📦 Please pack the order and prepare for delivery!'}`;
+      await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
+
+      // -- Buyer notification --
+      if (buyerPhone) {
+        const buyerMsg = lang === 'hi'
+          ? `🎉 आपका ऑर्डर स्वीकार हो गया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 कृपया UPI से ₹' + totalAmount + ' भुगतान करें। भुगतान के बाद स्क्रीनशॉट या रेफरेंस नंबर भेजें।' : '💵 कैश ऑन डिलीवरी - डिलीवरी के समय भुगतान करें।'}\n\n🚚 डिलीवरी जल्द होगी!`
+          : `🎉 Your order has been accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 Please pay ₹' + totalAmount + ' via UPI. Send screenshot or reference number after payment.' : '💵 Cash on Delivery - Pay when your order is delivered.'}\n\n🚚 Delivery coming soon!`;
+        await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
+      }
+    } else {
+      // -- Seller rejection confirmation --
+      const sellerMsg = lang === 'hi'
+        ? `❌ ऑर्डर अस्वीकार किया गया। ग्राहक को सूचित कर दिया गया है।`
+        : `❌ Order rejected. The buyer has been notified.`;
+      await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
+
+      // -- Buyer notification --
+      if (buyerPhone) {
+        const buyerMsg = lang === 'hi'
+          ? `😔 माफ़ कीजिए, विक्रेता ने आपका ऑर्डर स्वीकार नहीं किया।\n📦 ${itemSummary}\n\nकृपया दूसरे विक्रेता से ऑर्डर करें।`
+          : `😔 Sorry, the seller couldn't accept your order.\n📦 ${itemSummary}\n\nPlease try ordering from another seller.`;
+        await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Failed to handle order accept/reject:', error);
+    try {
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const errMsg = lang === 'hi'
+        ? '⚠️ ऑर्डर प्रोसेस करने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+        : '⚠️ There was an issue processing the order. Please try again.';
+      await sendEnhancedAgentMessage(sellerPhone, errMsg, language as any, 'voice');
+    } catch (e) {
+      console.error('Failed to send error msg:', e);
+    }
+  }
+}
+
+/**
  * Execute agent actions
  */
 async function executeAgentActions(
@@ -428,29 +738,77 @@ async function executeAgentActions(
   language: string
 ): Promise<void> {
   for (const action of actions) {
-    console.log('🎬 Executing action:', action.type);
+    console.log('🎬 Executing action:', action.type, 'data:', JSON.stringify(action.data));
 
-    switch (action.type) {
-      case 'REQUEST_IMAGE':
-        await updateUserState(phone, 'IMAGE_PENDING');
-        break;
+    try {
+      switch (action.type) {
+        case 'REQUEST_IMAGE':
+          await updateUserState(phone, 'IMAGE_PENDING');
+          break;
 
-      case 'CREATE_CATALOG':
-        await createCatalog(phone, language);
-        break;
+        case 'CREATE_CATALOG':
+          await createCatalog(phone, language);
+          break;
 
-      case 'STORE_DATA':
-        if (action.data) {
-          await mergePartialData(phone, action.data);
-        }
-        break;
+        case 'STORE_DATA':
+          if (action.data) {
+            const merged = await mergePartialData(phone, action.data);
+            console.log('📦 STORE_DATA merged:', {
+              productName: merged.productName,
+              price: merged.price,
+              quantity: merged.quantity,
+              unit: merged.unit,
+              missingFields: merged.missingFields,
+              hasImage: !!(merged.originalImageUrl || merged.enhancedImageUrl),
+            });
 
-      case 'DELETE_PRODUCT':
-        await deleteProduct(phone, action.data?.productName, language);
-        break;
+            // Drive the state machine based on data completeness
+            const allFieldsPresent = !merged.missingFields || merged.missingFields.length === 0;
+            const hasImage = !!(merged.originalImageUrl || merged.enhancedImageUrl);
+            const currentState = (await getUserState(phone))?.state;
 
-      default:
-        console.log('⚠️ Unknown action type:', action.type);
+            if (allFieldsPresent && hasImage) {
+              // All data + image → trigger confirmation
+              console.log('✅ All fields + image complete, triggering confirmation');
+              await updateUserState(phone, 'CONFIRMATION_PENDING');
+              try {
+                const confFn = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
+                const { InvokeCommand } = await import('@aws-sdk/client-lambda');
+                const { lambdaClient } = await import('../config/aws-clients');
+                await lambdaClient.send(new InvokeCommand({
+                  FunctionName: confFn,
+                  Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+                }));
+              } catch (e) {
+                console.error('⚠️ Confirmation invoke failed:', e);
+              }
+            } else if (allFieldsPresent && !hasImage) {
+              // All text data present, need image → IMAGE_PENDING
+              console.log('📸 All fields present, moving to IMAGE_PENDING');
+              await updateUserState(phone, 'IMAGE_PENDING');
+            } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE') {
+              // Partial data, move to VOICE_RECEIVED so user can provide more info
+              console.log('📝 Partial data, moving to VOICE_RECEIVED');
+              await updateUserState(phone, 'VOICE_RECEIVED');
+            }
+          }
+          break;
+
+        case 'DELETE_PRODUCT':
+          await deleteProduct(phone, action.data?.productName, language);
+          break;
+
+        case 'REGISTER_UPI':
+          await registerUpi(phone, action.data?.upiId, language);
+          break;
+
+        default:
+          console.log('⚠️ Unknown action type:', action.type);
+      }
+    } catch (actionError: any) {
+      console.error(`❌ Action ${action.type} failed:`, actionError.message);
+      // Don't let one failed action kill the whole handler
+      // The agent's MESSAGE was already sent — just log and continue
     }
   }
 }
@@ -462,7 +820,13 @@ async function createCatalog(phone: string, language: string): Promise<void> {
   const partialData = await getPartialData(phone);
 
   if (!partialData) {
-    throw new Error('No partial data found');
+    console.warn('⚠️ CREATE_CATALOG called but no partial data found');
+    const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+    const msg = lang === 'hi'
+      ? '⚠️ उत्पाद की जानकारी अभी पूरी नहीं है। कृपया पहले उत्पाद का नाम, कीमत और फोटो भेजें।'
+      : '⚠️ Product information is incomplete. Please send product name, price, and photo first.';
+    await sendEnhancedAgentMessage(phone, msg, language as any, 'voice');
+    return;
   }
 
   // Publish catalog build event
@@ -568,6 +932,153 @@ async function deleteProduct(phone: string, productName: string, language: strin
     console.log('✅ Product deleted successfully:', itemId);
   } catch (error: any) {
     console.error('❌ Failed to delete product:', error);
-    throw error;
+    // Don't re-throw — send friendly error message instead
+    try {
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const errMsg = lang === 'hi'
+        ? '⚠️ उत्पाद हटाने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+        : '⚠️ Failed to delete product. Please try again.';
+      await sendEnhancedAgentMessage(phone, errMsg, language as any, 'voice');
+    } catch (e) {
+      console.error('Failed to send delete error message:', e);
+    }
+  }
+}
+
+/**
+ * Register seller's UPI ID for receiving payments
+ */
+async function registerUpi(phone: string, upiId: string, language: string): Promise<void> {
+  try {
+    if (!upiId || !upiId.includes('@')) {
+      console.log('❌ Invalid UPI ID:', upiId);
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const invalidMsg = lang === 'hi'
+        ? '❌ UPI ID सही नहीं लग रहा। कृपया सही UPI ID बताएं (जैसे: name@upi, 9876543210@paytm)'
+        : '❌ Invalid UPI ID. Please provide a valid one (e.g., name@upi, 9876543210@paytm)';
+      await sendEnhancedAgentMessage(phone, invalidMsg, language as any, 'voice');
+      return;
+    }
+
+    // Look up seller profile by phone
+    let seller: any = null;
+    try {
+      seller = await getSellerByPhone(phone);
+    } catch (lookupErr) {
+      console.warn('⚠️ Seller lookup failed, will try to create:', lookupErr);
+    }
+
+    if (seller) {
+      // Update existing seller profile with UPI ID
+      const sellerId = seller.PK.replace('SELLER#', '');
+      await updateSellerProfile(sellerId, { upiId });
+      console.log('✅ UPI ID registered for existing seller:', phone, upiId);
+    } else {
+      // No seller profile yet — store UPI in user state so it's available when profile is created
+      try {
+        const { createSellerProfile } = await import('../services/dynamodb-repository');
+        await createSellerProfile({
+          PK: `SELLER#${phone}`,
+          SK: 'PROFILE',
+          GSI1PK: phone,
+          GSI1SK: 'PROFILE',
+          entityType: 'SELLER',
+          phone,
+          name: phone,
+          upiId,
+          onboardingState: 'PARTIAL',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        } as any);
+        console.log('✅ Created minimal seller profile with UPI ID:', phone, upiId);
+      } catch (createErr: any) {
+        // Profile might already exist (race condition) — try updating instead
+        if (createErr.message?.includes('already exists') || createErr.name === 'ConditionalCheckFailedException') {
+          console.log('⚠️ Profile exists, updating UPI instead');
+          await updateSellerProfile(phone, { upiId });
+        } else {
+          throw createErr;
+        }
+      }
+    }
+
+    const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+    const successMsg = lang === 'hi'
+      ? `✅ UPI ID *${upiId}* सफलतापूर्वक रजिस्टर हो गया! अब ग्राहक सीधे UPI से भुगतान कर सकते हैं। 💳`
+      : lang === 'mr'
+      ? `✅ UPI ID *${upiId}* यशस्वीरित्या नोंदणीकृत! आता ग्राहक थेट UPI ने पैसे देऊ शकतात। 💳`
+      : `✅ UPI ID *${upiId}* registered successfully! Customers can now pay you directly via UPI. 💳`;
+    await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
+
+    // Also update all existing marketplace products with the new UPI ID
+    await updateMarketplaceProductsUpi(phone, upiId);
+
+  } catch (error: any) {
+    console.error('❌ Failed to register UPI:', error);
+    // Don't re-throw — send friendly error message instead
+    try {
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const errMsg = lang === 'hi'
+        ? '⚠️ UPI रजिस्ट्रेशन में समस्या हुई। कृपया अपना UPI ID दुबारा भेजें (जैसे: name@upi)'
+        : '⚠️ UPI registration had an issue. Please send your UPI ID again (e.g., name@upi)';
+      await sendEnhancedAgentMessage(phone, errMsg, language as any, 'voice');
+    } catch (e) {
+      console.error('Failed to send UPI error message:', e);
+    }
+  }
+}
+
+/**
+ * Update all marketplace products for a seller with their new UPI ID.
+ * Called after UPI registration so buyers can see UPI payment option immediately.
+ */
+async function updateMarketplaceProductsUpi(sellerPhone: string, upiId: string): Promise<void> {
+  const tableName = process.env.MARKETPLACE_PRODUCTS_TABLE;
+  if (!tableName) {
+    console.warn('MARKETPLACE_PRODUCTS_TABLE not configured, skipping marketplace UPI update');
+    return;
+  }
+
+  try {
+    // Scan for all products belonging to this seller
+    const scanResult = await marketplaceDdbClient.send(new ScanCommand({
+      TableName: tableName,
+      FilterExpression: '#seller.#phone = :phone',
+      ExpressionAttributeNames: {
+        '#seller': 'seller',
+        '#phone': 'phone',
+      },
+      ExpressionAttributeValues: {
+        ':phone': sellerPhone,
+      },
+      ProjectionExpression: 'productId',
+    }));
+
+    const products = scanResult.Items || [];
+    if (products.length === 0) {
+      console.log('No marketplace products found for seller', sellerPhone);
+      return;
+    }
+
+    console.log(`Updating ${products.length} marketplace products with UPI ID for seller ${sellerPhone}`);
+
+    // Update each product's seller.upiId
+    const updatePromises = products.map(product =>
+      marketplaceDdbClient.send(new UpdateCommand({
+        TableName: tableName,
+        Key: { productId: product.productId },
+        UpdateExpression: 'SET seller.upiId = :upiId, updatedAt = :now',
+        ExpressionAttributeValues: {
+          ':upiId': upiId,
+          ':now': new Date().toISOString(),
+        },
+      }))
+    );
+
+    await Promise.all(updatePromises);
+    console.log(`✅ Updated ${products.length} marketplace products with UPI ID: ${upiId}`);
+  } catch (error: any) {
+    console.error('⚠️ Failed to update marketplace products with UPI (non-critical):', error.message);
+    // Non-critical — don't throw. Products will get UPI on next catalog sync.
   }
 }

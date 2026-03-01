@@ -83,6 +83,9 @@ export interface SellerProfile {
   onboardingState: OnboardingState; // Current state in onboarding flow
   pendingCatalog?: PendingCatalogItem; // Catalog item awaiting confirmation
   
+  // UPI Payment
+  upiId?: string; // Seller's UPI ID for receiving payments (e.g., name@paytm)
+  
   // KYC Details
   kyc: KYCInfo;
   

@@ -878,3 +878,373 @@ header {
         margin: 20px auto;
     }
 }
+
+/* ========================================
+   Payment & Checkout Styles
+   ======================================== */
+
+.checkout-modal-content {
+    max-width: 520px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.checkout-form h3 {
+    margin: 20px 0 10px;
+    color: #333;
+    font-size: 1.1rem;
+}
+
+.form-row {
+    display: flex;
+    gap: 10px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+/* Payment Method Selection */
+.payment-methods {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.payment-option {
+    cursor: pointer;
+}
+
+.payment-option input[type="radio"] {
+    display: none;
+}
+
+.payment-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    transition: all 0.2s;
+    background: #fafafa;
+}
+
+.payment-option input:checked + .payment-card {
+    border-color: #667eea;
+    background: #f0f2ff;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+}
+
+.payment-icon {
+    font-size: 1.6rem;
+}
+
+.payment-card strong {
+    display: block;
+    color: #333;
+}
+
+.payment-card small {
+    color: #777;
+    font-size: 0.8rem;
+}
+
+/* UPI Payment Screen */
+.upi-payment-screen {
+    text-align: center;
+    padding: 10px 0;
+}
+
+.upi-amount {
+    font-size: 1.5rem;
+    color: #333;
+    margin: 10px 0 5px;
+}
+
+.upi-amount strong {
+    color: #667eea;
+}
+
+.upi-to strong {
+    color: #555;
+}
+
+.upi-qr-container {
+    margin: 20px auto;
+    padding: 20px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    display: inline-block;
+    text-align: center;
+    border: 2px solid #667eea22;
+}
+
+.upi-qr-container img {
+    display: block;
+    margin: 0 auto;
+    border-radius: 8px;
+}
+
+.upi-qr-container canvas {
+    display: block;
+    margin: 0 auto;
+}
+
+.upi-id-display {
+    margin-top: 10px;
+    font-family: monospace;
+    color: #667eea;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.btn-upi-deep-link {
+    display: inline-block;
+    padding: 14px 28px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 12px;
+    text-decoration: none;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 15px 0;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.btn-upi-deep-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.upi-divider {
+    display: flex;
+    align-items: center;
+    margin: 20px 0 15px;
+    color: #999;
+    font-size: 0.85rem;
+}
+
+.upi-divider::before,
+.upi-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #ddd;
+}
+
+.upi-divider span {
+    padding: 0 12px;
+}
+
+.payment-verify-options {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 15px;
+}
+
+.btn-secondary {
+    padding: 10px 18px;
+    background: white;
+    border: 2px solid #667eea;
+    color: #667eea;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: #f0f2ff;
+}
+
+.btn-text {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    font-size: 0.85rem;
+    text-decoration: underline;
+    margin-top: 10px;
+}
+
+.verify-form {
+    margin: 15px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+
+.verify-form input[type="text"] {
+    width: 100%;
+    max-width: 350px;
+    padding: 12px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    text-align: center;
+}
+
+.file-upload-label {
+    display: inline-block;
+    padding: 12px 24px;
+    background: #f0f2ff;
+    border: 2px dashed #667eea;
+    border-radius: 12px;
+    cursor: pointer;
+    color: #667eea;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+
+.file-upload-label:hover {
+    background: #e8ebff;
+}
+
+.file-upload-label input[type="file"] {
+    display: none;
+}
+
+.screenshot-preview {
+    max-width: 250px;
+    max-height: 300px;
+    border-radius: 8px;
+    margin: 10px 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* Order Confirmation */
+.order-confirmation {
+    text-align: center;
+    padding: 20px 0;
+}
+
+.success-icon {
+    font-size: 3rem;
+    margin-bottom: 10px;
+}
+
+.order-confirmation h2 {
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.order-id {
+    color: #555;
+    font-size: 1.1rem;
+    margin-bottom: 15px;
+}
+
+.badge {
+    display: inline-block;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+}
+
+.badge-success {
+    background: #e6f9ee;
+    color: #1a8c45;
+}
+
+.badge-warning {
+    background: #fff8e6;
+    color: #b38600;
+}
+
+.badge-info {
+    background: #e6f0ff;
+    color: #2563eb;
+}
+
+/* Order Steps Tracker */
+.order-steps {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 20px 0;
+    padding: 0 10px;
+}
+
+.step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    max-width: 80px;
+    opacity: 0.4;
+}
+
+.step.active {
+    opacity: 1;
+}
+
+.step-icon {
+    font-size: 1.4rem;
+    margin-bottom: 4px;
+}
+
+.step-label {
+    font-size: 0.7rem;
+    color: #555;
+    text-align: center;
+}
+
+.order-note {
+    color: #777;
+    font-size: 0.9rem;
+    margin: 15px 0;
+    line-height: 1.5;
+}
+
+/* Hidden utility */
+.hidden {
+    display: none !important;
+}
+
+/* Quality & UPI Badges on Product Cards */
+.quality-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    z-index: 2;
+}
+
+.quality-excellent {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.quality-good {
+    background: #d4edda;
+    color: #155724;
+}
+
+.upi-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    background: #e0e7ff;
+    color: #3730a3;
+    z-index: 2;
+}
+
+.product-image {
+    position: relative;
+}
+

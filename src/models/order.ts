@@ -47,12 +47,28 @@ export interface OrderFulfillment {
 }
 
 /**
+ * Payment method
+ */
+export type PaymentMethod = 'UPI' | 'COD';
+
+/**
+ * Payment verification source
+ */
+export type PaymentVerifiedBy = 'SCREENSHOT_AI' | 'SELLER_CONFIRMED' | 'MANUAL_REF' | 'SYSTEM';
+
+/**
  * Payment information
  */
 export interface OrderPayment {
   type: 'ON-ORDER' | 'ON-FULFILLMENT' | 'POST-FULFILLMENT';
-  status: 'PAID' | 'NOT-PAID';
+  status: 'PAID' | 'NOT-PAID' | 'PENDING_VERIFICATION';
   amount: number; // Total amount in INR
+  method: PaymentMethod; // UPI or COD
+  upiTransactionRef?: string; // UPI transaction reference ID
+  upiId?: string; // Seller UPI ID used for payment
+  paidAt?: number; // Unix timestamp when payment was made
+  verifiedBy?: PaymentVerifiedBy; // How payment was verified
+  screenshotS3Key?: string; // S3 key of payment screenshot
 }
 
 /**

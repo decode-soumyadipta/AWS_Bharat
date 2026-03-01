@@ -100,7 +100,7 @@ export class MarketplaceIntegration extends Construct {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/marketplace-catalog-sync.handler',
       code: lambda.Code.fromAsset('dist/backend'),
-      timeout: cdk.Duration.seconds(30),
+      timeout: cdk.Duration.seconds(60),
       memorySize: 512,
       role: props.lambdaExecutionRole,
       environment: {
@@ -113,6 +113,11 @@ export class MarketplaceIntegration extends Construct {
     // Grant permissions
     props.dataTable.grantReadData(catalogSyncLambda);
     this.marketplaceProductsTable.grantReadWriteData(catalogSyncLambda);
+    // Grant Bedrock access for AI quality scoring
+    catalogSyncLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0'],
+    }));
 
     // EventBridge rule to sync catalog items
     new events.Rule(this, 'CatalogSyncRule', {
@@ -168,9 +173,45 @@ export class MarketplaceIntegration extends Construct {
         WHATSAPP_API_ENDPOINT: props.whatsappConfig.apiEndpoint,
         WHATSAPP_ACCESS_TOKEN: props.whatsappConfig.accessToken,
         WHATSAPP_PHONE_NUMBER_ID: props.whatsappConfig.phoneNumberId,
+        VYAPAR_VAANI_TABLE: props.dataTable.tableName,
+        MARKETPLACE_PRODUCTS_TABLE: this.marketplaceProductsTable.tableName,
+        EVENT_BUS_NAME: props.eventBus.eventBusName,
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
+
+    // Grant DynamoDB access for order persistence
+    props.dataTable.grantReadWriteData(submitOrderLambda);
+    // Grant EventBridge publish for order.created events
+    props.eventBus.grantPutEventsTo(submitOrderLambda);
+
+    // ========================================
+    // 4b. Verify Payment Lambda (Screenshot AI + manual ref)
+    // ========================================
+    const verifyPaymentLambda = new lambda.Function(this, 'VerifyPaymentLambda', {
+      functionName: 'marketplace-verify-payment',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/verifyPayment.handler',
+      code: lambda.Code.fromAsset('dist/backend'),
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
+      environment: {
+        VYAPAR_VAANI_TABLE: props.dataTable.tableName,
+        WHATSAPP_API_ENDPOINT: props.whatsappConfig.apiEndpoint,
+        WHATSAPP_ACCESS_TOKEN: props.whatsappConfig.accessToken,
+        WHATSAPP_PHONE_NUMBER_ID: props.whatsappConfig.phoneNumberId,
+        PRODUCTS_BUCKET: props.productsBucket.bucketName,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    props.dataTable.grantReadWriteData(verifyPaymentLambda);
+    props.productsBucket.grantReadWrite(verifyPaymentLambda);
+    // Grant Bedrock access for screenshot analysis
+    verifyPaymentLambda.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['bedrock:InvokeModel'],
+      resources: ['arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0'],
+    }));
 
     // ========================================
     // 5. API Gateway REST API
@@ -199,6 +240,14 @@ export class MarketplaceIntegration extends Construct {
     // /orders endpoint
     const orders = this.marketplaceApi.root.addResource('orders');
     orders.addMethod('POST', new apigateway.LambdaIntegration(submitOrderLambda));
+
+    // /orders/{orderId} endpoint — GET order status
+    const orderById = orders.addResource('{orderId}');
+    orderById.addMethod('GET', new apigateway.LambdaIntegration(submitOrderLambda));
+
+    // /orders/{orderId}/verify-payment endpoint — POST payment verification
+    const verifyPayment = orderById.addResource('verify-payment');
+    verifyPayment.addMethod('POST', new apigateway.LambdaIntegration(verifyPaymentLambda));
 
     // ========================================
     // 6. S3 Bucket for Frontend Hosting

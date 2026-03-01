@@ -580,14 +580,9 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    new events.Rule(this, 'ImageMessageRule', {
-      eventBus: this.eventBus,
-      eventPattern: {
-        source: [EVENT_SOURCES.WHATSAPP],
-        detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE],
-      },
-      targets: [new targets.LambdaFunction(imageEnhancementLambda)],
-    });
+    // NOTE: Image enhancement is handled INLINE by the agent handler Lambda.
+    // The standalone imageEnhancementLambda is kept for potential direct invocation
+    // but no longer needs an EventBridge rule (the AgentHandlerRule covers images).
 
     // Rule 4: Intent classified → Entity Extraction
     new events.Rule(this, 'IntentClassifiedRule', {
@@ -963,12 +958,15 @@ export class VyaparVaaniStack extends cdk.Stack {
     imageEnhancementLambda.grantInvoke(agentHandlerLambda);
     confirmationHandlerLambda.grantInvoke(agentHandlerLambda);
 
-    // Grant Bedrock permissions for AI agent
+    // Grant Bedrock permissions for AI agent (Nova Pro + Titan Image Generator v2)
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['bedrock:InvokeModel'],
-        resources: ['arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0'],
+        resources: [
+          'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0',
+          'arn:aws:bedrock:*::foundation-model/amazon.titan-image-generator-v2:0',
+        ],
       })
     );
 
@@ -1003,11 +1001,11 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Rule: Agent Handler - ALL messages in ACTIVE state (natural language queries)
+    // Rule: Agent Handler - ALL messages routed to AGENT handler across all post-KYC states
     new events.Rule(this, 'AgentHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-agent-handler-rule',
-      description: 'Routes all messages to AI agent for natural language processing in ACTIVE state',
+      description: 'Routes all messages to AI agent for natural language processing',
       eventPattern: {
         source: [EVENT_SOURCES.WHATSAPP],
         detailType: [
@@ -1017,8 +1015,8 @@ export class VyaparVaaniStack extends cdk.Stack {
           WHATSAPP_EVENT_TYPES.BUTTON_CLICKED,
         ],
         detail: {
-          state: ['ACTIVE'],
-          handler: ['AGENT'], // New handler type for agent
+          state: ['ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'],
+          handler: ['AGENT'],
         },
       },
       targets: [new targets.LambdaFunction(agentHandlerLambda)],
@@ -1132,6 +1130,10 @@ export class VyaparVaaniStack extends cdk.Stack {
         phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
       },
     });
+
+    // Grant agent handler access to marketplace products table for UPI sync
+    marketplace.marketplaceProductsTable.grantReadWriteData(agentHandlerLambda);
+    agentHandlerLambda.addEnvironment('MARKETPLACE_PRODUCTS_TABLE', marketplace.marketplaceProductsTable.tableName);
 
     new cdk.CfnOutput(this, 'MarketplaceFrontendUrl', {
       value: `https://${marketplace.distribution.distributionDomainName}`,

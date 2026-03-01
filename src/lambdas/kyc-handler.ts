@@ -190,7 +190,7 @@ export const handler = withXRayTracing(async (
             
             await sendErrorMessage(
               phone,
-              validation.error === 'INVALID_PAN' ? 'KYC_INVALID_DOCUMENT' : 'KYC_ERROR',
+              (validation.error === 'INVALID_PAN' || validation.error === 'NOT_PAN_CARD') ? 'KYC_INVALID_DOCUMENT' : 'KYC_ERROR',
               language
             );
             
@@ -253,6 +253,11 @@ export const handler = withXRayTracing(async (
           await new Promise(resolve => setTimeout(resolve, 2000));
           await sendSuccessMessage(phone, language);
           logStructured('INFO', 'Confirmation message sent');
+
+          // Step 8: Send UPI setup nudge after 3 seconds
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          await sendUpiNudgeMessage(phone, language);
+          logStructured('INFO', 'UPI nudge message sent');
 
           Annotations.setSuccess(true);
           Metadata.setResponseDetails({
@@ -331,19 +336,19 @@ async function callDocumentExtraction(
  * Validate extracted KYC data
  */
 function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: string } {
-  // Check if document type is recognized
+  // Check if document type is recognized - ONLY PAN cards accepted
   if (data.documentType === 'UNKNOWN') {
     return {
       valid: false,
-      error: 'UNKNOWN_DOCUMENT_TYPE',
+      error: 'NOT_PAN_CARD',
     };
   }
 
-  // Validate PAN number presence and format
+  // Enforce PAN card ONLY - reject Aadhaar-only or other documents
   if (!data.panNumber || !data.panNumber.value) {
     return {
       valid: false,
-      error: 'MISSING_PAN',
+      error: 'NOT_PAN_CARD',
     };
   }
 
@@ -354,7 +359,7 @@ function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: stri
     };
   }
 
-  // Aadhaar is optional for testing - log warning if missing
+  // Aadhaar is optional - log if missing but don't fail
   if (!data.aadharNumber || !data.aadharNumber.value) {
     logStructured('WARN', 'Aadhaar not found - proceeding with PAN only', {
       panNumber: data.panNumber.value,
@@ -453,5 +458,26 @@ async function sendErrorMessage(
   await sendTypingIndicator(phone);
   
   // Send message with voice
+  await sendTextWithVoice(phone, message, langCode);
+}
+
+/**
+ * Send UPI setup nudge message after successful KYC
+ */
+async function sendUpiNudgeMessage(
+  phone: string,
+  language: 'hi-IN' | 'mr-IN' | 'en-IN'
+): Promise<void> {
+  const upiNudge: Record<string, string> = {
+    'hi-IN': '💳 UPI सेटअप करने के लिए बस अपना UPI ID भेजें (जैसे: yourname@upi या 9876543210@paytm)। इससे ग्राहक सीधे आपको पेमेंट कर पाएंगे! 🙏',
+    'mr-IN': '💳 UPI सेट करण्यासाठी फक्त तुमचा UPI ID पाठवा (जसे: yourname@upi किंवा 9876543210@paytm). यामुळे ग्राहक थेट तुम्हाला पेमेंट करू शकतील! 🙏',
+    'en-IN': '💳 To set up UPI, just send your UPI ID (like: yourname@upi or 9876543210@paytm). This way customers can pay you directly! 🙏',
+  };
+  
+  const message = upiNudge[language] || upiNudge['hi-IN'];
+  const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
+  
+  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  await sendTypingIndicator(phone);
   await sendTextWithVoice(phone, message, langCode);
 }

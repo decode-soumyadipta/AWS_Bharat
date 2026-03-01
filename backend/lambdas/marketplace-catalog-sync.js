@@ -8,10 +8,12 @@
  */
 
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, ScanCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const { BedrockRuntimeClient, InvokeModelCommand } = require('@aws-sdk/client-bedrock-runtime');
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
+const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 const VYAPAR_VAANI_TABLE = process.env.VYAPAR_VAANI_TABLE || 'vyapar-vaani-data';
 const MARKETPLACE_PRODUCTS_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
@@ -47,6 +49,10 @@ exports.handler = async (event) => {
       sellerId,
       sellerInfo
     );
+
+    // AI quality scoring (non-blocking, enriches the product record)
+    const qualityScore = await scoreProductQuality(marketplaceProduct);
+    marketplaceProduct.qualityScore = qualityScore;
 
     // Store in marketplace products table
     await storeMarketplaceProduct(marketplaceProduct);
@@ -141,67 +147,89 @@ async function handleCatalogDeleted(detail) {
 
 /**
  * Get seller information from Vyapar Vaani table
- * Fetches from KYC data (PAN card) if available, otherwise from seller profile
+ * Uses GSI1 (phone → PROFILE) to find the seller profile regardless of UUID vs phone PK.
+ * Falls back to KYC data (PAN card) for seller name.
  */
 async function getSellerInfo(sellerId) {
   try {
-    // First, try to get KYC data (PAN card has seller name)
-    const kycCommand = new GetCommand({
-      TableName: VYAPAR_VAANI_TABLE,
-      Key: {
-        PK: `USER#${sellerId}`,
-        SK: 'KYC',
-      },
-    });
+    let sellerName = `Seller ${sellerId}`;
+    let sellerLanguage = 'en';
+    let upiId = null;
 
-    const kycResponse = await docClient.send(kycCommand);
-
-    if (kycResponse.Item && kycResponse.Item.panCard) {
-      // Extract name from PAN card data
-      const panData = kycResponse.Item.panCard;
-      if (panData.extractedData && panData.extractedData.name) {
-        console.log('Found seller name from PAN card:', panData.extractedData.name);
-        return {
-          name: panData.extractedData.name,
-          phone: sellerId,
-          language: kycResponse.Item.language || 'en',
-        };
+    // 1. Try KYC data first (has PAN card extracted name)
+    try {
+      const kycCommand = new GetCommand({
+        TableName: VYAPAR_VAANI_TABLE,
+        Key: {
+          PK: `USER#${sellerId}`,
+          SK: 'KYC',
+        },
+      });
+      const kycResponse = await docClient.send(kycCommand);
+      if (kycResponse.Item?.panCard?.extractedData?.name) {
+        sellerName = kycResponse.Item.panCard.extractedData.name;
+        sellerLanguage = kycResponse.Item.language || 'en';
+        console.log('Found seller name from PAN card:', sellerName);
       }
+    } catch (e) {
+      console.warn('KYC lookup failed (non-critical):', e.message);
     }
 
-    // Fallback: Try to get from seller profile
-    const profileCommand = new GetCommand({
-      TableName: VYAPAR_VAANI_TABLE,
-      Key: {
-        PK: `SELLER#${sellerId}`,
-        SK: 'PROFILE',
-      },
-    });
-
-    const profileResponse = await docClient.send(profileCommand);
-
-    if (profileResponse.Item) {
-      return {
-        name: profileResponse.Item.name || `Seller ${sellerId}`,
-        phone: profileResponse.Item.phone || sellerId,
-        language: profileResponse.Item.language || 'en',
-      };
+    // 2. Look up seller profile via GSI1 (phone → PROFILE)
+    //    The seller profile PK may be SELLER#<uuid> not SELLER#<phone>
+    try {
+      const profileQuery = new QueryCommand({
+        TableName: VYAPAR_VAANI_TABLE,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :phone AND GSI1SK = :sk',
+        ExpressionAttributeValues: {
+          ':phone': sellerId,
+          ':sk': 'PROFILE',
+        },
+        Limit: 1,
+      });
+      const profileRes = await docClient.send(profileQuery);
+      if (profileRes.Items && profileRes.Items.length > 0) {
+        const profile = profileRes.Items[0];
+        upiId = profile.upiId || null;
+        if (profile.name && profile.name !== sellerId) {
+          sellerName = profile.name;
+        }
+        sellerLanguage = profile.language || sellerLanguage;
+        console.log('Found seller profile via GSI1:', { name: sellerName, upiId });
+      }
+    } catch (e) {
+      console.warn('GSI1 profile lookup failed (non-critical):', e.message);
     }
 
-    // Return default if seller not found
-    console.log('No seller info found, using default');
+    // 3. Fallback: try direct PK lookup SELLER#<phone>/PROFILE (old format)
+    if (!upiId) {
+      try {
+        const directProfile = new GetCommand({
+          TableName: VYAPAR_VAANI_TABLE,
+          Key: { PK: `SELLER#${sellerId}`, SK: 'PROFILE' },
+        });
+        const directRes = await docClient.send(directProfile);
+        if (directRes.Item) {
+          upiId = directRes.Item.upiId || null;
+          if (directRes.Item.name) sellerName = directRes.Item.name;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     return {
-      name: `Seller ${sellerId}`,
+      name: sellerName,
       phone: sellerId,
-      language: 'en',
+      language: sellerLanguage,
+      upiId,
     };
   } catch (error) {
     console.error('Failed to get seller info:', error);
-    // Return default on error
     return {
       name: `Seller ${sellerId}`,
       phone: sellerId,
       language: 'en',
+      upiId: null,
     };
   }
 }
@@ -288,10 +316,77 @@ async function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) 
     seller: {
       name: sellerInfo.name,
       phone: sellerInfo.phone,
+      upiId: sellerInfo.upiId || null,
     },
     status: 'ACTIVE',
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+/**
+ * AI Product Quality Scoring using Bedrock Nova Pro
+ * Evaluates listing quality and provides improvement suggestions
+ */
+async function scoreProductQuality(product) {
+  try {
+    const prompt = `You are a marketplace listing quality evaluator for a rural Indian e-commerce platform.
+
+Evaluate this product listing and score it:
+
+Product Name: ${product.name}
+Description: ${product.description || 'No description'}
+Price: ₹${product.price}
+Category: ${product.category}
+Unit: ${product.unit}
+Has Image: ${product.imageUrl ? 'Yes' : 'No'}
+
+Score these dimensions (0-100):
+1. Name Quality: Is it clear, descriptive, searchable?
+2. Description Quality: Is it detailed enough for buyers?
+3. Price Reasonableness: Is price realistic for this category in rural India?
+4. Image: Does listing have an image?
+5. Completeness: Are all important fields filled?
+
+Respond in this exact JSON format:
+{
+  "overallScore": <0-100>,
+  "nameScore": <0-100>,
+  "descriptionScore": <0-100>,
+  "priceScore": <0-100>,
+  "imageScore": <0-100>,
+  "completenessScore": <0-100>,
+  "improvementTips": ["<tip1 in Hindi>", "<tip2 in Hindi>"],
+  "badge": "excellent|good|fair|needs_improvement"
+}`;
+
+    const response = await bedrockClient.send(new InvokeModelCommand({
+      modelId: 'amazon.nova-pro-v1:0',
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { maxTokens: 512, temperature: 0.2 },
+      }),
+    }));
+
+    const result = JSON.parse(new TextDecoder().decode(response.body));
+    const text = result.output?.message?.content?.[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const scoring = JSON.parse(jsonMatch[0]);
+      console.log('AI quality score for', product.name, ':', scoring.overallScore);
+      return scoring;
+    }
+  } catch (error) {
+    console.warn('AI quality scoring failed (non-critical):', error.message);
+  }
+
+  // Default score if AI fails
+  return {
+    overallScore: 50,
+    badge: 'fair',
+    improvementTips: [],
   };
 }
 

@@ -38,21 +38,21 @@ const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', Handl
     default: 'ERROR',
   },
   KYC_VERIFIED: {
-    audio: 'VOICE',
-    text: 'VOICE',
-    image: 'ERROR',
-    button_reply: 'ERROR',
-    default: 'ERROR',
+    audio: 'AGENT',  // Route to AI agent for UPI registration, product voice, etc.
+    text: 'AGENT',   // Route to AI agent for UPI ID text, questions, etc.
+    image: 'AGENT',  // Route to AI agent for product photos
+    button_reply: 'AGENT',
+    default: 'AGENT',
   },
   VOICE_RECEIVED: {
-    audio: 'VOICE',
-    text: 'VOICE',
-    image: 'ERROR',
+    audio: 'AGENT',  // Route to AI agent for natural language processing
+    text: 'AGENT',   // Route to AI agent for text queries/UPI
+    image: 'AGENT',  // Route to agent — agent handles download/enhance + state transition
     button_reply: 'ERROR',
     default: 'ERROR',
   },
   IMAGE_PENDING: {
-    image: 'IMAGE',
+    image: 'AGENT',  // Route to agent — handles download/enhance + confirmation trigger
     text: 'AGENT',   // Allow questions/queries while waiting for image
     audio: 'AGENT',  // Allow voice queries while waiting for image
     button_reply: 'ERROR',
@@ -180,11 +180,11 @@ export function isValidTransition(
   const validTransitions: Record<UserStateType, UserStateType[]> = {
     NEW: ['KYC_PENDING'],
     KYC_PENDING: ['KYC_VERIFIED', 'NEW'],
-    KYC_VERIFIED: ['VOICE_RECEIVED'],
-    VOICE_RECEIVED: ['IMAGE_PENDING', 'VOICE_RECEIVED'],
+    KYC_VERIFIED: ['VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING', 'ACTIVE'],
+    VOICE_RECEIVED: ['IMAGE_PENDING', 'VOICE_RECEIVED', 'CONFIRMATION_PENDING'],
     IMAGE_PENDING: ['CONFIRMATION_PENDING'],
     CONFIRMATION_PENDING: ['ACTIVE', 'VOICE_RECEIVED'],
-    ACTIVE: ['VOICE_RECEIVED', 'IMAGE_PENDING'],
+    ACTIVE: ['VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'],
   };
 
   return validTransitions[currentState]?.includes(newState) || false;
