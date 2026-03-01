@@ -19,7 +19,8 @@ export type IntentType =
   | 'REJECT_ORDER'
   | 'UPDATE_FULFILLMENT'
   | 'QUERY_STATUS'
-  | 'CONFIRM_CATALOG';
+  | 'CONFIRM_CATALOG'
+  | 'CANCEL_ORDER';
 
 /**
  * Intent classification request

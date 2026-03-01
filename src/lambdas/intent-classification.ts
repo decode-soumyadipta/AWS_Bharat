@@ -136,15 +136,35 @@ function constructIntentClassificationPrompt(transcribedText: string): string {
 The user is a rural merchant speaking in Hindi, Marathi, or English.
 
 Classify the following transcribed voice note into ONE of these intents:
-- CREATE_CATALOG: User wants to add a new product
-- UPDATE_PRICE: User wants to update/change the price of current product (e.g., "update price to 600", "change price", "price should be 700")
-- UPDATE_QUANTITY: User wants to update/change the quantity of current product (e.g., "update quantity to 50", "change quantity", "quantity should be 100")
+- CREATE_CATALOG: User wants to add a new product OR is providing product details (name, price, quantity, unit) for catalog creation
+- UPDATE_PRICE: User EXPLICITLY wants to UPDATE/CHANGE the price of an EXISTING confirmed product (e.g., "update price to 600", "change price", "price ko badlo")
+- UPDATE_QUANTITY: User EXPLICITLY wants to UPDATE/CHANGE the quantity of an EXISTING confirmed product (e.g., "update quantity to 50", "change quantity", "quantity ko badlo")
 - UPDATE_INVENTORY: User wants to change stock quantity
 - ACCEPT_ORDER: User wants to accept an order
 - REJECT_ORDER: User wants to reject an order
 - UPDATE_FULFILLMENT: User wants to update order status (packed, shipped, delivered)
 - QUERY_STATUS: User wants to check order or catalog status
 - CONFIRM_CATALOG: User confirms/accepts the catalog creation (e.g., 'swikar hai', 'yes', 'accept', 'ok')
+- CANCEL_ORDER: User wants to cancel the current order/product creation (e.g., 'cancel', 'रद्द करो', 'रद्द', 'cancel karo', 'nahi chahiye')
+
+CRITICAL RULES:
+1. If user is providing product details (price, quantity, unit) WITHOUT explicitly saying "update" or "change", classify as CREATE_CATALOG
+2. UPDATE_PRICE is ONLY for explicitly updating an already confirmed product's price
+3. UPDATE_QUANTITY is ONLY for explicitly updating an already confirmed product's quantity
+4. When user says "I will sell X kg at Y rupees", this is CREATE_CATALOG, NOT UPDATE_PRICE
+
+EXAMPLES:
+Input: "मैं 6 kg आम ₹10000 प्रति किलो के भाव में बेचूँगा"
+Output: {"intent": "CREATE_CATALOG", "confidence": 0.95, "language": "hi"}
+Why: User is providing product details for catalog creation
+
+Input: "कीमत 600 रुपये करें"
+Output: {"intent": "UPDATE_PRICE", "confidence": 0.95, "language": "hi"}
+Why: User explicitly wants to update/change price
+
+Input: "price 500 and quantity 10 kg"
+Output: {"intent": "CREATE_CATALOG", "confidence": 0.95, "language": "en"}
+Why: User is providing product details, not updating existing product
 
 Transcription: ${transcribedText}
 
@@ -156,11 +176,12 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }
 
 Rules:
-- intent must be one of the nine options listed above
+- intent must be one of the ten options listed above
 - confidence must be a number between 0.0 and 1.0
 - language should be "hi" for Hindi, "mr" for Marathi, or "en" for English
-- UPDATE_PRICE is specifically for price changes during product creation/confirmation
-- UPDATE_QUANTITY is specifically for quantity changes during product creation/confirmation
+- UPDATE_PRICE is specifically for UPDATING price of EXISTING confirmed product
+- UPDATE_QUANTITY is specifically for UPDATING quantity of EXISTING confirmed product
+- CANCEL_ORDER is for canceling the ongoing order/product creation process
 - Respond with ONLY the JSON object, no other text`;
 }
 

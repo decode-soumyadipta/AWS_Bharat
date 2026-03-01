@@ -147,6 +147,10 @@ export const handler = async (
     await createCatalogItem(catalogItemToStore);
     console.log('Catalog item stored with ID:', itemId);
 
+    // Step 2.5: Publish catalog.created event for marketplace sync
+    console.log('Step 2.5: Publishing catalog.created event...');
+    await publishCatalogCreatedEvent(catalogItem, sellerId, itemId);
+
     // Step 3: Send confirmation message to seller
     console.log('Step 3: Sending confirmation message to seller...');
     const confirmationSent = await sendConfirmationToSeller(
@@ -346,6 +350,52 @@ async function requestMissingInformation(
 
   // Simulate sending message
   await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+/**
+ * Publish catalog.created event to EventBridge for marketplace sync
+ */
+async function publishCatalogCreatedEvent(
+  catalogItem: BecknCatalogItem,
+  sellerId: string,
+  itemId: string
+): Promise<void> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured - skipping marketplace sync event');
+    return;
+  }
+
+  try {
+    const { PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
+    const { eventBridgeClient } = await import('../config/aws-clients');
+    const { EVENT_SOURCES } = await import('../config/event-patterns');
+
+    const command = new PutEventsCommand({
+      Entries: [
+        {
+          Source: EVENT_SOURCES.INTERNAL,
+          DetailType: 'catalog.created',
+          Detail: JSON.stringify({
+            catalogItem,
+            sellerId,
+            itemId,
+            timestamp: Date.now(),
+          }),
+          EventBusName: eventBusName,
+        },
+      ],
+    });
+
+    const response = await eventBridgeClient.send(command);
+    console.log('Published catalog.created event:', {
+      itemId,
+      eventId: response.Entries?.[0]?.EventId,
+    });
+  } catch (error) {
+    console.error('Failed to publish catalog.created event:', error);
+    // Don't throw - marketplace sync failure shouldn't block catalog creation
+  }
 }
 
 /**

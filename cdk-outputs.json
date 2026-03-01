@@ -1,14 +1,18 @@
 {
   "VyaparVaaniStack": {
-    "MarketplaceFrontendUrl": "https://d29x1w2stzqkag.cloudfront.net",
-    "MarketplaceApiUrl": "https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/",
-    "MarketplaceBucketName": "marketplace-frontend-145023133719",
-    "MarketplaceProductsTableName": "marketplace-products",
-    "CloudFrontDistributionId": "E1G9YCVNJLYJ5E",
-    "WhatsAppWebhookUrl": "https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook",
-    "DataTableName": "vyapar-vaani-data",
-    "KYCBucketName": "vyapar-vaani-kyc-145023133719",
+    "EventBusName": "vyapar-vaani-events",
     "ProductsBucketName": "vyapar-vaani-products-145023133719",
-    "EventBusName": "vyapar-vaani-events"
+    "MarketplaceIntegrationMarketplaceBucketName6D1F6308": "marketplace-frontend-145023133719",
+    "MarketplaceIntegrationMarketplaceFrontendUrl248FAE7E": "https://d29x1w2stzqkag.cloudfront.net",
+    "KYCBucketName": "vyapar-vaani-kyc-145023133719",
+    "MarketplaceFrontendUrl": "https://d29x1w2stzqkag.cloudfront.net",
+    "MarketplaceIntegrationMarketplaceProductsTableName48C6880C": "marketplace-products",
+    "DataTableName": "vyapar-vaani-data",
+    "WhatsAppWebhookUrl": "https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook",
+    "MarketplaceIntegrationMarketplaceApiUrl1E8D6AB7": "https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/",
+    "KYCStateMachineArn": "arn:aws:states:us-east-1:145023133719:stateMachine:vyapar-vaani-kyc-processing",
+    "MarketplaceIntegrationMarketplaceApiEndpoint34C78D0D": "https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/",
+    "MarketplaceApiUrl": "https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/",
+    "EncryptionKeyId": "57477889-bfea-4790-a5bc-e2a4081152bd"
   }
 }

@@ -71,10 +71,36 @@ exports.handler = async (event) => {
 
 /**
  * Get seller information from Vyapar Vaani table
+ * Fetches from KYC data (PAN card) if available, otherwise from seller profile
  */
 async function getSellerInfo(sellerId) {
   try {
-    const command = new GetCommand({
+    // First, try to get KYC data (PAN card has seller name)
+    const kycCommand = new GetCommand({
+      TableName: VYAPAR_VAANI_TABLE,
+      Key: {
+        PK: `USER#${sellerId}`,
+        SK: 'KYC',
+      },
+    });
+
+    const kycResponse = await docClient.send(kycCommand);
+
+    if (kycResponse.Item && kycResponse.Item.panCard) {
+      // Extract name from PAN card data
+      const panData = kycResponse.Item.panCard;
+      if (panData.extractedData && panData.extractedData.name) {
+        console.log('Found seller name from PAN card:', panData.extractedData.name);
+        return {
+          name: panData.extractedData.name,
+          phone: sellerId,
+          language: kycResponse.Item.language || 'en',
+        };
+      }
+    }
+
+    // Fallback: Try to get from seller profile
+    const profileCommand = new GetCommand({
       TableName: VYAPAR_VAANI_TABLE,
       Key: {
         PK: `SELLER#${sellerId}`,
@@ -82,17 +108,18 @@ async function getSellerInfo(sellerId) {
       },
     });
 
-    const response = await docClient.send(command);
+    const profileResponse = await docClient.send(profileCommand);
 
-    if (response.Item) {
+    if (profileResponse.Item) {
       return {
-        name: response.Item.name || `Seller ${sellerId}`,
-        phone: response.Item.phone || sellerId,
-        language: response.Item.language || 'en',
+        name: profileResponse.Item.name || `Seller ${sellerId}`,
+        phone: profileResponse.Item.phone || sellerId,
+        language: profileResponse.Item.language || 'en',
       };
     }
 
     // Return default if seller not found
+    console.log('No seller info found, using default');
     return {
       name: `Seller ${sellerId}`,
       phone: sellerId,

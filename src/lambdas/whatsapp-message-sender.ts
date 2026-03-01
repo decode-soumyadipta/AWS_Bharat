@@ -83,12 +83,58 @@ export function formatMessage(
 }
 
 /**
+ * Marks a WhatsApp message as read
+ * This provides visual feedback to the sender that their message was received
+ */
+export async function markMessageAsRead(
+  messageId: string
+): Promise<{ success: boolean; error?: string }> {
+  const config = getWhatsAppConfig();
+  
+  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
+    console.warn('WhatsApp API configuration missing, skipping mark as read');
+    return { success: false, error: 'Configuration missing' };
+  }
+
+  try {
+    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn('Failed to mark message as read:', response.status, errorText);
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+
+    console.log('Message marked as read:', messageId);
+    return { success: true };
+  } catch (error) {
+    console.warn('Error marking message as read:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
  * Sends WhatsApp typing indicator (real typing status)
- * Shows "typing..." animation in WhatsApp for more human-like interaction
+ * Shows "typing..." animation in WhatsApp continuously during processing
+ * 
+ * Uses the correct WhatsApp Business API format with typing_indicator field
  */
 export async function sendTypingIndicator(
   to: string,
-  durationMs: number = 3000
+  messageId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const config = getWhatsAppConfig();
   
@@ -100,33 +146,37 @@ export async function sendTypingIndicator(
   try {
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
     
-    // Send typing indicator using WhatsApp's typing status
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      typing_indicator: {
+        type: 'text'
+      },
+    };
+
+    // If messageId provided, also mark as read
+    if (messageId) {
+      payload.status = 'read';
+      payload.message_id = messageId;
+    }
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.accessToken}`,
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to,
-        type: 'text',
-        text: {
-          preview_url: false,
-          body: '...' // Minimal text to trigger typing
-        },
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-      console.warn('Failed to send typing indicator:', response.status);
+      const errorText = await response.text();
+      console.warn('Failed to send typing indicator:', response.status, errorText);
       return { success: false, error: `HTTP ${response.status}` };
     }
 
-    // Wait for the specified duration to simulate typing
-    await sleep(Math.min(durationMs, 5000)); // Max 5 seconds
-
+    console.log('Typing indicator sent successfully');
     return { success: true };
   } catch (error) {
     console.warn('Error sending typing indicator:', error);
@@ -189,6 +239,26 @@ export async function sendImageMessage(
     content: {
       imageUrl,
       text: caption,
+    },
+    language,
+  };
+
+  return sendMessageWithRetry(message);
+}
+
+/**
+ * Sends an audio message via WhatsApp
+ */
+export async function sendAudioMessage(
+  to: string,
+  audioUrl: string,
+  language: 'hi' | 'mr' | 'en' = 'en'
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const message: WhatsAppOutboundMessage = {
+    to,
+    type: 'audio',
+    content: {
+      audioUrl,
     },
     language,
   };
@@ -412,6 +482,15 @@ function constructWhatsAppPayload(message: WhatsAppOutboundMessage): any {
         },
       };
 
+    case 'audio':
+      return {
+        ...basePayload,
+        type: 'audio',
+        audio: {
+          link: message.content.audioUrl,
+        },
+      };
+
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -499,4 +578,89 @@ export async function handler(event: any): Promise<any> {
  */
 export function getMessageTemplates(language: 'hi' | 'mr' | 'en') {
   return MESSAGE_TEMPLATES[language];
+}
+
+/**
+ * Send text message with voice response
+ * Sends both text and voice audio for better accessibility
+ */
+export async function sendTextWithVoice(
+  to: string,
+  text: string,
+  language: 'hi' | 'mr' | 'en' = 'hi'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Send text message first
+    const textResult = await sendTextMessage(to, text, language);
+    
+    if (!textResult.success) {
+      return textResult;
+    }
+
+    // Generate and send voice
+    try {
+      const { PollyClient, SynthesizeSpeechCommand } = await import('@aws-sdk/client-polly');
+      const { PutObjectCommand, GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+      
+      const pollyClient = new PollyClient({ region: process.env.AWS_REGION || 'us-east-1' });
+      const voiceId = language === 'mr' ? 'Aditi' : language === 'hi' ? 'Kajal' : 'Joanna';
+      const languageCode = language === 'mr' ? 'hi-IN' : language === 'hi' ? 'hi-IN' : 'en-IN';
+      
+      const command = new SynthesizeSpeechCommand({
+        Text: text,
+        OutputFormat: 'mp3',
+        VoiceId: voiceId,
+        Engine: 'neural',
+        LanguageCode: languageCode,
+      });
+      
+      const response = await pollyClient.send(command);
+      if (response.AudioStream) {
+        const chunks: Uint8Array[] = [];
+        const stream = response.AudioStream as AsyncIterable<Uint8Array>;
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
+        const audioBuffer = Buffer.concat(chunks);
+        
+        // Upload to S3
+        const { s3Client } = await import('../config/aws-clients');
+        const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+        if (!bucketName) {
+          console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
+          return { success: true };
+        }
+        
+        const key = `voice-responses/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
+        await s3Client.send(new PutObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+          Body: audioBuffer,
+          ContentType: 'audio/mpeg',
+        }));
+        
+        // Generate presigned URL
+        const getObjectCommand = new GetObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+        });
+        const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
+        
+        // Send voice message
+        await sendAudioMessage(to, voiceUrl, language);
+      }
+    } catch (voiceError) {
+      console.warn('Failed to generate/send voice, text sent successfully:', voiceError);
+      // Don't fail the whole operation if voice fails
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error in sendTextWithVoice:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
 }

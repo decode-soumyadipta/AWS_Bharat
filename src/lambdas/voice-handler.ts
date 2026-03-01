@@ -51,8 +51,9 @@ interface VoiceHandlerResponse {
   detectedLanguage?: string;
   entities?: Record<string, any>;
   missingFields?: string[];
-  nextAction?: 'REQUEST_INFO' | 'REQUEST_IMAGE' | 'ERROR';
+  nextAction?: 'REQUEST_INFO' | 'REQUEST_IMAGE' | 'ERROR' | 'ORDER_CANCELED';
   error?: string;
+  intent?: string;
 }
 
 /**
@@ -68,6 +69,14 @@ export const handler = async (
     const { phone, messageId, mediaId, state } = parseEvent(event);
 
     console.log('Processing voice message:', { phone, messageId, mediaId });
+
+    // IMMEDIATELY mark as read and show typing indicator
+    const { markMessageAsRead, sendTypingIndicator } = await import('./whatsapp-message-sender');
+    await Promise.all([
+      markMessageAsRead(messageId),
+      sendTypingIndicator(phone)
+    ]);
+    console.log('Message marked as read and typing indicator sent');
 
     // Check if user is in CONFIRMATION_PENDING state
     const currentState = await getUserState(phone);
@@ -97,12 +106,20 @@ export const handler = async (
     console.log('Audio downloaded successfully:', downloadResult.s3Url);
 
     // Step 2: Call voice-transcription Lambda
+    const transcriptionStartTime = Date.now();
     console.log('Invoking voice-transcription Lambda...');
+    
+    // Show typing indicator during transcription
+    await sendTypingIndicator(phone);
+    
     const transcriptionResult = await invokeVoiceTranscription({
       audioUrl: downloadResult.s3Url,
       messageId,
       languageCode: state?.language,
     });
+    const transcriptionEndTime = Date.now();
+    const transcriptionDuration = transcriptionEndTime - transcriptionStartTime;
+    console.log(`Transcription completed in ${transcriptionDuration}ms`);
 
     if (!transcriptionResult.success || !transcriptionResult.transcription) {
       throw new Error(transcriptionResult.error?.message || 'Transcription failed');
@@ -132,12 +149,18 @@ export const handler = async (
     }
 
     // Step 4: Call intent-classification Lambda
+    const intentStartTime = Date.now();
     console.log('Invoking intent-classification Lambda...');
+    
     const intentResult = await invokeIntentClassification({
       transcribedText: transcription,
       phoneNumber: phone,
       messageId,
     });
+    
+    const intentEndTime = Date.now();
+    const intentDuration = intentEndTime - intentStartTime;
+    console.log(`Intent classification completed in ${intentDuration}ms`);
 
     if (!intentResult.success || !intentResult.intent) {
       throw new Error(intentResult.error?.message || 'Intent classification failed');
@@ -145,6 +168,29 @@ export const handler = async (
 
     const { intent, confidence } = intentResult;
     console.log('Intent classified:', { intent, confidence });
+
+    // Step 5: Call entity-extraction Lambda with the classified intent
+    const entityStartTime = Date.now();
+    console.log('Invoking entity-extraction Lambda...');
+    
+    const entityResult = await invokeEntityExtraction({
+      transcribedText: transcription,
+      intent: intent,
+      phoneNumber: phone,
+      messageId,
+      language: detectedLanguage?.split('-')[0] || 'en',
+    });
+    
+    const entityEndTime = Date.now();
+    const entityDuration = entityEndTime - entityStartTime;
+    console.log(`Entity extraction completed in ${entityDuration}ms`);
+
+    if (!entityResult.success) {
+      throw new Error(entityResult.error?.message || 'Entity extraction failed');
+    }
+
+    const { entities, missingFields } = entityResult;
+    console.log('Entities extracted:', { entities, missingFields });
 
     // Check if user is trying to update multiple things or start new order during confirmation
     if (currentState && currentState.state === 'CONFIRMATION_PENDING') {
@@ -164,8 +210,15 @@ export const handler = async (
           ? 'तुम्हाला नवीन ऑर्डर सुरू करायची आहे की सध्याच्या ऑर्डरमध्ये बदल करायचा आहे? कृपया सांगा.'
           : 'Do you want to start a new order or modify the current order? Please clarify.';
         
-        const { sendTextMessage } = await import('./whatsapp-message-sender');
-        await sendTextMessage(phone, clarificationMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+        const { sendTextMessage, sendTypingIndicator, markMessageAsRead, sendTextWithVoice } = await import('./whatsapp-message-sender');
+        
+        // Show typing indicator immediately (includes mark as read)
+        await sendTypingIndicator(phone, messageId);
+        
+        await sendTextWithVoice(phone, clarificationMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+        
+        const totalResponseTime = Date.now() - transcriptionStartTime;
+        console.log(`Total response time: ${totalResponseTime}ms`);
         
         return {
           success: true,
@@ -182,6 +235,56 @@ export const handler = async (
       if (intent === 'UPDATE_PRICE' || intent === 'UPDATE_QUANTITY') {
         console.log(`${intent} requested in CONFIRMATION_PENDING state`);
         // Keep state as CONFIRMATION_PENDING
+      } else if (intent === 'CANCEL_ORDER') {
+        console.log('CANCEL_ORDER requested in CONFIRMATION_PENDING state - canceling order');
+        // User wants to cancel - reset state and delete partial data
+        await updateUserState(phone, 'ACTIVE');
+        const { deletePartialData } = await import('../services/partial-data-store');
+        await deletePartialData(phone);
+        
+        // Send cancellation confirmation with voice
+        const { sendTypingIndicator, sendTextWithVoice } = await import('./whatsapp-message-sender');
+        await sendTypingIndicator(phone, messageId);
+        
+        const cancelMsg = detectedLanguage === 'hi-IN'
+          ? '❌ ठीक है, आपका ऑर्डर रद्द कर दिया गया है। नया ऑर्डर शुरू करने के लिए उत्पाद की जानकारी भेजें।'
+          : detectedLanguage === 'mr-IN'
+          ? '❌ ठीक आहे, तुमचा ऑर्डर रद्द केला आहे. नवीन ऑर्डर सुरू करण्यासाठी उत्पादनाची माहिती पाठवा.'
+          : '❌ Okay, your order has been canceled. Send product information to start a new order.';
+        
+        await sendTextWithVoice(phone, cancelMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+        
+        return {
+          success: true,
+          transcription,
+          detectedLanguage,
+          intent,
+          entities: {},
+          nextAction: 'ORDER_CANCELED',
+        };
+      } else if (intent === 'CONFIRM_CATALOG') {
+        console.log('CONFIRM_CATALOG in CONFIRMATION_PENDING - user confirming via voice (button likely already clicked)');
+        // User is confirming via voice - this is redundant if button was clicked
+        // Just acknowledge and don't process again
+        const { sendTypingIndicator, sendTextWithVoice } = await import('./whatsapp-message-sender');
+        await sendTypingIndicator(phone, messageId);
+        
+        const ackMsg = detectedLanguage === 'hi-IN'
+          ? '✅ धन्यवाद! आपका ऑर्डर पहले ही कन्फर्म हो चुका है।'
+          : detectedLanguage === 'mr-IN'
+          ? '✅ धन्यवाद! तुमचा ऑर्डर आधीच कन्फर्म झाला आहे.'
+          : '✅ Thank you! Your order is already confirmed.';
+        
+        await sendTextWithVoice(phone, ackMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+        
+        return {
+          success: true,
+          transcription,
+          detectedLanguage,
+          intent,
+          entities: {},
+          nextAction: 'REQUEST_INFO',
+        };
       } else if (intent === 'CREATE_CATALOG') {
         console.log('New order requested in CONFIRMATION_PENDING state - resetting');
         // User wants to start new order - reset state
@@ -189,24 +292,30 @@ export const handler = async (
         const { deletePartialData } = await import('../services/partial-data-store');
         await deletePartialData(phone);
       }
+    } else if (currentState && currentState.state === 'ACTIVE' && intent === 'CONFIRM_CATALOG') {
+      console.log('CONFIRM_CATALOG in ACTIVE state - user likely just confirmed via button, voice is redundant');
+      // User said "confirm" in voice but state is already ACTIVE (button was clicked first)
+      // Just acknowledge politely and don't ask about updating
+      const { sendTypingIndicator, sendTextWithVoice } = await import('./whatsapp-message-sender');
+      await sendTypingIndicator(phone, messageId);
+      
+      const ackMsg = detectedLanguage === 'hi-IN'
+        ? '✅ बहुत अच्छा! नया उत्पाद जोड़ने के लिए उत्पाद की जानकारी भेजें।'
+        : detectedLanguage === 'mr-IN'
+        ? '✅ खूप छान! नवीन उत्पादन जोडण्यासाठी उत्पादनाची माहिती पाठवा.'
+        : '✅ Great! Send product information to add a new product.';
+      
+      await sendTextWithVoice(phone, ackMsg, detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi');
+      
+      return {
+        success: true,
+        transcription,
+        detectedLanguage,
+        intent,
+        entities: {},
+        nextAction: 'REQUEST_INFO',
+      };
     }
-
-    // Step 5: Call entity-extraction Lambda
-    console.log('Invoking entity-extraction Lambda...');
-    const entityResult = await invokeEntityExtraction({
-      transcribedText: transcription,
-      intent,
-      phoneNumber: phone,
-      messageId,
-      language: detectedLanguage?.split('-')[0] || 'en',
-    });
-
-    if (!entityResult.success) {
-      throw new Error(entityResult.error?.message || 'Entity extraction failed');
-    }
-
-    const { entities, missingFields } = entityResult;
-    console.log('Entities extracted:', { entities, missingFields });
 
     // Track assistant understanding in conversation
     await addConversationMessage(phone, {
@@ -218,13 +327,17 @@ export const handler = async (
       messageType: 'text',
     });
 
-    // Generate contextual response based on conversation history
-    const contextualResponse = generateContextualResponse(
+    // Check if user is filling missing fields for existing order
+    const existingPartialData = await getPartialData(phone);
+    const isFillingMissingFields = existingPartialData && existingPartialData.missingFields.length > 0;
+
+    // Generate contextual response ONLY if NOT filling missing fields
+    const contextualResponse = !isFillingMissingFields ? generateContextualResponse(
       conversationContext,
       intent,
       entities,
       detectedLanguage || 'hi-IN'
-    );
+    ) : '';
 
     // Update user preferences based on current interaction
     if (entities.category) {
@@ -246,8 +359,65 @@ export const handler = async (
     }
 
     // Step 6: Handle different intents
-    if (intent === 'CREATE_CATALOG') {
+    if (intent === 'CREATE_CATALOG' || intent === 'CONFIRM_CATALOG') {
       console.log('Merging entities with partial data...');
+      
+      // Check if user is mentioning a different product during an ongoing order
+      const existingData = await getPartialData(phone);
+      if (existingData && existingData.productName && entities.product_name && 
+          existingData.productName.toLowerCase() !== entities.product_name.toLowerCase()) {
+        console.log('Different product detected during order:', {
+          existing: existingData.productName,
+          new: entities.product_name
+        });
+        
+        // Ask user if they want to continue with current order or start new one
+        const { sendInteractiveMessage, sendTypingIndicator } = await import('./whatsapp-message-sender');
+        await sendTypingIndicator(phone, messageId);
+        
+        const questionMsg = detectedLanguage === 'hi-IN'
+          ? `आप ${existingData.productName} का ऑर्डर बना रहे हैं, लेकिन अब ${entities.product_name} का जिक्र किया। क्या करना चाहेंगे?`
+          : detectedLanguage === 'mr-IN'
+          ? `तुम्ही ${existingData.productName} चा ऑर्डर बनवत आहात, पण आता ${entities.product_name} चा उल्लेख केला. काय करायचं आहे?`
+          : `You're creating an order for ${existingData.productName}, but now mentioned ${entities.product_name}. What would you like to do?`;
+        
+        const continueBtn = detectedLanguage === 'hi-IN'
+          ? 'जारी रखें'
+          : detectedLanguage === 'mr-IN'
+          ? 'सुरू ठेवा'
+          : 'Continue';
+        
+        const newOrderBtn = detectedLanguage === 'hi-IN'
+          ? 'नया ऑर्डर'
+          : detectedLanguage === 'mr-IN'
+          ? 'नवीन ऑर्डर'
+          : 'New Order';
+        
+        await sendInteractiveMessage(
+          phone,
+          questionMsg,
+          [
+            { id: 'continue_current', title: continueBtn },
+            { id: 'start_new', title: newOrderBtn }
+          ],
+          detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
+        );
+        
+        // Store the new product name temporarily for later use
+        await mergePartialData(phone, {
+          description: `pending_product_switch:${entities.product_name}`,
+          source: 'voice',
+        });
+        
+        return {
+          success: true,
+          transcription,
+          detectedLanguage,
+          entities: {},
+          nextAction: 'REQUEST_INFO',
+        };
+      }
+      
       const mergedData = await mergePartialData(phone, {
         productName: entities.product_name,
         price: entities.price,
@@ -261,6 +431,11 @@ export const handler = async (
       console.log('Merged data:', {
         missingFields: mergedData.missingFields,
         complete: isPartialDataComplete(mergedData),
+        hasAllRequiredFields: !mergedData.missingFields.length,
+        productName: mergedData.productName,
+        price: mergedData.price,
+        quantity: mergedData.quantity,
+        unit: mergedData.unit,
       });
 
       // Step 7: Determine next action
@@ -285,35 +460,43 @@ export const handler = async (
           ? `${contextualResponse}\n\n${missingPrompt}`
           : missingPrompt;
         
-        // Send the prompt immediately
-        const { sendTextMessage } = await import('./whatsapp-message-sender');
-        await sendTextMessage(
+        // Send the prompt with voice
+        const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+        
+        // Show typing indicator before response
+        await sendTypingIndicator(phone, messageId);
+        
+        await sendTextWithVoice(
           phone,
           finalPrompt,
           detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
         );
         
-        console.log('Sent missing fields prompt:', finalPrompt);
+        console.log('Sent missing fields prompt with voice:', finalPrompt);
       } else {
         // All required fields present - request product image
         nextAction = 'REQUEST_IMAGE';
         await updateUserState(phone, 'IMAGE_PENDING');
 
-        // Send image request message immediately
-        const { sendTextMessage } = await import('./whatsapp-message-sender');
+        // Send image request message with voice
+        const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+        
+        // Show typing indicator before response
+        await sendTypingIndicator(phone, messageId);
+        
         const imageRequestMsg = detectedLanguage === 'hi-IN'
           ? '📸 बहुत अच्छा! अब कृपया उत्पाद की फोटो भेजें।'
           : detectedLanguage === 'mr-IN'
           ? '📸 खूप छान! आता कृपया उत्पादाचा फोटो पाठवा.'
           : '📸 Great! Now please send the product photo.';
         
-        await sendTextMessage(
+        await sendTextWithVoice(
           phone,
           imageRequestMsg,
           detectedLanguage?.split('-')[0] as 'hi' | 'mr' | 'en' || 'hi'
         );
         
-        console.log('Sent image request message');
+        console.log('Sent image request message with voice');
       }
 
       return {
@@ -359,6 +542,9 @@ export const handler = async (
       await lambdaClient.send(confirmCommand);
       console.log('Re-generated confirmation with updated price');
 
+      const totalResponseTime = Date.now() - transcriptionStartTime;
+      console.log(`Total response time: ${totalResponseTime}ms`);
+
       return {
         success: true,
         transcription,
@@ -401,6 +587,9 @@ export const handler = async (
       await lambdaClient.send(confirmCommand);
       console.log('Re-generated confirmation with updated quantity');
 
+      const totalResponseTime = Date.now() - transcriptionStartTime;
+      console.log(`Total response time: ${totalResponseTime}ms`);
+
       return {
         success: true,
         transcription,
@@ -411,6 +600,9 @@ export const handler = async (
     }
 
     // For non-catalog intents, just return success
+    const totalResponseTime = Date.now() - transcriptionStartTime;
+    console.log(`Total response time: ${totalResponseTime}ms`);
+    
     return {
       success: true,
       transcription,

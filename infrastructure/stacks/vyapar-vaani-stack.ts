@@ -216,6 +216,15 @@ export class VyaparVaaniStack extends cdk.Stack {
     this.eventBus.grantPutEventsTo(lambdaExecutionRole);
     this.encryptionKey.grantEncryptDecrypt(lambdaExecutionRole);
 
+    // Add explicit EventBridge PutEvents permission
+    lambdaExecutionRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['events:PutEvents'],
+        resources: [this.eventBus.eventBusArn],
+      })
+    );
+
     // Grant AWS AI service permissions
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
@@ -230,6 +239,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           'rekognition:CompareFaces',
           'aws-marketplace:ViewSubscriptions',
           'aws-marketplace:Subscribe',
+          'polly:SynthesizeSpeech',
         ],
         resources: ['*'],
       })
@@ -262,6 +272,15 @@ export class VyaparVaaniStack extends cdk.Stack {
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['sns:Publish'],
+        resources: ['*'],
+      })
+    );
+
+    // Grant CloudWatch Metrics permissions
+    lambdaExecutionRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['cloudwatch:PutMetricData'],
         resources: ['*'],
       })
     );
@@ -933,6 +952,12 @@ export class VyaparVaaniStack extends cdk.Stack {
     });
 
     // Rule: Confirmation Handler - Button clicks in CONFIRMATION_PENDING state
+    // This rule matches button_reply events when the user is in CONFIRMATION_PENDING state
+    // The event detail structure from whatsapp-webhook-handler includes:
+    // - messageType: 'button_reply'
+    // - state: 'CONFIRMATION_PENDING'
+    // - handler: 'CONFIRMATION'
+    // - content.buttonPayload: 'approve' | 'edit_quantity' | 'view_products'
     new events.Rule(this, 'ConfirmationHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-confirmation-handler-rule',
@@ -941,8 +966,9 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: [EVENT_SOURCES.WHATSAPP],
         detailType: [WHATSAPP_EVENT_TYPES.BUTTON_CLICKED],
         detail: {
-          handler: ['CONFIRMATION'],
+          messageType: ['button_reply'],
           state: ['CONFIRMATION_PENDING'],
+          handler: ['CONFIRMATION'],
         },
       },
       targets: [new targets.LambdaFunction(confirmationHandlerLambda)],

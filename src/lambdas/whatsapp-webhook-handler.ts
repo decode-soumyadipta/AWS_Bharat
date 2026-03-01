@@ -167,16 +167,35 @@ async function publishToEventBridge(
     language: userState.language,
   };
 
+  const detailType = getEventDetailType(inboundEvent.type);
+
   console.log('Publishing event to EventBridge:', {
     messageId: inboundEvent.messageId,
     phone: inboundEvent.from,
     messageType: inboundEvent.type,
     state: userState.state,
     handler: routeDecision.handler,
-    detailType: getEventDetailType(inboundEvent.type),
+    detailType: detailType,
+    source: EVENT_SOURCES.WHATSAPP,
   });
 
-  const detailType = getEventDetailType(inboundEvent.type);
+  // Add detailed logging for button clicks
+  if (inboundEvent.type === 'button_reply') {
+    console.log('🔘 BUTTON CLICK DETECTED:', {
+      buttonPayload: inboundEvent.content.buttonPayload,
+      buttonTitle: inboundEvent.content.buttonTitle,
+      userState: userState.state,
+      targetHandler: routeDecision.handler,
+      willTriggerConfirmationHandler: routeDecision.handler === 'CONFIRMATION' && userState.state === 'CONFIRMATION_PENDING',
+      eventPattern: {
+        source: EVENT_SOURCES.WHATSAPP,
+        detailType: detailType,
+        'detail.messageType': inboundEvent.type,
+        'detail.state': userState.state,
+        'detail.handler': routeDecision.handler,
+      },
+    });
+  }
 
   const command = new PutEventsCommand({
     Entries: [
@@ -198,34 +217,48 @@ async function publishToEventBridge(
       throw new Error('Failed to publish event to EventBridge');
     }
 
-    console.log('Successfully published event to EventBridge:', {
+    console.log('✅ Successfully published event to EventBridge:', {
       messageId: inboundEvent.messageId,
       detailType,
       phone: inboundEvent.from,
       state: userState.state,
       handler: routeDecision.handler,
     });
+
+    // Additional success logging for button clicks
+    if (inboundEvent.type === 'button_reply') {
+      console.log('✅ Button click event published successfully - confirmation-handler should be invoked');
+    }
   } catch (error) {
-    console.error('Error publishing to EventBridge:', error);
+    console.error('❌ Error publishing to EventBridge:', error);
+    
+    // Additional error logging for button clicks
+    if (inboundEvent.type === 'button_reply') {
+      console.error('❌ CRITICAL: Button click event failed to publish - confirmation-handler will NOT be invoked');
+    }
+    
     throw error;
   }
 }
 
 /**
- * Send error guidance message to user
+ * Send error guidance message to user with voice
  * 
  * @param phone - User phone number
  * @param guidanceMessage - Guidance message in user's language
  */
 async function sendGuidanceMessage(phone: string, guidanceMessage: string): Promise<void> {
   try {
-    const result = await sendTextMessage(phone, guidanceMessage);
+    // Import sendTextWithVoice dynamically
+    const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
     
-    if (!result.success) {
-      console.error('Failed to send guidance message:', result.error);
-    } else {
-      console.log('Sent guidance message to user:', phone);
-    }
+    // Show typing indicator
+    await sendTypingIndicator(phone);
+    
+    // Send message with voice (default to Hindi)
+    await sendTextWithVoice(phone, guidanceMessage, 'hi');
+    
+    console.log('Sent guidance message with voice to user:', phone);
   } catch (error) {
     console.error('Error sending guidance message:', error);
     // Don't throw - guidance message failure shouldn't block webhook processing

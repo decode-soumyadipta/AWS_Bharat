@@ -259,31 +259,40 @@ function renderProducts(products) {
   const container = document.getElementById('productsContainer');
 
   if (products.length === 0) {
-    container.innerHTML = '<div class="empty-message">No products available</div>';
+    container.innerHTML = '<div class="empty-message">No products available yet. Products added via WhatsApp will appear here in real-time!</div>';
     return;
   }
 
-  container.innerHTML = products.map(product => `
+  container.innerHTML = products.map(product => {
+    // Generate presigned URL for S3 images or use direct URL
+    const imageUrl = product.imageUrl || '';
+    const displayImage = imageUrl ? `<img src="${imageUrl}" alt="${product.name}" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'>📦</div>'" />` : '<div class="no-image">📦</div>';
+    
+    return `
     <div class="product-card" data-product-id="${product.productId}">
       <div class="product-image">
-        ${product.imageUrl ? `<img src="${product.imageUrl}" alt="${product.name}" />` : '<div class="no-image">No Image</div>'}
+        ${displayImage}
       </div>
       <div class="product-details">
         <h3 class="product-name">${product.name}</h3>
-        <p class="product-seller">Seller: ${product.seller.name}</p>
-        <p class="product-price">₹${product.price} / ${product.unit}</p>
-        <p class="product-quantity">Available: ${product.quantity} ${product.unit}</p>
+        <p class="product-seller">👤 ${product.seller.name}</p>
+        <div class="product-price-section">
+          <span class="product-price">₹${product.price}</span>
+          <span class="product-unit">/ ${product.unit}</span>
+        </div>
+        <p class="product-quantity">📦 Available: ${product.quantity} ${product.unit}</p>
+        ${product.category ? `<span class="product-category">${product.category}</span>` : ''}
         <div class="product-actions">
-          <button class="btn-primary add-to-cart-btn" data-product='${JSON.stringify(product)}'>
-            Add to Cart
+          <button class="btn-primary add-to-cart-btn" data-product='${JSON.stringify(product).replace(/'/g, "&apos;")}'>
+            🛒 Add to Cart
           </button>
-          <button class="btn-secondary buy-now-btn" data-product='${JSON.stringify(product)}'>
-            Buy Now
+          <button class="btn-buy-now buy-now-btn" data-product='${JSON.stringify(product).replace(/'/g, "&apos;")}'>
+            ⚡ Buy Now
           </button>
         </div>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   // Attach event listeners
   document.querySelectorAll('.add-to-cart-btn').forEach(btn => {

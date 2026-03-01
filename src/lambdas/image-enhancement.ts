@@ -150,11 +150,14 @@ export const handler = async (
     console.log('Positive prompt:', positivePrompt);
     console.log('Negative prompt:', negativePrompt);
 
-    // Use BACKGROUND_REMOVAL to preserve product completely, then add solid background
+    // Use IMAGE_VARIATION to transform background to solid professional color
     const titanRequest: TitanImageRequest = {
-      taskType: 'BACKGROUND_REMOVAL',
-      backgroundRemovalParams: {
-        image: base64Image,
+      taskType: 'IMAGE_VARIATION',
+      imageVariationParams: {
+        images: [base64Image],
+        text: positivePrompt,
+        negativeText: negativePrompt,
+        similarityStrength: 0.95, // Maximum preservation - only change background
       },
       imageGenerationConfig: {
         numberOfImages: 1,
@@ -302,33 +305,30 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
 
 /**
  * Generate positive prompt for professional product photography
- * CRITICAL: Complete background transformation with solid colors, preserve product exactly
- * If image has no labels/stickers, add minimal appropriate product label
+ * CRITICAL: ONLY change background, preserve product 100% exactly as-is
  */
 function generatePositivePrompt(
   productName: string,
   productCategory?: string
 ): string {
-  // Strong prompt for dramatic background transformation
-  let prompt = 'Professional product photography, solid color background, studio lighting, clean backdrop';
-
-  // Add context-appropriate solid color background
+  // Category-specific solid color backgrounds
+  let backgroundPrompt = '';
+  
   if (productCategory) {
     const category = productCategory.toLowerCase();
     if (category.includes('food') || category.includes('grocery')) {
-      prompt += ', pure white background, bright lighting, food photography, white studio backdrop';
+      backgroundPrompt = 'solid white background';
     } else if (category.includes('handicraft') || category.includes('textile')) {
-      prompt += ', warm beige background, soft lighting, craft photography, beige studio backdrop';
+      backgroundPrompt = 'solid beige background';
     } else {
-      prompt += ', light gray background, professional lighting, commercial photography, gray studio backdrop';
+      backgroundPrompt = 'solid light gray background';
     }
   } else {
-    prompt += ', neutral gray background, studio lighting, commercial product photography, gray backdrop';
+    backgroundPrompt = 'solid light gray background';
   }
 
-  // Add minimal product label/sticker if missing
-  prompt += ', replace background completely, solid color only, no patterns, no textures, plain backdrop, professional studio setup';
-  prompt += `, add minimal elegant product label with "${productName}" text if no label present, small corner label, professional branding`;
+  // Minimal prompt - only specify background change
+  const prompt = `${backgroundPrompt}, keep product exactly as is, professional studio lighting`;
 
   return prompt;
 }

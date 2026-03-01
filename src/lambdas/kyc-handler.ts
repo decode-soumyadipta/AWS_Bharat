@@ -384,7 +384,7 @@ async function callSellerRegistration(
 }
 
 /**
- * Send feedback message via WhatsApp
+ * Send feedback message via WhatsApp with voice
  */
 async function sendFeedbackMessage(
   phone: string,
@@ -392,59 +392,40 @@ async function sendFeedbackMessage(
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
 ): Promise<void> {
   const message = translateMessage(messageKey, language);
+  const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  const payload = {
-    to: phone,
-    type: 'text',
-    content: {
-      text: message,
-    },
-    language: language.split('-')[0],
-  };
-
-  const command = new InvokeCommand({
-    FunctionName: process.env.WHATSAPP_MESSAGE_SENDER_LAMBDA_NAME || 'vyapar-vaani-whatsapp-sender',
-    InvocationType: 'Event', // Async invocation
-    Payload: JSON.stringify(payload),
-  });
-
-  try {
-    await lambdaClient.send(command);
-  } catch (error) {
-    console.error('Failed to send feedback message:', error);
-    // Don't throw - we don't want to fail the main flow if message sending fails
-  }
+  // Import sendTextWithVoice dynamically
+  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  
+  // Show typing indicator
+  await sendTypingIndicator(phone);
+  
+  // Send message with voice
+  await sendTextWithVoice(phone, message, langCode);
 }
 
 /**
- * Send success confirmation message via WhatsApp
+ * Send success confirmation message via WhatsApp with voice
  */
 async function sendSuccessMessage(
   phone: string,
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
 ): Promise<void> {
   const message = translateMessage('KYC_SUCCESS', language);
+  const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  const payload = {
-    to: phone,
-    type: 'text',
-    content: {
-      text: message,
-    },
-    language: language.split('-')[0],
-  };
-
-  const command = new InvokeCommand({
-    FunctionName: process.env.WHATSAPP_MESSAGE_SENDER_LAMBDA_NAME || 'vyapar-vaani-whatsapp-sender',
-    InvocationType: 'Event', // Async invocation
-    Payload: JSON.stringify(payload),
-  });
-
-  await lambdaClient.send(command);
+  // Import sendTextWithVoice dynamically
+  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  
+  // Show typing indicator
+  await sendTypingIndicator(phone);
+  
+  // Send message with voice
+  await sendTextWithVoice(phone, message, langCode);
 }
 
 /**
- * Send error message via WhatsApp
+ * Send error message via WhatsApp with voice
  */
 async function sendErrorMessage(
   phone: string,
@@ -452,26 +433,14 @@ async function sendErrorMessage(
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
 ): Promise<void> {
   const message = translateMessage(messageKey, language);
+  const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  const payload = {
-    to: phone,
-    type: 'text',
-    content: {
-      text: message,
-    },
-    language: language.split('-')[0],
-  };
-
-  const command = new InvokeCommand({
-    FunctionName: process.env.WHATSAPP_MESSAGE_SENDER_LAMBDA_NAME || 'vyapar-vaani-whatsapp-sender',
-    InvocationType: 'Event', // Async invocation
-    Payload: JSON.stringify(payload),
-  });
-
-  try {
-    await lambdaClient.send(command);
-  } catch (error) {
-    console.error('Failed to send error message:', error);
-    // Don't throw - we don't want to fail the main flow if message sending fails
-  }
+  // Import sendTextWithVoice dynamically
+  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  
+  // Show typing indicator
+  await sendTypingIndicator(phone);
+  
+  // Send message with voice
+  await sendTextWithVoice(phone, message, langCode);
 }

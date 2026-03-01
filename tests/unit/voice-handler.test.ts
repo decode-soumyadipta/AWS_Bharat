@@ -16,6 +16,7 @@ import * as mediaDownload from '../../src/services/media-download';
 import * as stateManager from '../../src/services/state-manager';
 import * as partialDataStore from '../../src/services/partial-data-store';
 import * as languageManager from '../../src/services/language-manager';
+import * as conversationMemory from '../../src/services/conversation-memory';
 import { lambdaClient, eventBridgeClient } from '../../src/config/aws-clients';
 
 // Mock AWS clients
@@ -37,6 +38,7 @@ jest.mock('../../src/services/media-download');
 jest.mock('../../src/services/state-manager');
 jest.mock('../../src/services/partial-data-store');
 jest.mock('../../src/services/language-manager');
+jest.mock('../../src/services/conversation-memory');
 
 describe('Voice Handler Lambda', () => {
   const mockPhone = '+919876543210';
@@ -52,6 +54,12 @@ describe('Voice Handler Lambda', () => {
     process.env.VOICE_TRANSCRIPTION_FUNCTION_NAME = 'voice-transcription';
     process.env.INTENT_CLASSIFICATION_FUNCTION_NAME = 'intent-classification';
     process.env.ENTITY_EXTRACTION_FUNCTION_NAME = 'entity-extraction';
+    
+    // Mock conversation memory service
+    (conversationMemory.addConversationMessage as jest.Mock).mockResolvedValue(undefined);
+    (conversationMemory.getConversationContext as jest.Mock).mockResolvedValue(null);
+    (conversationMemory.generateContextualResponse as jest.Mock).mockReturnValue('');
+    (conversationMemory.updateUserPreferences as jest.Mock).mockResolvedValue(undefined);
   });
 
   describe('Complete voice processing pipeline', () => {

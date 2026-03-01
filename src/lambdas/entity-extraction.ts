@@ -137,6 +137,7 @@ function constructEntityExtractionPrompt(
 ): string {
   switch (intent) {
     case 'CREATE_CATALOG':
+    case 'CONFIRM_CATALOG': // Treat confirmation as catalog creation
       return constructCatalogPrompt(transcribedText);
     case 'UPDATE_PRICE':
       return constructPriceUpdatePrompt(transcribedText);
@@ -158,49 +159,75 @@ function constructEntityExtractionPrompt(
  * Construct prompt for catalog creation entity extraction
  */
 function constructCatalogPrompt(transcribedText: string): string {
-  return `Extract structured product information from this voice note.
+  return `You are a STRICT information extractor. Your job is to extract ONLY what is EXPLICITLY stated.
 
-Transcription: ${transcribedText}
+Transcription: "${transcribedText}"
 Intent: CREATE_CATALOG
 
-Extract these fields:
+Extract these fields ONLY if they are EXPLICITLY mentioned:
 - product_name: string (the name of the product)
-- price: number (per-unit price in INR, numeric value only - e.g., if "500 per kg" then extract 500)
+- price: number (per-unit price in INR, numeric value only)
 - quantity: number (numeric value only - how many units available)
 - unit: string (one of: "kg", "liters", "pieces", "packets", "grams", "ml", "bottles", "dozen")
-- description: string (optional, any additional details about the product)
+- description: string (optional, any additional details)
 - category: string (one of: "food", "grocery", "handicraft", "textile", "other")
 
-CRITICAL RULES FOR PRICE EXTRACTION:
-- Extract ONLY the per-unit price, NOT the total price
-- If seller says "500 per kg" or "500 rupees per kg", extract price as 500
-- If seller says "2 kg at 500 per kg", extract price as 500 (NOT 1000)
-- Remove all currency symbols (₹, Rs, rupees) and extract only the number
-- If price includes decimals, keep them (e.g., 99.50 -> 99.5)
+⚠️ CRITICAL RULES - FAILURE TO FOLLOW WILL RESULT IN INCORRECT EXTRACTION:
+1. If price is NOT mentioned → price MUST be null (DO NOT guess, infer, or use defaults)
+2. If quantity is NOT mentioned → quantity MUST be null (DO NOT guess, infer, or use defaults)
+3. If unit is NOT mentioned → unit MUST be null (DO NOT guess, infer, or use defaults)
+4. ONLY category can be inferred from product name
+5. DO NOT use common sense to fill missing values
+6. DO NOT use typical values for products
+7. DO NOT assume standard quantities or prices
+8. HANDLE MULTIPLE UPDATES: If user mentions BOTH price AND quantity, extract BOTH values
 
-EXAMPLES:
+VALIDATION CHECK:
+Before responding, ask yourself for EACH field:
+- "Did the user EXPLICITLY say this value in the transcription?"
+- If NO → set to null
+- If YES → extract the value
+
+CORRECT EXAMPLES:
 Input: "मैं 2 kg आम ₹500 प्रति केजी के दर में बेचना चाहता हूँ"
-Output: {"product_name": "आम", "price": 500, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
+✓ Correct: {"product_name": "आम", "price": 500, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
+Why: ALL values (product, price, quantity, unit) are EXPLICITLY mentioned
 
-Input: "I want to sell 5 bottles of honey at 250 rupees each"
-Output: {"product_name": "honey", "price": 250, "quantity": 5, "unit": "bottles", "description": null, "category": "food"}
+Input: "मैं आम बेचना चाहता हूँ"
+✓ Correct: {"product_name": "आम", "price": null, "quantity": null, "unit": null, "description": null, "category": "food"}
+Why: ONLY product name mentioned, everything else is null
+
+Input: "I want to sell honey"
+✓ Correct: {"product_name": "honey", "price": null, "quantity": null, "unit": null, "description": null, "category": "food"}
+Why: ONLY product name mentioned
 
 Input: "10 pieces of handicraft items for 1500 per piece"
-Output: {"product_name": "handicraft items", "price": 1500, "quantity": 10, "unit": "pieces", "description": null, "category": "handicraft"}
+✓ Correct: {"product_name": "handicraft items", "price": 1500, "quantity": 10, "unit": "pieces", "description": null, "category": "handicraft"}
 
-Other Rules:
-- If a field is not mentioned or cannot be determined, set it to null
-- For unit, normalize to standard units (e.g., "kilo" -> "kg", "liter" -> "liters", "bottle" -> "bottles")
-- For category, infer from product name if not explicitly stated
-- Preserve the original language of product_name and description
+Input: "price 500 and quantity 10"
+✓ Correct: {"product_name": null, "price": 500, "quantity": 10, "unit": null, "description": null, "category": null}
+Why: BOTH price AND quantity mentioned together
 
-Respond with ONLY a JSON object in this exact format (no additional text):
+Input: "कीमत 600 और मात्रा 20 kg"
+✓ Correct: {"product_name": null, "price": 600, "quantity": 20, "unit": "kg", "description": null, "category": null}
+Why: Price, quantity, AND unit mentioned together
+
+WRONG EXAMPLES - NEVER DO THIS:
+Input: "मैं आम बेचना चाहता हूँ"
+❌ WRONG: {"product_name": "आम", "price": 50, "quantity": 1, "unit": "kg", "description": null, "category": "food"}
+Why wrong: Price, quantity, unit were NOT mentioned but you filled them anyway
+
+Input: "I want to sell mangoes"
+❌ WRONG: {"product_name": "mangoes", "price": 100, "quantity": 10, "unit": "kg", "description": null, "category": "food"}
+Why wrong: Price, quantity, unit were NOT mentioned but you filled them anyway
+
+Respond with ONLY a JSON object (no additional text):
 {
   "product_name": "...",
-  "price": 200,
-  "quantity": 5,
-  "unit": "kg",
-  "description": "...",
+  "price": null,
+  "quantity": null,
+  "unit": null,
+  "description": null,
   "category": "food"
 }`;
 }
@@ -638,6 +665,11 @@ async function sendWhatsAppResponse(data: {
         hi: `✅ मात्रा अपडेट हो रही है: ${data.entities.new_quantity}`,
         mr: `✅ प्रमाण अपडेट होत आहे: ${data.entities.new_quantity}`,
         en: `✅ Updating quantity: ${data.entities.new_quantity}`,
+      },
+      CANCEL_ORDER: {
+        hi: `❌ ऑर्डर रद्द किया जा रहा है...`,
+        mr: `❌ ऑर्डर रद्द केली जात आहे...`,
+        en: `❌ Canceling order...`,
       },
       ACCEPT_ORDER: {
         hi: `✅ ऑर्डर स्वीकार किया जा रहा है: ${data.entities.order_id || 'नवीनतम'}`,
