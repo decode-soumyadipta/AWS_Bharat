@@ -3,100 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vyapar Vaani Marketplace</title>
+    <title>Vyapar Vaani — Marketplace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Login Screen -->
-    <div id="loginScreen" class="screen active">
-        <div class="login-container">
-            <h1>🛒 Vyapar Vaani Marketplace</h1>
-            <p class="subtitle">Shop from local sellers</p>
-            <div class="login-form">
-                <input type="text" id="buyerName" placeholder="Enter your name" />
-                <input type="tel" id="buyerPhone" placeholder="Enter phone number" />
-                <button onclick="login()">Login as Buyer</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Marketplace Screen -->
-    <div id="marketplaceScreen" class="screen">
-        <!-- Header -->
-        <header>
-            <div class="header-content">
-                <h1>🛒 Vyapar Vaani</h1>
-                <div class="header-actions">
-                    <span id="buyerNameDisplay"></span>
-                    <button onclick="showCart()" class="cart-btn">
-                        🛒 Cart (<span id="cartCount">0</span>)
-                    </button>
-                    <button onclick="logout()" class="logout-btn">Logout</button>
-                </div>
-            </div>
-        </header>
-
-        <!-- Main Content -->
-        <main>
-            <div class="container">
-                <!-- Filters -->
-                <div class="filters">
-                    <input type="text" id="searchInput" placeholder="Search products..." onkeyup="filterProducts()" />
-                    <select id="categoryFilter" onchange="filterProducts()">
-                        <option value="">All Categories</option>
-                        <option value="food">Food</option>
-                        <option value="grocery">Grocery</option>
-                        <option value="handicraft">Handicraft</option>
-                        <option value="clothing">Clothing</option>
-                        <option value="other">Other</option>
-                    </select>
-                </div>
-
-                <!-- Products Grid -->
-                <div id="productsGrid" class="products-grid">
-                    <!-- Products will be loaded here -->
-                </div>
-            </div>
-        </main>
-    </div>
-
-    <!-- Product Detail Modal -->
-    <div id="productModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <div id="productDetail"></div>
-        </div>
-    </div>
-
-    <!-- Cart Modal -->
-    <div id="cartModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeCart()">&times;</span>
-            <h2>Your Cart</h2>
-            <div id="cartItems"></div>
-            <div class="cart-total">
-                <h3>Total: ₹<span id="cartTotal">0</span></h3>
-                <button onclick="checkout()" class="checkout-btn">Proceed to Checkout</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Checkout Modal -->
-    <div id="checkoutModal" class="modal hidden">
-        <div class="modal-content checkout-modal-content">
-            <span class="close" id="closeCheckout">&times;</span>
-            <div id="checkoutContainer"></div>
-        </div>
-    </div>
-
-    <!-- Order Tracking Modal -->
-    <div id="orderTrackingModal" class="modal hidden">
-        <div class="modal-content">
-            <span class="close" onclick="document.getElementById('orderTrackingModal').classList.add('hidden')">&times;</span>
-            <div id="orderTrackingContainer"></div>
-        </div>
-    </div>
-
     <!-- QR Code library for UPI payment -->
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <script src="ShoppingCart.js"></script>

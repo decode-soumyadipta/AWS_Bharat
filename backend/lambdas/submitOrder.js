@@ -9,7 +9,7 @@
 const axios = require('axios');
 const { randomUUID } = require('crypto');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, UpdateCommand, GetCommand } = require('@aws-sdk/lib-dynamodb');
 const { EventBridgeClient, PutEventsCommand } = require('@aws-sdk/client-eventbridge');
 
 const ddbClient = new DynamoDBClient({});
@@ -181,6 +181,116 @@ async function sendBuyerConfirmation(buyerPhone, orderId, total, paymentMethod) 
         console.log('Buyer confirmation sent to', buyerPhone);
     } catch (error) {
         console.warn('Buyer confirmation failed (non-critical):', error.message);
+    }
+}
+
+/**
+ * Decrement product stock in marketplace-products table after order confirmation.
+ * Returns an array of { productId, name, remainingQty } for stock notification.
+ */
+async function decrementProductStock(items) {
+    const stockUpdates = [];
+
+    for (const item of items) {
+        const productId = item.productId || item.itemId;
+        if (!productId) {
+            console.warn('Item missing productId, skipping stock decrement:', item.name);
+            continue;
+        }
+
+        try {
+            // Atomically decrement quantity, but don't allow negative stock
+            const result = await docClient.send(new UpdateCommand({
+                TableName: MARKETPLACE_PRODUCTS_TABLE,
+                Key: { productId },
+                UpdateExpression: 'SET quantity = quantity - :qty, updatedAt = :now',
+                ConditionExpression: 'quantity >= :qty',
+                ExpressionAttributeValues: {
+                    ':qty': item.quantity || 1,
+                    ':now': new Date().toISOString(),
+                },
+                ReturnValues: 'ALL_NEW',
+            }));
+
+            const updatedProduct = result.Attributes;
+            const remainingQty = updatedProduct?.quantity ?? 0;
+            
+            console.log(`📦 Stock updated: ${item.name} — ordered ${item.quantity}, remaining: ${remainingQty}`);
+
+            stockUpdates.push({
+                productId,
+                name: item.name,
+                orderedQty: item.quantity || 1,
+                remainingQty,
+                unit: item.unit || updatedProduct?.unit || 'pcs',
+            });
+
+            // If stock is now 0, mark product as OUT_OF_STOCK
+            if (remainingQty <= 0) {
+                try {
+                    await docClient.send(new UpdateCommand({
+                        TableName: MARKETPLACE_PRODUCTS_TABLE,
+                        Key: { productId },
+                        UpdateExpression: 'SET #s = :status',
+                        ExpressionAttributeNames: { '#s': 'status' },
+                        ExpressionAttributeValues: { ':status': 'OUT_OF_STOCK' },
+                    }));
+                    console.log(`⚠️ Product ${item.name} marked OUT_OF_STOCK`);
+                } catch (e) {
+                    console.warn('Failed to mark out of stock:', e.message);
+                }
+            }
+        } catch (error) {
+            if (error.name === 'ConditionalCheckFailedException') {
+                console.warn(`⚠️ Insufficient stock for ${item.name} (productId: ${productId})`);
+                stockUpdates.push({
+                    productId,
+                    name: item.name,
+                    orderedQty: item.quantity || 1,
+                    remainingQty: 0,
+                    unit: item.unit || 'pcs',
+                    outOfStock: true,
+                });
+            } else {
+                console.error(`Failed to decrement stock for ${item.name}:`, error.message);
+            }
+        }
+    }
+
+    return stockUpdates;
+}
+
+/**
+ * Send stock update notification to seller via WhatsApp (voice-friendly)
+ */
+async function sendStockUpdateNotification(sellerPhone, stockUpdates) {
+    if (!stockUpdates || stockUpdates.length === 0) return;
+
+    const url = `${WHATSAPP_API_ENDPOINT}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+
+    const lines = stockUpdates.map(s => {
+        if (s.outOfStock || s.remainingQty <= 0) {
+            return `⚠️ *${s.name}*: स्टॉक खत्म! (${s.orderedQty} ${s.unit} बिक गए)`;
+        }
+        return `📦 *${s.name}*: ${s.remainingQty} ${s.unit} बाकी (${s.orderedQty} ${s.unit} बिके)`;
+    });
+
+    const msg = `📊 *स्टॉक अपडेट:*\n\n${lines.join('\n')}\n\n${
+        stockUpdates.some(s => s.remainingQty <= 0) 
+            ? '⚠️ कुछ उत्पादों का स्टॉक खत्म हो गया है। कृपया स्टॉक अपडेट करें।' 
+            : '✅ स्टॉक अपडेट हो गया।'
+    }`;
+
+    try {
+        await axios.post(url, {
+            messaging_product: 'whatsapp', to: sellerPhone, type: 'text',
+            text: { body: msg },
+        }, {
+            headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+        });
+        console.log('Stock update notification sent to seller', sellerPhone);
+    } catch (error) {
+        console.warn('Stock notification failed (non-critical):', error.message);
     }
 }
 
@@ -429,6 +539,12 @@ exports.handler = async (event) => {
                     // Notify buyer order is confirmed
                     if (orderData.buyer.phone) {
                         await sendBuyerConfirmation(orderData.buyer.phone, sellerOrderId, sellerTotal, paymentMethod);
+                    }
+
+                    // Decrement stock for UPI auto-confirmed orders
+                    const stockUpdates = await decrementProductStock(sellerData.items);
+                    if (stockUpdates.length > 0) {
+                        await sendStockUpdateNotification(sellerPhone, stockUpdates);
                     }
                 } else {
                     // COD: Show accept/reject buttons, seller decides

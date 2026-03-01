@@ -48,18 +48,18 @@ const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', Handl
     audio: 'AGENT',  // Route to AI agent for natural language processing
     text: 'AGENT',   // Route to AI agent for text queries/UPI
     image: 'AGENT',  // Route to agent — agent handles download/enhance + state transition
-    button_reply: 'ERROR',
+    button_reply: 'AGENT',  // Route to agent — handles order accept/reject buttons
     default: 'ERROR',
   },
   IMAGE_PENDING: {
     image: 'AGENT',  // Route to agent — handles download/enhance + confirmation trigger
     text: 'AGENT',   // Allow questions/queries while waiting for image
     audio: 'AGENT',  // Allow voice queries while waiting for image
-    button_reply: 'ERROR',
+    button_reply: 'AGENT',  // Route to agent — handles order accept/reject buttons
     default: 'ERROR',
   },
   CONFIRMATION_PENDING: {
-    button_reply: 'CONFIRMATION',
+    button_reply: 'AGENT',  // Route to agent — handles both catalog approve AND order accept/reject
     text: 'AGENT',  // Route to AI agent for flexible conversational handling
     audio: 'AGENT', // Route to AI agent for flexible conversational handling  
     image: 'AGENT', // Allow image even in confirmation (new product photo)

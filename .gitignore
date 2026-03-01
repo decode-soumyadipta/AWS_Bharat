@@ -15,7 +15,7 @@ yarn.lock
 # TypeScript
 dist/
 *.tsbuildinfo
-
+*.bak
 # AWS CDK
 cdk.out/
 .cdk.staging/

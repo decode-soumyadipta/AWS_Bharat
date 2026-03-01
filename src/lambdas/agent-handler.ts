@@ -197,6 +197,10 @@ async function processAgentEvent(event: any): Promise<any> {
 
       case 'button_reply':
         userMessage = await handleButtonClick(eventDetail, phone, language);
+        if (userMessage === '__HANDLED__') {
+          console.log('🔘 Button handled directly (order accept/reject), skipping agent processing');
+          return { success: true, message: 'Button handled directly' };
+        }
         shouldProcessWithAgent = content.buttonPayload !== 'approve';
         break;
 
@@ -607,6 +611,118 @@ async function handleButtonClick(
 }
 
 /**
+ * Decrement product stock in marketplace-products table.
+ * Called when order is CONFIRMED (either via seller accept or UPI auto-confirm).
+ * Returns stock status for each item.
+ */
+async function decrementMarketplaceStock(
+  items: Array<{ itemId?: string; productId?: string; name: string; quantity: number; unit?: string }>
+): Promise<Array<{ name: string; remainingQty: number; orderedQty: number; unit: string; outOfStock: boolean }>> {
+  const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE;
+  if (!MARKETPLACE_TABLE) {
+    console.warn('MARKETPLACE_PRODUCTS_TABLE not set, skipping stock decrement');
+    return [];
+  }
+
+  const stockResults: Array<{ name: string; remainingQty: number; orderedQty: number; unit: string; outOfStock: boolean }> = [];
+
+  for (const item of items) {
+    const productId = item.productId || item.itemId;
+    if (!productId) {
+      console.warn('Missing productId for stock decrement:', item.name);
+      continue;
+    }
+
+    try {
+      const result = await marketplaceDdbClient.send(new UpdateCommand({
+        TableName: MARKETPLACE_TABLE,
+        Key: { productId },
+        UpdateExpression: 'SET quantity = quantity - :qty, updatedAt = :now',
+        ConditionExpression: 'quantity >= :qty',
+        ExpressionAttributeValues: {
+          ':qty': item.quantity || 1,
+          ':now': new Date().toISOString(),
+        },
+        ReturnValues: 'ALL_NEW',
+      }));
+
+      const remaining = result.Attributes?.quantity ?? 0;
+      const unit = item.unit || result.Attributes?.unit || 'pcs';
+
+      console.log(`📦 Stock decremented: ${item.name} → ${remaining} ${unit} remaining`);
+
+      stockResults.push({
+        name: item.name,
+        remainingQty: remaining,
+        orderedQty: item.quantity || 1,
+        unit,
+        outOfStock: remaining <= 0,
+      });
+
+      // Mark out of stock
+      if (remaining <= 0) {
+        try {
+          await marketplaceDdbClient.send(new UpdateCommand({
+            TableName: MARKETPLACE_TABLE,
+            Key: { productId },
+            UpdateExpression: 'SET #s = :status',
+            ExpressionAttributeNames: { '#s': 'status' },
+            ExpressionAttributeValues: { ':status': 'OUT_OF_STOCK' },
+          }));
+          console.log(`⚠️ Product ${item.name} marked OUT_OF_STOCK`);
+        } catch (e: any) {
+          console.warn('Failed to mark out of stock:', e.message);
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'ConditionalCheckFailedException') {
+        console.warn(`⚠️ Insufficient stock for ${item.name}`);
+        stockResults.push({
+          name: item.name,
+          remainingQty: 0,
+          orderedQty: item.quantity || 1,
+          unit: item.unit || 'pcs',
+          outOfStock: true,
+        });
+      } else {
+        console.error(`Stock decrement failed for ${item.name}:`, error.message);
+      }
+    }
+  }
+
+  return stockResults;
+}
+
+/**
+ * Build stock update voice message
+ */
+function buildStockVoiceMessage(
+  stockResults: Array<{ name: string; remainingQty: number; orderedQty: number; unit: string; outOfStock: boolean }>,
+  lang: string
+): string {
+  if (stockResults.length === 0) return '';
+
+  const isHindi = lang === 'hi' || lang === 'hi-IN';
+  const lines = stockResults.map(s => {
+    if (s.outOfStock) {
+      return isHindi
+        ? `⚠️ *${s.name}*: स्टॉक खत्म! (${s.orderedQty} ${s.unit} बिक गए)`
+        : `⚠️ *${s.name}*: Out of stock! (${s.orderedQty} ${s.unit} sold)`;
+    }
+    return isHindi
+      ? `📦 *${s.name}*: ${s.remainingQty} ${s.unit} बाकी (${s.orderedQty} ${s.unit} बिके)`
+      : `📦 *${s.name}*: ${s.remainingQty} ${s.unit} left (${s.orderedQty} ${s.unit} sold)`;
+  });
+
+  const header = isHindi ? '📊 *स्टॉक अपडेट:*' : '📊 *Stock Update:*';
+  const warning = stockResults.some(s => s.outOfStock)
+    ? (isHindi ? '\n\n⚠️ कुछ उत्पादों का स्टॉक खत्म। कृपया अपडेट करें।' : '\n\n⚠️ Some products are out of stock. Please restock.')
+    : '';
+
+  return `${header}\n\n${lines.join('\n')}${warning}`;
+}
+
+/**
  * Handle order accept/reject from seller.
  * Updates order status, notifies buyer via voice, and guides payment flow.
  */
@@ -655,17 +771,18 @@ async function handleOrderAcceptReject(
     const newStatus = decision === 'ACCEPTED' ? 'CONFIRMED' : 'CANCELLED';
     const buyerPhone = order.buyer?.phone || order.fulfillment?.contact?.phone;
 
-    // Update order status in DynamoDB
+    // Update order status in DynamoDB (including GSI2SK for status queries)
     await docClient.send(new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
-      UpdateExpression: 'SET #status = :status, #timeline = list_append(#timeline, :event), updatedAt = :now',
+      UpdateExpression: 'SET #status = :status, #timeline = list_append(#timeline, :event), updatedAt = :now, GSI2SK = :gsi2sk',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#timeline': 'timeline',
       },
       ExpressionAttributeValues: {
         ':status': newStatus,
+        ':gsi2sk': `STATUS#${newStatus}#${now}`,
         ':event': [{
           status: newStatus,
           timestamp: now,
@@ -699,6 +816,19 @@ async function handleOrderAcceptReject(
           ? `🎉 आपका ऑर्डर स्वीकार हो गया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 कृपया UPI से ₹' + totalAmount + ' भुगतान करें। भुगतान के बाद स्क्रीनशॉट या रेफरेंस नंबर भेजें।' : '💵 कैश ऑन डिलीवरी - डिलीवरी के समय भुगतान करें।'}\n\n🚚 डिलीवरी जल्द होगी!`
           : `🎉 Your order has been accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 Please pay ₹' + totalAmount + ' via UPI. Send screenshot or reference number after payment.' : '💵 Cash on Delivery - Pay when your order is delivered.'}\n\n🚚 Delivery coming soon!`;
         await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
+      }
+
+      // -- Decrement stock after order confirmed --
+      try {
+        const stockResults = await decrementMarketplaceStock(items);
+        if (stockResults.length > 0) {
+          const stockMsg = buildStockVoiceMessage(stockResults, lang);
+          if (stockMsg) {
+            await sendEnhancedAgentMessage(sellerPhone, stockMsg, language as any, 'voice');
+          }
+        }
+      } catch (stockErr: any) {
+        console.error('Stock decrement error (non-fatal):', stockErr.message);
       }
     } else {
       // -- Seller rejection confirmation --

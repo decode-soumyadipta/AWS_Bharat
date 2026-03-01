@@ -21,7 +21,7 @@ import {
 import { getPartialData, PartialCatalogItem } from './partial-data-store';
 import { getUserState } from './state-manager';
 import { sendTextMessage, sendTypingIndicator, sendTextWithVoice, sendVoiceOnly } from '../lambdas/whatsapp-message-sender';
-import { remote_web_search, getLocalMarketPrice } from '../tools/web-search';
+import { remote_web_search, getLocalMarketPrice, fetchLiveMarketPrice } from '../tools/web-search';
 import { 
   getTopSellingProducts, 
   getSalesSummary, 
@@ -102,12 +102,21 @@ export async function processWithEnhancedAgent(
     await showTypingIndicator(phone); // Refresh after search
   }
 
-  // Auto-fetch market price if user is adding a product (has partial data with product name)
+  // Auto-fetch LIVE market price if user is adding a product (has partial data with product name)
   if (!priceQuery && partialData?.productName && !partialData.price) {
-    console.log('💰 Auto-fetching market price for product being added:', partialData.productName);
-    const autoMarketPrice = getLocalMarketPrice(partialData.productName);
-    if (autoMarketPrice.found) {
-      marketInfo = `📋 आज का बाज़ार भाव ${partialData.productName}: ${autoMarketPrice.priceInfo} (${autoMarketPrice.sourceName})`;
+    console.log('💰 Auto-fetching LIVE market price for product being added:', partialData.productName);
+    try {
+      const livePrice = await fetchLiveMarketPrice(partialData.productName);
+      if (livePrice.found) {
+        const liveTag = livePrice.isLive ? '🟢 LIVE' : '📋';
+        marketInfo = `${liveTag} आज का बाज़ार भाव ${partialData.productName}: ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
+      }
+    } catch (e: any) {
+      console.warn('Live price fetch failed, using fallback:', e.message);
+      const fallbackPrice = getLocalMarketPrice(partialData.productName);
+      if (fallbackPrice.found) {
+        marketInfo = `📋 अनुमानित बाज़ार भाव ${partialData.productName}: ${fallbackPrice.priceInfo} (${fallbackPrice.sourceName})`;
+      }
     }
   }
 
@@ -375,39 +384,43 @@ function detectPriceQuery(message: string, language: LanguageCode): string | nul
  */
 async function searchMarketPrice(product: string, language: LanguageCode): Promise<string> {
   try {
-    // First check local knowledge base for instant response
-    const localPrice = getLocalMarketPrice(product);
+    // Primary: Fetch LIVE price from data.gov.in
+    const livePrice = await fetchLiveMarketPrice(product);
     
-    // Also try web search for fresh data
+    if (livePrice.found) {
+      const liveTag = livePrice.isLive ? '🟢 LIVE मंडी भाव' : '📋 अनुमानित भाव';
+      const dateInfo = livePrice.isLive ? `(${livePrice.arrivalDate})` : '';
+      const marketInfo = livePrice.market ? `${livePrice.market}, ${livePrice.state}` : '';
+      
+      let result = `${liveTag}: ${livePrice.commodity}\n💰 ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
+      
+      // Also try web search for additional context
+      const searchQuery = `${product} mandi bhav price today India ${new Date().toISOString().split('T')[0]}`;
+      try {
+        const searchResults = await remote_web_search({ query: searchQuery });
+        if (searchResults && searchResults.length > 0) {
+          result += `\n📌 और जानकारी: ${searchResults[0].url}`;
+        }
+      } catch (e) {
+        // web search is supplementary, don't fail
+      }
+      
+      return result;
+    }
+
+    // Fallback: web search only
     const searchQuery = `${product} mandi bhav price today India ${new Date().toISOString().split('T')[0]}`;
     const searchResults = await remote_web_search({ query: searchQuery });
 
-    let result = '';
-
     if (searchResults && searchResults.length > 0) {
       const topResult = searchResults[0];
-      result = `📊 Market Info: ${topResult.snippet}\n🔗 Source: ${topResult.url}`;
-      
-      // Add more sources
-      if (searchResults.length > 1) {
-        result += `\n📌 Also see: ${searchResults[1].url}`;
-      }
+      return `📊 Market Info: ${topResult.snippet}\n🔗 Source: ${topResult.url}`;
     }
 
-    // Supplement with local knowledge if web search was sparse
-    if (localPrice.found) {
-      const localInfo = `\n📋 Reference price: ${localPrice.priceInfo}\n🏛️ Source: ${localPrice.sourceName} (${localPrice.sourceUrl})`;
-      result = result ? result + localInfo : `📊 ${localPrice.priceInfo}${localInfo}`;
-    }
-
-    if (!result) {
-      result = '📊 Market price data not available right now. Prices vary by region and season.\n🏛️ Check: https://agmarknet.gov.in for latest mandi prices.';
-    }
-
-    return result;
+    return '📊 बाज़ार भाव अभी उपलब्ध नहीं है।\n🏛️ ताज़ा मंडी भाव देखें: https://agmarknet.gov.in';
   } catch (error) {
     console.error('Market price search failed:', error);
-    return '📊 Check latest mandi prices at: https://agmarknet.gov.in';
+    return '📊 बाज़ार भाव देखें: https://agmarknet.gov.in';
   }
 }
 

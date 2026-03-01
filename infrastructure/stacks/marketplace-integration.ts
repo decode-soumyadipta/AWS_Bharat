@@ -182,6 +182,8 @@ export class MarketplaceIntegration extends Construct {
 
     // Grant DynamoDB access for order persistence
     props.dataTable.grantReadWriteData(submitOrderLambda);
+    // Grant DynamoDB access for stock decrement on marketplace products
+    this.marketplaceProductsTable.grantReadWriteData(submitOrderLambda);
     // Grant EventBridge publish for order.created events
     props.eventBus.grantPutEventsTo(submitOrderLambda);
 
