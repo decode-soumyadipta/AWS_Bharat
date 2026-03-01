@@ -127,7 +127,9 @@ class CartUI {
     const escapedProductId = this.escapeCSS(item.productId);
     const htmlEscapedProductId = this.escapeHTML(item.productId);
     const htmlEscapedName = this.escapeHTML(item.name);
-    const htmlEscapedSeller = this.escapeHTML(item.seller);
+    // Handle seller as object {name, phone} or legacy string
+    const sellerName = typeof item.seller === 'object' && item.seller ? item.seller.name : item.seller;
+    const htmlEscapedSeller = this.escapeHTML(sellerName || 'Unknown');
     
     return `
       <div class="cart-item" data-product-id="${htmlEscapedProductId}">

@@ -17,6 +17,7 @@ let currentUser = null;
 let cart = null;
 let cartUI = null;
 let productCatalog = null;
+let cachedProducts = []; // Cache to prevent flicker on re-render
 
 /**
  * Initialize the application
@@ -227,8 +228,9 @@ function initializeMarketplaceComponents() {
   // Load products
   loadProducts();
 
-  // Set up polling for real-time updates (every 5 seconds)
-  setInterval(loadProducts, 5000);
+  // Set up polling for real-time updates (every 10 seconds)
+  // Uses smart diff to avoid image flickering
+  setInterval(loadProducts, 10000);
 }
 
 /**
@@ -240,15 +242,43 @@ async function loadProducts() {
     const data = await response.json();
 
     if (data.success && data.products) {
-      renderProducts(data.products);
+      // Smart diff: only re-render if products actually changed
+      const newIds = data.products.map(p => p.productId).sort().join(',');
+      const oldIds = cachedProducts.map(p => p.productId).sort().join(',');
+      const dataChanged = newIds !== oldIds || data.products.some((p, i) => {
+        const cached = cachedProducts.find(c => c.productId === p.productId);
+        return !cached || cached.price !== p.price || cached.quantity !== p.quantity || cached.name !== p.name;
+      });
+
+      if (dataChanged || cachedProducts.length === 0) {
+        // Update image URLs in cache without full re-render if only URLs changed
+        cachedProducts = data.products;
+        renderProducts(data.products);
+      } else {
+        // Just update presigned image URLs in existing DOM (no flicker)
+        data.products.forEach(p => {
+          if (p.imageUrl) {
+            const card = document.querySelector(`.product-card[data-product-id="${CSS.escape(p.productId)}"]`);
+            if (card) {
+              const img = card.querySelector('.product-image img');
+              if (img && img.src !== p.imageUrl) {
+                img.src = p.imageUrl;
+              }
+            }
+          }
+        });
+        cachedProducts = data.products;
+      }
     }
   } catch (error) {
     console.error('Failed to load products:', error);
-    document.getElementById('productsContainer').innerHTML = `
-      <div class="error-message">
-        Failed to load products. Please try again later.
-      </div>
-    `;
+    if (cachedProducts.length === 0) {
+      document.getElementById('productsContainer').innerHTML = `
+        <div class="error-message">
+          Failed to load products. Please try again later.
+        </div>
+      `;
+    }
   }
 }
 
@@ -312,13 +342,16 @@ function renderProducts(products) {
  * Handle add to cart
  */
 function handleAddToCart(e) {
-  const product = JSON.parse(e.target.dataset.product);
+  const btn = e.target.closest('.add-to-cart-btn');
+  if (!btn) return;
+  const product = JSON.parse(btn.dataset.product);
 
   cart.addItem(product.productId, 1, {
     name: product.name,
     price: product.price,
-    seller: product.seller.name,
+    seller: product.seller, // Store full seller object {name, phone} for order submission
     unit: product.unit,
+    imageUrl: product.imageUrl || '',
   });
 
   cart.saveToStorage();
@@ -331,15 +364,18 @@ function handleAddToCart(e) {
  * Handle buy now
  */
 function handleBuyNow(e) {
-  const product = JSON.parse(e.target.dataset.product);
+  const btn = e.target.closest('.buy-now-btn');
+  if (!btn) return;
+  const product = JSON.parse(btn.dataset.product);
 
   // Clear cart and add single product
   cart.clear();
   cart.addItem(product.productId, 1, {
     name: product.name,
     price: product.price,
-    seller: product.seller.name,
+    seller: product.seller, // Store full seller object {name, phone}
     unit: product.unit,
+    imageUrl: product.imageUrl || '',
   });
 
   cart.saveToStorage();

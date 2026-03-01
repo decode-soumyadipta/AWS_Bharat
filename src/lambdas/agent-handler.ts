@@ -24,6 +24,7 @@ import { sendImageMessage, sendInteractiveMessage } from './whatsapp-message-sen
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { eventBridgeClient } from '../config/aws-clients';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
+import { getCatalogItemsBySeller, deleteCatalogItem } from '../services/dynamodb-repository';
 
 /**
  * Agent handler event
@@ -444,6 +445,10 @@ async function executeAgentActions(
         }
         break;
 
+      case 'DELETE_PRODUCT':
+        await deleteProduct(phone, action.data?.productName, language);
+        break;
+
       default:
         console.log('⚠️ Unknown action type:', action.type);
     }
@@ -502,4 +507,67 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     : '🎉 Excellent! Your product has been successfully added. It\'s now ready for online sale!';
 
   await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
+}
+
+/**
+ * Delete product from catalog and marketplace
+ */
+async function deleteProduct(phone: string, productName: string, language: string): Promise<void> {
+  try {
+    // Find the product in seller's catalog
+    const catalogItems = await getCatalogItemsBySeller(phone);
+    
+    if (!catalogItems || catalogItems.length === 0) {
+      console.log('❌ No catalog items found for seller:', phone);
+      return;
+    }
+
+    // Find matching product by name (fuzzy match)
+    const normalizedName = (productName || '').toLowerCase().trim();
+    const matchingItem = catalogItems.find((item: any) => {
+      const itemName = (item.becknItem?.descriptor?.name || '').toLowerCase().trim();
+      return itemName.includes(normalizedName) || normalizedName.includes(itemName);
+    });
+
+    if (!matchingItem) {
+      console.log('❌ No matching product found:', productName);
+      const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
+      const notFoundMsg = lang === 'hi'
+        ? `❌ "${productName}" नाम का कोई उत्पाद नहीं मिला। कृपया सही नाम बताएं।`
+        : `❌ No product found with name "${productName}". Please provide the correct name.`;
+      await sendEnhancedAgentMessage(phone, notFoundMsg, language as any, 'voice');
+      return;
+    }
+
+    const itemId = matchingItem.itemId;
+    const displayName = matchingItem.becknItem?.descriptor?.name || productName;
+    console.log('🗑️ Deleting product:', { phone, itemId, productName: displayName });
+
+    // 1. Delete from main catalog (DynamoDB vyapar-vaani-data)
+    await deleteCatalogItem(phone, itemId);
+
+    // 2. Publish catalog.deleted event for marketplace sync
+    const eventBusName = process.env.EVENT_BUS_NAME;
+    if (eventBusName) {
+      await eventBridgeClient.send(new PutEventsCommand({
+        Entries: [{
+          Source: EVENT_SOURCES.INTERNAL,
+          DetailType: INTERNAL_EVENT_TYPES.CATALOG_DELETED,
+          Detail: JSON.stringify({
+            itemId,
+            sellerId: phone,
+            productName: displayName,
+            timestamp: new Date().toISOString(),
+          }),
+          EventBusName: eventBusName,
+        }],
+      }));
+      console.log('✅ Published catalog.deleted event for marketplace sync');
+    }
+
+    console.log('✅ Product deleted successfully:', itemId);
+  } catch (error: any) {
+    console.error('❌ Failed to delete product:', error);
+    throw error;
+  }
 }

@@ -36,6 +36,7 @@ export const INTERNAL_EVENT_TYPES = {
   ENTITIES_EXTRACTED: 'entities.extracted',
   CATALOG_BUILD_REQUESTED: 'catalog.build_requested',
   CATALOG_CREATED: 'catalog.created',
+  CATALOG_DELETED: 'catalog.deleted',
   IMAGE_ENHANCEMENT_COMPLETE: 'image.enhancement.complete',
   INVENTORY_UPDATED: 'inventory.updated',
   ORDER_STATE_CHANGED: 'order.state.changed',

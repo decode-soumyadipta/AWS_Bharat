@@ -52,7 +52,7 @@ export interface EnhancedAgentResponse {
 }
 
 export interface AgentAction {
-  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH';
+  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT';
   data?: any;
 }
 
@@ -566,12 +566,19 @@ Your responsibilities:
 
 🎙️ RESPONSE_MODE rules:
 - Use "voice" for: general chat, price queries, analytics, order queries, greetings, advice
-- Use "both" for: product catalog confirmations (CREATE_CATALOG), image requests (REQUEST_IMAGE), anything user needs to visually verify
+- Use "both" for: product catalog confirmations (CREATE_CATALOG), image requests (REQUEST_IMAGE), product deletion confirmations (DELETE_PRODUCT), anything user needs to visually verify
 - Use "text" for: sending links/URLs the user needs to click
+
+🗑️ DELETE_PRODUCT rules:
+- When user says "delete", "remove", "hatao", "nikalo", "हटाओ", "निकालो" a product → use DELETE_PRODUCT action
+- ALWAYS include DATA with {"productName": "<exact product name>"}
+- Confirm which product to delete if unclear
+- After deletion, reassure the user it's been removed from marketplace too
 
 📝 Response format:
 MESSAGE: [Your concise answer in ${langName}]
-ACTION: [NONE/STORE_DATA/REQUEST_IMAGE/CREATE_CATALOG/ASK_QUESTION]
+ACTION: [NONE/STORE_DATA/REQUEST_IMAGE/CREATE_CATALOG/ASK_QUESTION/DELETE_PRODUCT]
+DATA: {"productName": "<name of product to delete>"}
 RESPONSE_MODE: [voice/text/both]
 CONFIDENCE: [0-100]
 REASONING: [Brief reason]
@@ -661,13 +668,25 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
   }
 
   // Force text+voice for actions that need visual confirmation
-  if (action === 'CREATE_CATALOG' || action === 'REQUEST_IMAGE') {
+  if (action === 'CREATE_CATALOG' || action === 'REQUEST_IMAGE' || action === 'DELETE_PRODUCT') {
     responseMode = 'both';
+  }
+
+  // Parse DATA line for action parameters
+  let actionData: any = undefined;
+  for (const line of lines) {
+    if (line.startsWith('DATA:')) {
+      try {
+        actionData = JSON.parse(line.replace('DATA:', '').trim());
+      } catch (e) {
+        console.warn('Failed to parse DATA line:', line);
+      }
+    }
   }
 
   const actions: AgentAction[] = [];
   if (action !== 'NONE' && action !== 'WEB_SEARCH') {
-    actions.push({ type: action as any });
+    actions.push({ type: action as any, data: actionData });
   }
 
   return {

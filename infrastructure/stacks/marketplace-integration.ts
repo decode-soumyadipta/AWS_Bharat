@@ -112,7 +112,7 @@ export class MarketplaceIntegration extends Construct {
 
     // Grant permissions
     props.dataTable.grantReadData(catalogSyncLambda);
-    this.marketplaceProductsTable.grantWriteData(catalogSyncLambda);
+    this.marketplaceProductsTable.grantReadWriteData(catalogSyncLambda);
 
     // EventBridge rule to sync catalog items
     new events.Rule(this, 'CatalogSyncRule', {
@@ -120,6 +120,16 @@ export class MarketplaceIntegration extends Construct {
       eventPattern: {
         source: ['vyapar.vaani.internal'],
         detailType: ['catalog.created'],
+      },
+      targets: [new targets.LambdaFunction(catalogSyncLambda)],
+    });
+
+    // EventBridge rule to delete products from marketplace
+    new events.Rule(this, 'CatalogDeleteRule', {
+      eventBus: props.eventBus,
+      eventPattern: {
+        source: ['vyapar.vaani.internal'],
+        detailType: ['catalog.deleted'],
       },
       targets: [new targets.LambdaFunction(catalogSyncLambda)],
     });

@@ -8,7 +8,7 @@
  */
 
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
@@ -23,7 +23,15 @@ exports.handler = async (event) => {
   console.log('Catalog sync event:', JSON.stringify(event, null, 2));
 
   try {
+    const detailType = event['detail-type'] || event.detailType;
     const { detail } = event;
+
+    // Handle catalog.deleted events
+    if (detailType === 'catalog.deleted') {
+      return await handleCatalogDeleted(detail);
+    }
+
+    // Handle catalog.created events (default)
     const { catalogItem, sellerId, itemId } = detail;
 
     if (!catalogItem || !sellerId || !itemId) {
@@ -68,6 +76,68 @@ exports.handler = async (event) => {
     };
   }
 };
+
+/**
+ * Handle catalog.deleted event — remove product from marketplace
+ */
+async function handleCatalogDeleted(detail) {
+  const { itemId, sellerId, productName } = detail;
+  console.log('Handling catalog.deleted:', { itemId, sellerId, productName });
+
+  // The marketplace productId is the same as the itemId from catalog
+  // Try direct delete first
+  try {
+    const deleteCommand = new DeleteCommand({
+      TableName: MARKETPLACE_PRODUCTS_TABLE,
+      Key: { productId: itemId },
+    });
+    await docClient.send(deleteCommand);
+    console.log('Deleted product from marketplace by itemId:', itemId);
+  } catch (error) {
+    console.warn('Direct delete by itemId failed, trying scan:', error.message);
+  }
+
+  // Also scan for any products matching this seller + product name (in case productId differs)
+  try {
+    const scanCommand = new ScanCommand({
+      TableName: MARKETPLACE_PRODUCTS_TABLE,
+      FilterExpression: '#s.#p = :phone',
+      ExpressionAttributeNames: {
+        '#s': 'seller',
+        '#p': 'phone',
+      },
+      ExpressionAttributeValues: {
+        ':phone': sellerId,
+      },
+    });
+
+    const scanResult = await docClient.send(scanCommand);
+    const items = scanResult.Items || [];
+    
+    // Find and delete matching items by product name
+    for (const item of items) {
+      const nameLower = (item.name || '').toLowerCase();
+      const searchName = (productName || '').toLowerCase();
+      if (nameLower.includes(searchName) || searchName.includes(nameLower) || item.productId === itemId) {
+        await docClient.send(new DeleteCommand({
+          TableName: MARKETPLACE_PRODUCTS_TABLE,
+          Key: { productId: item.productId },
+        }));
+        console.log('Deleted marketplace product:', item.productId, item.name);
+      }
+    }
+  } catch (error) {
+    console.error('Scan-based deletion failed:', error);
+  }
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      success: true,
+      message: `Product ${productName || itemId} deleted from marketplace`,
+    }),
+  };
+}
 
 /**
  * Get seller information from Vyapar Vaani table
