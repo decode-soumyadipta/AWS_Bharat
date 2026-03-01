@@ -38,6 +38,9 @@ Thumbs.db
 
 # Environment
 .env
+
+# CDK outputs (account-specific)
+cdk-outputs.json
 .env.local
 .env.*.local
 
