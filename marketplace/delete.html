@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Deletion | Vyapar Vaani</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; color: #1a1a2e; background: #f8f9fa; }
+        .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 32px 0; text-align: center; }
+        .header img { width: 56px; height: 56px; border-radius: 50%; margin-bottom: 12px; }
+        .header h1 { font-size: 1.6rem; font-weight: 700; }
+        .header p { opacity: 0.8; font-size: 0.95rem; margin-top: 4px; }
+        .container { max-width: 660px; margin: 0 auto; padding: 32px 20px 60px; }
+        .card { background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 24px; }
+        .card h2 { font-size: 1.2rem; margin-bottom: 16px; color: #1a1a2e; }
+        .card p { font-size: 0.95rem; color: #444; margin-bottom: 12px; }
+        .method { background: #f0f7ff; border: 2px solid #bbdefb; border-radius: 10px; padding: 24px; margin: 16px 0; text-align: center; }
+        .method .icon { font-size: 2.2rem; margin-bottom: 8px; }
+        .method .label { font-size: 0.85rem; color: #666; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 6px; }
+        .method .value { font-size: 1.2rem; font-weight: 700; color: #1a1a2e; }
+        .method .note { font-size: 0.85rem; color: #666; margin-top: 6px; }
+        .method a { color: #1565c0; text-decoration: none; font-weight: 700; font-size: 1.2rem; }
+        .method a:hover { text-decoration: underline; }
+        .whatsapp { background: #e8f5e9; border-color: #a5d6a7; }
+        .whatsapp .value { color: #2e7d32; }
+        .steps { counter-reset: step; padding: 0; list-style: none; }
+        .steps li { position: relative; padding: 8px 0 8px 44px; font-size: 0.95rem; color: #333; }
+        .steps li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 6px; width: 30px; height: 30px; background: #1a1a2e; color: #fff; border-radius: 50%; font-size: 0.85rem; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+        .divider { text-align: center; color: #999; margin: 20px 0; font-size: 0.9rem; font-weight: 600; }
+        .data-list { background: #fff8e1; border-radius: 8px; padding: 16px 20px; margin-top: 16px; }
+        .data-list h3 { font-size: 0.95rem; color: #e65100; margin-bottom: 8px; }
+        .data-list ul { padding-left: 18px; }
+        .data-list li { font-size: 0.9rem; color: #555; margin-bottom: 4px; }
+        .timeline { background: #f3e5f5; border-radius: 8px; padding: 16px 20px; margin-top: 16px; text-align: center; }
+        .timeline .time { font-size: 1.5rem; font-weight: 700; color: #7b1fa2; }
+        .timeline .desc { font-size: 0.85rem; color: #666; }
+        .footer { text-align: center; padding: 24px; color: #999; font-size: 0.8rem; }
+        .hindi { background: #fafafa; border-radius: 10px; padding: 24px; margin-top: 20px; border: 1px solid #e0e0e0; }
+        .hindi h2 { font-size: 1.1rem; color: #1a1a2e; margin-bottom: 12px; }
+        .hindi p { font-size: 0.95rem; color: #444; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="logo.png" alt="Vyapar Vaani">
+        <h1>Data Deletion Request</h1>
+        <p>Vyapar Vaani — व्यापार वाणी</p>
+    </div>
+
+    <div class="container">
+        <div class="card">
+            <h2>How to Delete Your Data</h2>
+            <p>We respect your right to privacy. You can request complete deletion of all your personal data from Vyapar Vaani using either of the methods below:</p>
+
+            <div class="method whatsapp">
+                <div class="icon">💬</div>
+                <div class="label">Method 1 — WhatsApp</div>
+                <div class="value">Send "DELETE MY DATA" to</div>
+                <a href="https://wa.me/916291024334?text=DELETE%20MY%20DATA" target="_blank">+91 6291024334</a>
+                <div class="note">Opens WhatsApp with pre-filled message</div>
+            </div>
+
+            <div class="divider">— OR —</div>
+
+            <div class="method">
+                <div class="icon">📧</div>
+                <div class="label">Method 2 — Email</div>
+                <div class="value">Send a deletion request to</div>
+                <a href="mailto:soumyadiptadey7@gmail.com?subject=Data%20Deletion%20Request%20-%20Vyapar%20Vaani&body=I%20would%20like%20to%20request%20deletion%20of%20all%20my%20data%20from%20Vyapar%20Vaani.%0A%0AMy%20WhatsApp%20number%3A%20%0A%0AThank%20you.">soumyadiptadey7@gmail.com</a>
+                <div class="note">Include your WhatsApp phone number in the email</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Steps for Deletion</h2>
+            <ol class="steps">
+                <li>Send <strong>"DELETE MY DATA"</strong> via WhatsApp or email us with your phone number</li>
+                <li>We verify your identity using your registered phone number</li>
+                <li>All your data is permanently deleted from our systems</li>
+                <li>You receive a confirmation message once deletion is complete</li>
+            </ol>
+
+            <div class="data-list">
+                <h3>Data That Will Be Deleted:</h3>
+                <ul>
+                    <li>Your seller profile and business information</li>
+                    <li>KYC documents (PAN card photo)</li>
+                    <li>All product listings and images</li>
+                    <li>Order history</li>
+                    <li>Conversation history</li>
+                    <li>UPI ID and payment information</li>
+                    <li>Voice message transcriptions</li>
+                </ul>
+            </div>
+
+            <div class="timeline">
+                <div class="time">Within 30 Days</div>
+                <div class="desc">Your data will be completely removed from all our systems</div>
+            </div>
+        </div>
+
+        <div class="hindi">
+            <h2>🇮🇳 हिन्दी में निर्देश</h2>
+            <p>अपना सारा डेटा हटाने के लिए:</p>
+            <p>📱 <strong>WhatsApp:</strong> <a href="https://wa.me/916291024334?text=DELETE%20MY%20DATA">+91 6291024334</a> पर <strong>"DELETE MY DATA"</strong> भेजें</p>
+            <p>📧 <strong>ईमेल:</strong> <a href="mailto:soumyadiptadey7@gmail.com">soumyadiptadey7@gmail.com</a> पर अपने फोन नंबर के साथ अनुरोध भेजें</p>
+            <p style="margin-top: 12px; color: #666;">आपका डेटा 30 दिनों के भीतर पूरी तरह से हटा दिया जाएगा।</p>
+        </div>
+    </div>
+
+    <div class="footer">
+        © 2026 Vyapar Vaani. All rights reserved.<br>
+        <a href="privacy.html" style="color: #666;">Privacy Policy</a> · <a href="terms.html" style="color: #666;">Terms of Service</a>
+    </div>
+</body>
+</html>

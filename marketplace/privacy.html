@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy | Vyapar Vaani</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.7; color: #1a1a2e; background: #f8f9fa; }
+        .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 32px 0; text-align: center; }
+        .header img { width: 56px; height: 56px; border-radius: 50%; margin-bottom: 12px; }
+        .header h1 { font-size: 1.6rem; font-weight: 700; }
+        .header p { opacity: 0.8; font-size: 0.95rem; margin-top: 4px; }
+        .container { max-width: 760px; margin: 0 auto; padding: 32px 20px 60px; }
+        .lang-toggle { text-align: center; margin-bottom: 28px; }
+        .lang-toggle button { padding: 8px 20px; border: 2px solid #1a1a2e; background: #fff; color: #1a1a2e; font-size: 0.9rem; cursor: pointer; transition: all 0.2s; }
+        .lang-toggle button.active { background: #1a1a2e; color: #fff; }
+        .lang-toggle button:first-child { border-radius: 6px 0 0 6px; }
+        .lang-toggle button:last-child { border-radius: 0 6px 6px 0; }
+        .section { background: #fff; border-radius: 10px; padding: 24px 28px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .section h2 { font-size: 1.15rem; color: #1a1a2e; margin-bottom: 12px; border-bottom: 2px solid #e8f5e9; padding-bottom: 8px; }
+        .section p, .section li { font-size: 0.95rem; color: #333; }
+        .section ul { padding-left: 20px; margin-top: 8px; }
+        .section li { margin-bottom: 6px; }
+        .badge { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 2px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; margin-bottom: 8px; }
+        .effective { text-align: center; color: #666; font-size: 0.85rem; margin-top: 24px; }
+        .footer { text-align: center; padding: 24px; color: #999; font-size: 0.8rem; }
+        [lang="hi"] { display: none; }
+        body.hindi [lang="en"] { display: none; }
+        body.hindi [lang="hi"] { display: block; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="logo.png" alt="Vyapar Vaani">
+        <h1 lang="en">Privacy Policy</h1>
+        <h1 lang="hi">गोपनीयता नीति</h1>
+        <p>Vyapar Vaani — व्यापार वाणी</p>
+    </div>
+
+    <div class="container">
+        <div class="lang-toggle">
+            <button class="active" onclick="setLang('en')">English</button>
+            <button onclick="setLang('hi')">हिन्दी</button>
+        </div>
+
+        <!-- English -->
+        <div lang="en">
+            <div class="section">
+                <span class="badge">Last Updated: March 2026</span>
+                <h2>1. Introduction</h2>
+                <p>Vyapar Vaani ("we", "our", "platform") is a voice-first WhatsApp commerce platform that enables rural Indian merchants to list and sell products online. This Privacy Policy explains how we collect, use, store, and protect your personal data when you use our services via WhatsApp Business API and our web marketplace.</p>
+            </div>
+
+            <div class="section">
+                <h2>2. Data We Collect</h2>
+                <p>We collect the following information when you interact with our platform:</p>
+                <ul>
+                    <li><strong>Phone Number</strong> — Your WhatsApp phone number, used as your primary identifier</li>
+                    <li><strong>Voice Messages</strong> — Audio recordings you send via WhatsApp for product listing (transcribed and then deleted within 24 hours)</li>
+                    <li><strong>Product Information</strong> — Product names, prices, quantities, descriptions, and images you provide</li>
+                    <li><strong>PAN Card (for KYC)</strong> — PAN card photo for identity verification of sellers, processed via Amazon Textract OCR; original images stored securely in encrypted S3 buckets</li>
+                    <li><strong>Business Information</strong> — Seller name, business name, UPI ID (if provided for payments)</li>
+                    <li><strong>Order Data</strong> — Order details, delivery addresses, payment information for buyers</li>
+                    <li><strong>Conversation History</strong> — Chat interactions for contextual AI responses (retained for 30 days)</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>3. How We Use Your Data</h2>
+                <ul>
+                    <li>To verify seller identity via KYC (PAN card verification)</li>
+                    <li>To transcribe voice messages and extract product information using AI</li>
+                    <li>To create and manage your product catalog on the marketplace</li>
+                    <li>To process and manage buyer orders</li>
+                    <li>To send order notifications via WhatsApp</li>
+                    <li>To provide personalized voice responses in your preferred language</li>
+                    <li>To improve platform experience through conversation context</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>4. Data Storage & Security</h2>
+                <p>All data is stored on <strong>Amazon Web Services (AWS)</strong> infrastructure in the <strong>us-east-1 (N. Virginia)</strong> region:</p>
+                <ul>
+                    <li><strong>Amazon DynamoDB</strong> — User profiles, product catalogs, orders, conversation history</li>
+                    <li><strong>Amazon S3</strong> — Product images, KYC documents (encrypted at rest using AWS KMS)</li>
+                    <li><strong>AWS KMS</strong> — All sensitive data encrypted with customer-managed encryption keys</li>
+                </ul>
+                <p style="margin-top: 12px;">We implement industry-standard security measures including encryption at rest and in transit (TLS 1.2+), IAM-based access controls, and regular security audits.</p>
+            </div>
+
+            <div class="section">
+                <h2>5. Third-Party Services</h2>
+                <p>We use the following third-party services to operate the platform:</p>
+                <ul>
+                    <li><strong>WhatsApp Business API (Meta)</strong> — For messaging between sellers and the platform</li>
+                    <li><strong>Amazon Bedrock AI</strong> — For voice transcription, product description generation, and image enhancement</li>
+                    <li><strong>Amazon Textract</strong> — For PAN card OCR during KYC</li>
+                    <li><strong>Amazon Rekognition</strong> — For image quality analysis</li>
+                </ul>
+                <p style="margin-top: 12px;"><strong>We do not sell, rent, or share your personal data with any third parties for marketing or advertising purposes.</strong></p>
+            </div>
+
+            <div class="section">
+                <h2>6. WhatsApp Business API Usage</h2>
+                <p>Our platform communicates with you through the <strong>WhatsApp Business API</strong> operated by Meta Platforms, Inc. Messages sent through WhatsApp are subject to <a href="https://www.whatsapp.com/legal/privacy-policy" target="_blank">WhatsApp's Privacy Policy</a>. We access only the data you explicitly send to our business number.</p>
+            </div>
+
+            <div class="section">
+                <h2>7. Data Retention</h2>
+                <ul>
+                    <li><strong>Voice recordings</strong> — Deleted within 24 hours after transcription</li>
+                    <li><strong>Conversation history</strong> — Retained for 30 days</li>
+                    <li><strong>Product data</strong> — Retained as long as your account is active</li>
+                    <li><strong>KYC documents</strong> — Retained as required by Indian regulations</li>
+                    <li><strong>Order history</strong> — Retained for 1 year for dispute resolution</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>8. Your Rights</h2>
+                <ul>
+                    <li>Request access to your personal data</li>
+                    <li>Request correction of inaccurate data</li>
+                    <li>Request deletion of your data (see <a href="delete.html">Data Deletion</a>)</li>
+                    <li>Withdraw consent at any time</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>9. Contact Us</h2>
+                <p>For privacy-related queries, contact us at:</p>
+                <ul>
+                    <li><strong>Email:</strong> soumyadiptadey7@gmail.com</li>
+                    <li><strong>WhatsApp:</strong> +91 6291024334</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Hindi -->
+        <div lang="hi">
+            <div class="section">
+                <span class="badge">अंतिम अपडेट: मार्च 2026</span>
+                <h2>1. परिचय</h2>
+                <p>व्यापार वाणी ("हम", "हमारा", "प्लेटफ़ॉर्म") एक वॉइस-फर्स्ट WhatsApp कॉमर्स प्लेटफ़ॉर्म है जो ग्रामीण भारतीय व्यापारियों को ऑनलाइन उत्पाद बेचने में सक्षम बनाता है। यह गोपनीयता नीति बताती है कि जब आप WhatsApp Business API और हमारे वेब मार्केटप्लेस का उपयोग करते हैं तो हम आपके व्यक्तिगत डेटा को कैसे एकत्र, उपयोग, संग्रहीत और सुरक्षित करते हैं।</p>
+            </div>
+
+            <div class="section">
+                <h2>2. हम कौन सा डेटा एकत्र करते हैं</h2>
+                <ul>
+                    <li><strong>फ़ोन नंबर</strong> — आपका WhatsApp फ़ोन नंबर, आपकी प्राथमिक पहचान के रूप में</li>
+                    <li><strong>वॉइस मैसेज</strong> — उत्पाद सूचीकरण के लिए WhatsApp पर भेजी गई ऑडियो रिकॉर्डिंग (24 घंटे के भीतर हटा दी जाती हैं)</li>
+                    <li><strong>उत्पाद जानकारी</strong> — उत्पाद का नाम, कीमत, मात्रा, विवरण और तस्वीरें</li>
+                    <li><strong>पैन कार्ड (KYC के लिए)</strong> — विक्रेता की पहचान सत्यापन के लिए पैन कार्ड फोटो</li>
+                    <li><strong>व्यापार जानकारी</strong> — विक्रेता का नाम, व्यापार का नाम, UPI ID</li>
+                    <li><strong>ऑर्डर डेटा</strong> — ऑर्डर विवरण, डिलीवरी पता, भुगतान जानकारी</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>3. डेटा का उपयोग</h2>
+                <ul>
+                    <li>KYC के माध्यम से विक्रेता की पहचान सत्यापित करना</li>
+                    <li>वॉइस मैसेज को AI का उपयोग करके टेक्स्ट में बदलना</li>
+                    <li>मार्केटप्लेस पर उत्पाद कैटलॉग बनाना और प्रबंधित करना</li>
+                    <li>खरीदार के ऑर्डर को संसाधित करना</li>
+                    <li>WhatsApp के माध्यम से ऑर्डर सूचनाएं भेजना</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>4. डेटा संग्रहण और सुरक्षा</h2>
+                <p>सभी डेटा <strong>Amazon Web Services (AWS)</strong> पर <strong>us-east-1 (उत्तरी वर्जीनिया)</strong> क्षेत्र में संग्रहीत है:</p>
+                <ul>
+                    <li><strong>Amazon DynamoDB</strong> — उपयोगकर्ता प्रोफ़ाइल, उत्पाद कैटलॉग, ऑर्डर</li>
+                    <li><strong>Amazon S3</strong> — उत्पाद तस्वीरें, KYC दस्तावेज़ (AWS KMS से एन्क्रिप्टेड)</li>
+                </ul>
+                <p style="margin-top: 12px;">हम एन्क्रिप्शन और एक्सेस कंट्रोल सहित उद्योग-मानक सुरक्षा उपाय लागू करते हैं।</p>
+            </div>
+
+            <div class="section">
+                <h2>5. तृतीय-पक्ष सेवाएं</h2>
+                <p><strong>हम आपका व्यक्तिगत डेटा किसी भी तृतीय पक्ष को विपणन या विज्ञापन उद्देश्यों के लिए नहीं बेचते, किराए पर नहीं देते या साझा नहीं करते हैं।</strong></p>
+            </div>
+
+            <div class="section">
+                <h2>6. आपके अधिकार</h2>
+                <ul>
+                    <li>अपने डेटा तक पहुंच का अनुरोध करें</li>
+                    <li>गलत डेटा में सुधार का अनुरोध करें</li>
+                    <li>अपने डेटा को हटाने का अनुरोध करें (<a href="delete.html">डेटा हटाना</a>)</li>
+                    <li>किसी भी समय सहमति वापस लें</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>7. संपर्क करें</h2>
+                <p><strong>ईमेल:</strong> soumyadiptadey7@gmail.com</p>
+                <p><strong>WhatsApp:</strong> +91 6291024334</p>
+            </div>
+        </div>
+
+        <p class="effective" lang="en">Effective Date: March 1, 2026</p>
+        <p class="effective" lang="hi">प्रभावी तिथि: 1 मार्च 2026</p>
+    </div>
+
+    <div class="footer">© 2026 Vyapar Vaani. All rights reserved.</div>
+
+    <script>
+        function setLang(lang) {
+            document.body.className = lang === 'hi' ? 'hindi' : '';
+            document.querySelectorAll('.lang-toggle button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
