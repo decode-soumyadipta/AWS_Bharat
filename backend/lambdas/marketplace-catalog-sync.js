@@ -318,6 +318,22 @@ async function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) 
       phone: sellerInfo.phone,
       upiId: sellerInfo.upiId || null,
     },
+    // ONDC Beckn Protocol metadata
+    ondcDomain: catalogItem.ondcDomain || 'ONDC:RET10',
+    fulfillmentType: catalogItem.fulfillment_id ? 'Delivery' : 'Delivery',
+    returnable: catalogItem['@ondc/org/returnable'] ?? false,
+    cancellable: catalogItem['@ondc/org/cancellable'] ?? true,
+    codAvailable: catalogItem['@ondc/org/available_on_cod'] ?? true,
+    provider: {
+      id: sellerInfo.phone,
+      descriptor: { name: sellerInfo.name },
+    },
+    beckn: {
+      categoryId: catalogItem.category_id,
+      priceValue: catalogItem.price.value,
+      priceCurrency: catalogItem.price.currency || 'INR',
+      quantityUnitized: catalogItem.quantity.unitized || null,
+    },
     status: 'ACTIVE',
     createdAt: now,
     updatedAt: now,

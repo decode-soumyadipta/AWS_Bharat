@@ -151,6 +151,10 @@ export const handler = async (
     console.log('Step 2.5: Publishing catalog.created event...');
     await publishCatalogCreatedEvent(catalogItem, sellerId, itemId);
 
+    // Step 2.6: Broadcast catalog to ONDC network via on_search
+    console.log('Step 2.6: Broadcasting catalog to ONDC network...');
+    const broadcastResult = await broadcastToONDC(catalogItem, sellerId);
+
     // Step 3: Send confirmation message to seller
     console.log('Step 3: Sending confirmation message to seller...');
     const confirmationSent = await sendConfirmationToSeller(
@@ -162,7 +166,7 @@ export const handler = async (
     return {
       success: true,
       itemId,
-      broadcast: false,
+      broadcast: broadcastResult,
       confirmationSent,
     };
   } catch (error: any) {
@@ -177,6 +181,90 @@ export const handler = async (
     };
   }
 };
+
+/**
+ * Broadcast catalog to ONDC network by publishing an on_search event
+ * This makes the catalog item discoverable by BAPs on the ONDC network
+ */
+async function broadcastToONDC(
+  catalogItem: BecknCatalogItem,
+  sellerId: string
+): Promise<boolean> {
+  const eventBusName = process.env.EVENT_BUS_NAME;
+  const networkParticipantId = process.env.NETWORK_PARTICIPANT_ID || 'vyapar-vaani.ondc.in';
+  const bppBaseUrl = process.env.BPP_BASE_URL || 'https://api.vyapar-vaani.ondc.in';
+
+  if (!eventBusName) {
+    console.warn('EVENT_BUS_NAME not configured — skipping ONDC broadcast');
+    return false;
+  }
+
+  try {
+    const { PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
+    const { eventBridgeClient } = await import('../config/aws-clients');
+
+    // Construct Beckn on_search payload for ONDC broadcast
+    const onSearchPayload = {
+      context: {
+        domain: catalogItem.category_id?.startsWith('RET') ? `ONDC:${catalogItem.category_id}` : 'ONDC:RET10',
+        action: 'on_search',
+        core_version: '1.2.0',
+        bpp_id: networkParticipantId,
+        bpp_uri: bppBaseUrl,
+        country: 'IND',
+        city: 'std:*',
+        timestamp: new Date().toISOString(),
+        message_id: randomUUID(),
+        transaction_id: randomUUID(),
+      },
+      message: {
+        catalog: {
+          'bpp/providers': [{
+            id: sellerId,
+            items: [{
+              id: catalogItem.id,
+              descriptor: catalogItem.descriptor,
+              price: catalogItem.price,
+              quantity: catalogItem.quantity,
+              category_id: catalogItem.category_id,
+              fulfillment_id: catalogItem.fulfillment_id || 'F1',
+              '@ondc/org/returnable': false,
+              '@ondc/org/cancellable': true,
+              '@ondc/org/available_on_cod': true,
+              '@ondc/org/time_to_ship': 'P1D',
+            }],
+          }],
+        },
+      },
+    };
+
+    const command = new PutEventsCommand({
+      Entries: [{
+        Source: 'vyapar.vaani.ondc',
+        DetailType: 'catalog.broadcast.on_search',
+        Detail: JSON.stringify({
+          sellerId,
+          itemId: catalogItem.id,
+          onSearchPayload,
+          timestamp: Date.now(),
+        }),
+        EventBusName: eventBusName,
+      }],
+    });
+
+    const response = await eventBridgeClient.send(command);
+    console.log('ONDC catalog broadcast published:', {
+      itemId: catalogItem.id,
+      eventId: response.Entries?.[0]?.EventId,
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Failed to broadcast catalog to ONDC:', error);
+    // Don't throw — ONDC broadcast failure shouldn't block catalog creation
+    return false;
+  }
+}
 
 /**
  * Publish catalog.created event to EventBridge for marketplace sync

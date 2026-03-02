@@ -197,7 +197,15 @@ function showMarketplace() {
     </div>
 
     <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>`;
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- ONDC Network Footer -->
+    <footer class="ondc-footer">
+      <div class="ondc-footer-inner">
+        <span>🔗 Powered by <strong>ONDC Network</strong> · Beckn Protocol v1.2.0</span>
+        <span class="ondc-badge-footer">Open Network for Digital Commerce</span>
+      </div>
+    </footer>`;
 
   initComponents();
 }
@@ -294,6 +302,8 @@ function renderProducts(products) {
     const qBadge = qs && qs.badge && (qs.badge === 'excellent' || qs.badge === 'good')
       ? `<span class="badge-sm badge-quality">${qs.badge === 'excellent' ? '⭐ Top Quality' : '✅ Good'}</span>` : '';
     const uBadge = p.seller && p.seller.upiId ? '<span class="badge-sm badge-upi">💳 UPI</span>' : '';
+    const ondcBadge = p.ondcDomain ? '<span class="badge-sm badge-ondc">🔗 ONDC</span>' : '';
+    const codBadge = p.codAvailable ? '<span class="badge-sm badge-cod">🏠 COD</span>' : '';
     const outOfStock = p.quantity <= 0;
     const lowStock = p.quantity > 0 && p.quantity <= 5;
     const stockClass = outOfStock ? 'out' : (lowStock ? 'low' : '');
@@ -302,7 +312,7 @@ function renderProducts(products) {
       <div class="product-card" data-pid="${p.productId}" data-cat="${p.category || ''}">
         <div class="card-img">
           ${img}
-          <div class="badges">${qBadge}${uBadge}${outOfStock ? '<span class="badge-sm badge-stock">Sold Out</span>' : ''}</div>
+          <div class="badges">${qBadge}${uBadge}${ondcBadge}${codBadge}${outOfStock ? '<span class="badge-sm badge-stock">Sold Out</span>' : ''}</div>
         </div>
         <div class="card-body">
           <div class="p-name">${p.name}</div>

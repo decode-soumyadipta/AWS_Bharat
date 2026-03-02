@@ -23,3 +23,6 @@ export * from './order';
 
 // Voice Transcription Models
 export * from './voice';
+
+// Beckn Protocol v1.2.0 Types (ONDC)
+export * from './beckn-protocol';

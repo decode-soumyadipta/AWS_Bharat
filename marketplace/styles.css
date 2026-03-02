@@ -285,6 +285,8 @@ body {
 .badge-sm { font-size: 0.68rem; font-weight: 700; padding: 3px 8px; border-radius: 4px; display: inline-block; }
 .badge-quality { background: #FFF8E1; color: #F57F17; }
 .badge-upi { background: #E8F5E9; color: #2E7D32; }
+.badge-ondc { background: #E3F2FD; color: #1565C0; }
+.badge-cod { background: #FFF3E0; color: #E65100; }
 .badge-stock { background: var(--danger-bg); color: var(--danger); }
 
 .product-card .card-body {
@@ -824,4 +826,32 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ===== ONDC FOOTER ===== */
+.ondc-footer {
+  background: linear-gradient(135deg, #1565C0, #0D47A1);
+  color: #fff;
+  text-align: center;
+  padding: 10px 16px;
+  font-size: 0.78rem;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+}
+.ondc-footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ondc-badge-footer {
+  background: rgba(255,255,255,0.2);
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.7rem;
+}
 

@@ -471,6 +471,34 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
+    // ========================================
+    // BPP Adapter Lambda — ONDC Beckn Protocol Gateway
+    // ========================================
+    const bppAdapterLambda = new lambda.Function(this, 'BPPAdapterLambda', {
+      functionName: 'vyapar-vaani-bpp-adapter',
+      description: 'Beckn Protocol Provider (BPP) adapter for ONDC network',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/bpp-adapter.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        KYC_BUCKET_NAME: this.kycBucket.bucketName,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        NETWORK_PARTICIPANT_ID: 'vyapar-vaani.ondc.in',
+        BPP_BASE_URL: 'https://api.vyapar-vaani.ondc.in',
+        ONDC_REGISTRY_URL: 'https://registry.ondc.org/api/v1',
+        VERIFY_BECKN_SIGNATURES: 'false', // Enable in production after ONDC onboarding
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // BPP Adapter API Gateway routes — added after HTTP API is created (see below)
+
     // WhatsApp Webhook Handler Lambda
     const webhookLambdaRole = new iam.Role(this, 'WebhookLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
@@ -537,6 +565,14 @@ export class VyaparVaaniStack extends cdk.Stack {
       path: '/whatsapp/webhook',
       methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
       integration: webhookIntegration,
+    });
+
+    // Add BPP Adapter routes for Beckn protocol
+    const bppIntegration = new HttpLambdaIntegration('BPPAdapterIntegration', bppAdapterLambda);
+    this.httpApi.addRoutes({
+      path: '/beckn/{action}',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: bppIntegration,
     });
 
     // EventBridge Rules to wire up the complete flow
@@ -624,6 +660,43 @@ export class VyaparVaaniStack extends cdk.Stack {
         detailType: ['catalog.created'],
       },
       targets: [new targets.LambdaFunction(catalogStorageBroadcastLambda)],
+    });
+
+    // ========================================
+    // ONDC Event Rules — Route ONDC events to BPP Adapter
+    // ========================================
+
+    // Rule: ONDC order events → BPP Adapter for Beckn protocol handling
+    new events.Rule(this, 'ONDCOrderEventsRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-ondc-order-events',
+      description: 'Routes ONDC order lifecycle events to BPP adapter',
+      eventPattern: {
+        source: [EVENT_SOURCES.ONDC],
+        detailType: [
+          'order.confirm.received',
+          'order.status.requested',
+          'order.cancel.requested',
+          'order.update.requested',
+        ],
+      },
+      targets: [new targets.LambdaFunction(bppAdapterLambda)],
+    });
+
+    // Rule: ONDC search events → BPP Adapter
+    new events.Rule(this, 'ONDCSearchEventsRule', {
+      eventBus: this.eventBus,
+      ruleName: 'vyapar-vaani-ondc-search-events',
+      description: 'Routes ONDC search/select/init events to BPP adapter',
+      eventPattern: {
+        source: [EVENT_SOURCES.ONDC],
+        detailType: [
+          'catalog.search.received',
+          'order.select.received',
+          'order.init.received',
+        ],
+      },
+      targets: [new targets.LambdaFunction(bppAdapterLambda)],
     });
 
     // Step Functions State Machine for KYC Processing
@@ -1145,6 +1218,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       value: marketplace.marketplaceApi.url,
       description: 'Marketplace API URL',
       exportName: 'MarketplaceApiUrl',
+    });
+
+    new cdk.CfnOutput(this, 'BPPAdapterUrl', {
+      value: `${this.httpApi.url}beckn/{action}`,
+      description: 'BPP Adapter Beckn Protocol endpoint (POST /beckn/{action})',
+      exportName: 'VyaparVaaniBPPAdapterUrl',
     });
   }
 }

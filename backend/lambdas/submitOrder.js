@@ -331,6 +331,21 @@ async function persistOrder(orderId, sellerPhone, orderData, paymentMethod) {
         sellerId: sellerPhone,
         buyerAppId: 'marketplace-web',
         transactionId: randomUUID(),
+        // ONDC Beckn Protocol fields
+        becknContext: {
+            domain: 'ONDC:RET10',
+            action: 'confirm',
+            core_version: '1.2.0',
+            bap_id: 'marketplace-web.vyapar-vaani.ondc.in',
+            bap_uri: 'https://marketplace.vyapar-vaani.ondc.in',
+            bpp_id: process.env.NETWORK_PARTICIPANT_ID || 'vyapar-vaani.ondc.in',
+            bpp_uri: process.env.BPP_BASE_URL || 'https://api.vyapar-vaani.ondc.in',
+            transaction_id: randomUUID(),
+            message_id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            country: 'IND',
+            city: 'std:*',
+        },
         items: orderData.items.map(item => ({
             itemId: item.productId || item.name,
             name: item.name,
@@ -341,6 +356,7 @@ async function persistOrder(orderId, sellerPhone, orderData, paymentMethod) {
         })),
         fulfillment: {
             type: 'Delivery',
+            state: { descriptor: { code: 'Pending' } },
             address: {
                 name: orderData.buyer.address.name || orderData.buyer.name,
                 building: '',
@@ -361,7 +377,14 @@ async function persistOrder(orderId, sellerPhone, orderData, paymentMethod) {
             method: paymentMethod,
             upiTransactionRef: orderData.upiTransactionRef || null,
             upiId: orderData.sellerUpiId || null,
+            // Beckn payment params
+            params: {
+                currency: 'INR',
+                amount: String(orderData.totalAmount),
+            },
         },
+        // Beckn order state
+        state: 'Created',
         status: 'PENDING',
         timeline: [{
             status: 'PENDING',

@@ -83,6 +83,22 @@ exports.handler = async (event) => {
             products.map(product => refreshImageUrl(product))
         );
 
+        // Enrich products with ONDC-compliant metadata
+        const ondcProducts = refreshedProducts.map(p => ({
+            ...p,
+            // ONDC Beckn fields (pass-through from catalog sync)
+            ondcDomain: p.ondcDomain || 'ONDC:RET10',
+            fulfillmentType: p.fulfillmentType || 'Delivery',
+            returnable: p.returnable ?? false,
+            cancellable: p.cancellable ?? true,
+            codAvailable: p.codAvailable ?? true,
+            // Beckn-compliant provider info
+            provider: p.provider || {
+                id: p.seller?.phone || '',
+                descriptor: { name: p.seller?.name || '' },
+            },
+        }));
+
         return {
             statusCode: 200,
             headers: {
@@ -93,7 +109,12 @@ exports.handler = async (event) => {
             },
             body: JSON.stringify({
                 success: true,
-                products: refreshedProducts
+                products: ondcProducts,
+                network: {
+                    protocol: 'Beckn v1.2.0',
+                    registry: 'ONDC',
+                    bppId: process.env.NETWORK_PARTICIPANT_ID || 'vyapar-vaani.ondc.in',
+                },
             })
         };
     } catch (error) {
