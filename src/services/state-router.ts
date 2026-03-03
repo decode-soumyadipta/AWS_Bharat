@@ -24,23 +24,30 @@ export interface RouteDecision {
  */
 const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', HandlerType>> = {
   NEW: {
-    image: 'KYC',
-    text: 'ERROR',
-    audio: 'ERROR',
-    button_reply: 'ERROR',
-    default: 'ERROR',
+    image: 'KYC',     // PAN card photo → KYC handler
+    text: 'AGENT',    // "hi", any text → agent for warm onboarding
+    audio: 'AGENT',   // Voice message → agent for warm onboarding
+    button_reply: 'AGENT',
+    default: 'AGENT',
   },
   KYC_PENDING: {
-    image: 'KYC',
-    text: 'ERROR',
-    audio: 'ERROR',
-    button_reply: 'ERROR',
-    default: 'ERROR',
+    image: 'KYC',     // Retry PAN card photo → KYC handler
+    text: 'AGENT',    // Questions during KYC → agent handles naturally
+    audio: 'AGENT',   // Voice during KYC → agent handles naturally
+    button_reply: 'AGENT',
+    default: 'AGENT',
   },
   KYC_VERIFIED: {
-    audio: 'AGENT',  // Route to AI agent for UPI registration, product voice, etc.
-    text: 'AGENT',   // Route to AI agent for UPI ID text, questions, etc.
-    image: 'AGENT',  // Route to AI agent for product photos
+    audio: 'AGENT',
+    text: 'AGENT',
+    image: 'AGENT',
+    button_reply: 'AGENT',
+    default: 'AGENT',
+  },
+  GUEST_ACTIVE: {
+    audio: 'AGENT',   // Guest users get full agent access
+    text: 'AGENT',
+    image: 'AGENT',   // Can add products, or send PAN later
     button_reply: 'AGENT',
     default: 'AGENT',
   },
@@ -91,14 +98,19 @@ function generateGuidanceMessage(
 
   const guidance: Record<UserStateType, Record<SupportedLanguage, string>> = {
     NEW: {
-      'hi-IN': 'कृपया अपने पैन कार्ड की फोटो भेजें।',
-      'mr-IN': 'कृपया तुमच्या पॅन कार्डचा फोटो पाठवा.',
-      'en-IN': 'Please send your PAN card photo.',
+      'hi-IN': 'नमस्ते! Vyapar Vaani में आपका स्वागत है। कुछ भी पूछिए या बताइए।',
+      'mr-IN': 'नमस्कार! Vyapar Vaani मध्ये आपले स्वागत आहे.',
+      'en-IN': 'Hello! Welcome to Vyapar Vaani. Ask me anything.',
     },
     KYC_PENDING: {
-      'hi-IN': 'कृपया अपने पैन कार्ड की फोटो भेजें।',
-      'mr-IN': 'कृपया तुमच्या पॅन कार्डचा फोटो पाठवा.',
-      'en-IN': 'Please send your PAN card photo.',
+      'hi-IN': 'PAN card की फोटो भेज दीजिए, या कुछ और पूछिए।',
+      'mr-IN': 'पॅन कार्डचा फोटो पाठवा, किंवा काहीही विचारा.',
+      'en-IN': 'Send your PAN card photo, or ask me anything.',
+    },
+    GUEST_ACTIVE: {
+      'hi-IN': 'बताइए क्या करना है? Product add करें, price check करें, या कुछ और।',
+      'mr-IN': 'सांगा काय करायचे आहे? उत्पादन जोडा, किंमत तपासा.',
+      'en-IN': 'What would you like to do? Add products, check prices, or anything else.',
     },
     KYC_VERIFIED: {
       'hi-IN': 'कृपया उत्पाद के बारे में वॉइस मैसेज भेजें।',
@@ -178,9 +190,10 @@ export function isValidTransition(
   newState: UserStateType
 ): boolean {
   const validTransitions: Record<UserStateType, UserStateType[]> = {
-    NEW: ['KYC_PENDING'],
-    KYC_PENDING: ['KYC_VERIFIED', 'NEW'],
+    NEW: ['KYC_PENDING', 'KYC_VERIFIED', 'GUEST_ACTIVE'],
+    KYC_PENDING: ['KYC_VERIFIED', 'NEW', 'GUEST_ACTIVE'],
     KYC_VERIFIED: ['VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING', 'ACTIVE'],
+    GUEST_ACTIVE: ['KYC_PENDING', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING', 'ACTIVE'],
     VOICE_RECEIVED: ['IMAGE_PENDING', 'VOICE_RECEIVED', 'CONFIRMATION_PENDING'],
     IMAGE_PENDING: ['CONFIRMATION_PENDING'],
     CONFIRMATION_PENDING: ['ACTIVE', 'VOICE_RECEIVED'],

@@ -916,7 +916,7 @@ async function executeAgentActions(
               // All text data present, need image → IMAGE_PENDING
               console.log('📸 All fields present, moving to IMAGE_PENDING');
               await updateUserState(phone, 'IMAGE_PENDING');
-            } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE') {
+            } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE' || currentState === 'GUEST_ACTIVE') {
               // Partial data, move to VOICE_RECEIVED so user can provide more info
               console.log('📝 Partial data, moving to VOICE_RECEIVED');
               await updateUserState(phone, 'VOICE_RECEIVED');
@@ -930,6 +930,43 @@ async function executeAgentActions(
 
         case 'REGISTER_UPI':
           await registerUpi(phone, action.data?.upiId, language);
+          break;
+
+        case 'SKIP_KYC':
+          // User chose to proceed as guest — transition to GUEST_ACTIVE
+          console.log('Guest mode: skipping KYC for', phone);
+          await updateUserState(phone, 'GUEST_ACTIVE');
+          // Create minimal seller profile so products can be stored
+          try {
+            const { createSellerProfile, getSellerByPhone } = await import('../services/dynamodb-repository');
+            const existingSeller = await getSellerByPhone(phone);
+            if (!existingSeller) {
+              const { randomUUID } = await import('crypto');
+              const sellerId = randomUUID();
+              const now = Date.now();
+              await createSellerProfile({
+                PK: `SELLER#${sellerId}`,
+                SK: 'PROFILE',
+                GSI1PK: phone,
+                GSI1SK: 'PROFILE',
+                entityType: 'SELLER_PROFILE',
+                sellerId,
+                phone,
+                name: '',
+                language: language.split('-')[0] as 'hi' | 'mr' | 'en',
+                onboardingState: 'GUEST',
+                kyc: { panNumber: '', verified: false } as any,
+                ondc: { subscriberId: '', subscriberUrl: '', signingPublicKey: '', encryptionPublicKey: '' },
+                createdAt: now,
+                updatedAt: now,
+              });
+              // Store sellerId in user state
+              const { updateUserSellerId } = await import('../services/state-manager');
+              await updateUserSellerId(phone, sellerId);
+            }
+          } catch (e) {
+            console.warn('Guest seller profile creation failed (non-blocking):', e);
+          }
           break;
 
         default:
@@ -953,8 +990,8 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     console.warn('⚠️ CREATE_CATALOG called but no partial data found');
     const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
     const msg = lang === 'hi'
-      ? '⚠️ उत्पाद की जानकारी अभी पूरी नहीं है। कृपया पहले उत्पाद का नाम, कीमत और फोटो भेजें।'
-      : '⚠️ Product information is incomplete. Please send product name, price, and photo first.';
+      ? 'Product ki jaankari abhi puri nahi hai. Pehle product ka naam, price aur photo bhejiye.'
+      : 'Product information is incomplete. Please send product name, price, and photo first.';
     await sendEnhancedAgentMessage(phone, msg, language as any, 'voice');
     return;
   }

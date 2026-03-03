@@ -354,7 +354,8 @@ export async function handler(
       
       if (!userState) {
         console.log('New user detected, initializing state:', inboundEvent.from);
-        userState = await initializeNewUser(inboundEvent.from);
+        const profileName = inboundEvent.profile?.name || undefined;
+        userState = await initializeNewUser(inboundEvent.from, profileName);
       }
 
       console.log('User state:', {

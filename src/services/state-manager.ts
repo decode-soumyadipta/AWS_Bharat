@@ -21,6 +21,7 @@ export type UserStateType =
   | 'NEW'
   | 'KYC_PENDING'
   | 'KYC_VERIFIED'
+  | 'GUEST_ACTIVE'
   | 'VOICE_RECEIVED'
   | 'IMAGE_PENDING'
   | 'CONFIRMATION_PENDING'
@@ -108,13 +109,14 @@ export async function getUserState(phone: string): Promise<UserState | null> {
  * @param phone - User phone number in E.164 format
  * @returns Initialized user state
  */
-export async function initializeNewUser(phone: string): Promise<UserState> {
+export async function initializeNewUser(phone: string, profileName?: string): Promise<UserState> {
   const now = Date.now();
   const ttl = Math.floor(now / 1000) + (STATE_TTL_DAYS * 24 * 60 * 60);
   
   const userState: UserState = {
     phone,
     state: 'NEW',
+    metadata: profileName ? { profileName } : undefined,
     createdAt: now,
     updatedAt: now,
   };

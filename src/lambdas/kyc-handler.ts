@@ -88,8 +88,8 @@ export const handler = withXRayTracing(async (
 
           Annotations.setState(userState.state);
 
-          // Validate user is in correct state for KYC
-          if (userState.state !== 'NEW' && userState.state !== 'KYC_PENDING') {
+          // Validate user is in correct state for KYC (allow GUEST_ACTIVE so guests can verify later)
+          if (userState.state !== 'NEW' && userState.state !== 'KYC_PENDING' && userState.state !== 'GUEST_ACTIVE') {
             throw new Error(`Invalid state for KYC: ${userState.state}`);
           }
 
@@ -248,15 +248,16 @@ export const handler = withXRayTracing(async (
           
           logStructured('INFO', 'User state updated to KYC_VERIFIED');
 
-          // Step 7: Send confirmation message
+          // Step 7: Send confirmation message with extracted name
           // Wait 2 seconds before final success message
           await new Promise(resolve => setTimeout(resolve, 2000));
-          await sendSuccessMessage(phone, language);
+          const extractedName = extractedData.name?.value || '';
+          await sendSuccessMessage(phone, language, extractedName, extractedData.panNumber?.value || '');
           logStructured('INFO', 'Confirmation message sent');
 
           // Step 8: Send UPI setup nudge after 3 seconds
           await new Promise(resolve => setTimeout(resolve, 3000));
-          await sendUpiNudgeMessage(phone, language);
+          await sendUpiNudgeMessage(phone, language, extractedName);
           logStructured('INFO', 'UPI nudge message sent');
 
           Annotations.setSuccess(true);
@@ -400,7 +401,7 @@ async function callSellerRegistration(
 }
 
 /**
- * Send feedback message via WhatsApp with voice
+ * Send feedback message via WhatsApp — voice-only for progress updates
  */
 async function sendFeedbackMessage(
   phone: string,
@@ -410,34 +411,48 @@ async function sendFeedbackMessage(
   const message = translateMessage(messageKey, language);
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  // Import sendTextWithVoice dynamically
-  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   
-  // Show typing indicator
   await sendTypingIndicator(phone);
   
-  // Send message with voice
-  await sendTextWithVoice(phone, message, langCode);
+  // Progress updates are voice-only — no text clutter
+  await sendVoiceOnly(phone, message, langCode);
 }
 
 /**
- * Send success confirmation message via WhatsApp with voice
+ * Send success confirmation — text showing extracted data + voice with personal greeting
  */
 async function sendSuccessMessage(
   phone: string,
-  language: 'hi-IN' | 'mr-IN' | 'en-IN'
+  language: 'hi-IN' | 'mr-IN' | 'en-IN',
+  extractedName: string,
+  panNumber: string
 ): Promise<void> {
-  const message = translateMessage('KYC_SUCCESS', language);
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
+  const { sendTextMessage, sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   
-  // Import sendTextWithVoice dynamically
-  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
-  
-  // Show typing indicator
   await sendTypingIndicator(phone);
   
-  // Send message with voice
-  await sendTextWithVoice(phone, message, langCode);
+  // Text message showing extracted KYC info
+  const nameDisplay = extractedName || 'N/A';
+  const panDisplay = panNumber ? `${panNumber.slice(0, 3)}****${panNumber.slice(-1)}` : 'N/A';
+  const textData: Record<string, string> = {
+    'hi-IN': `Verification safal!\nNaam: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
+    'mr-IN': `Verification yashashvi!\nNav: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
+    'en-IN': `Verification successful!\nName: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
+  };
+  await sendTextMessage(phone, textData[language] || textData['hi-IN']);
+  
+  // Voice message with warm personal greeting + next steps
+  const nameJi = extractedName ? `${extractedName} ji` : '';
+  const voiceMsg: Record<string, string> = {
+    'hi-IN': `${nameJi ? nameJi + ', ' : ''}aapka PAN card verify ho gaya hai. Ab aap apne products add kar sakte hain. Bas apne product ka naam, daam aur photo bhejiye. Ya phir UPI ID bhejiye taaki customers seedha payment kar sakein.`,
+    'mr-IN': `${nameJi ? nameJi + ', ' : ''}tumcha PAN card verify zala aahe. Aata tumhi tumche products add karu shakta. Phakta tumchya product che naav, kimmat aani photo pathva. Kinva UPI ID pathva mhanje customers direct payment karu shakatil.`,
+    'en-IN': `${nameJi ? nameJi + ', ' : ''}your PAN card has been verified. You can now add your products. Just send the product name, price and photo. Or send your UPI ID so customers can pay you directly.`,
+  };
+  
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await sendVoiceOnly(phone, voiceMsg[language] || voiceMsg['hi-IN'], langCode);
 }
 
 /**
@@ -462,22 +477,24 @@ async function sendErrorMessage(
 }
 
 /**
- * Send UPI setup nudge message after successful KYC
+ * Send UPI setup nudge — voice-only, conversational, no emojis
  */
 async function sendUpiNudgeMessage(
   phone: string,
-  language: 'hi-IN' | 'mr-IN' | 'en-IN'
+  language: 'hi-IN' | 'mr-IN' | 'en-IN',
+  extractedName?: string
 ): Promise<void> {
+  const nameJi = extractedName ? `${extractedName} ji, ` : '';
   const upiNudge: Record<string, string> = {
-    'hi-IN': '💳 UPI सेटअप करने के लिए बस अपना UPI ID भेजें (जैसे: yourname@upi या 9876543210@paytm)। इससे ग्राहक सीधे आपको पेमेंट कर पाएंगे! 🙏',
-    'mr-IN': '💳 UPI सेट करण्यासाठी फक्त तुमचा UPI ID पाठवा (जसे: yourname@upi किंवा 9876543210@paytm). यामुळे ग्राहक थेट तुम्हाला पेमेंट करू शकतील! 🙏',
-    'en-IN': '💳 To set up UPI, just send your UPI ID (like: yourname@upi or 9876543210@paytm). This way customers can pay you directly! 🙏',
+    'hi-IN': `${nameJi}agar aap apna UPI ID bhej dein toh customers seedha aapko payment kar payenge. Bas apna UPI ID bhejiye, jaise yourname at upi ya phone number at paytm.`,
+    'mr-IN': `${nameJi}tumhi tumcha UPI ID pathavla tar customers direct tumhala payment karu shakatil. Tumcha UPI ID pathva, jase yourname at upi kinva phone number at paytm.`,
+    'en-IN': `${nameJi}if you send your UPI ID, customers can pay you directly. Just send your UPI ID, like yourname at upi or phone number at paytm.`,
   };
   
   const message = upiNudge[language] || upiNudge['hi-IN'];
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   await sendTypingIndicator(phone);
-  await sendTextWithVoice(phone, message, langCode);
+  await sendVoiceOnly(phone, message, langCode);
 }

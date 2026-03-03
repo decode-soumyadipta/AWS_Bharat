@@ -15,6 +15,7 @@ export type OnboardingState =
   | 'KYC_PENDING'           // Waiting for PAN card photo
   | 'KYC_PROCESSING'        // Processing KYC documents
   | 'KYC_VERIFIED'          // KYC complete, can create catalog
+  | 'GUEST'                 // Skipped KYC, using as guest
   | 'CATALOG_VOICE_PENDING' // Waiting for voice message about product
   | 'CATALOG_IMAGE_PENDING' // Waiting for product photo
   | 'CATALOG_CONFIRMING'    // Waiting for user confirmation
