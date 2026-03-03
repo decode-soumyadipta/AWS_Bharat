@@ -108,7 +108,7 @@ function generateGuidanceMessage(
       'en-IN': 'Send your PAN card photo, or ask me anything.',
     },
     GUEST_ACTIVE: {
-      'hi-IN': 'बताइए क्या करना है? Product add करें, price check करें, या कुछ और।',
+      'hi-IN': 'बताइए क्या करना है? प्रोडक्ट जोड़ें, भाव जानें, या कुछ और।',
       'mr-IN': 'सांगा काय करायचे आहे? उत्पादन जोडा, किंमत तपासा.',
       'en-IN': 'What would you like to do? Add products, check prices, or anything else.',
     },

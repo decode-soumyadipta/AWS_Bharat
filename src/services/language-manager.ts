@@ -41,28 +41,28 @@ export type MessageKey =
  */
 const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> = {
   WELCOME_MESSAGE: {
-    'hi-IN': 'Namaste! Vyapar Vaani mein aapka swagat hai. Main aapka AI business assistant hoon. Aap PAN card ki photo bhej sakte hain verification ke liye, ya seedha guest ke roop mein shuru kar sakte hain.',
-    'mr-IN': 'Namaskar! Vyapar Vaani madhye tumche swagat aahe. Mi tumcha AI business assistant aahe. Tumhi PAN card cha photo pathavu shakta verification la, kinva guest mhanun suru karu shakta.',
+    'hi-IN': 'नमस्ते! व्यापार वाणी में आपका स्वागत है। मैं आपका AI बिज़नेस असिस्टेंट हूँ। आप PAN कार्ड की फोटो भेज सकते हैं वेरिफिकेशन के लिए, या सीधे गेस्ट के रूप में शुरू कर सकते हैं।',
+    'mr-IN': 'नमस्कार! व्यापार वाणी मध्ये तुमचे स्वागत आहे. मी तुमचा AI बिझनेस असिस्टंट आहे. तुम्ही PAN कार्डचा फोटो पाठवू शकता verification साठी, किंवा गेस्ट म्हणून सुरू करू शकता.',
     'en-IN': 'Hello! Welcome to Vyapar Vaani. I am your AI business assistant. You can send your PAN card photo for verification, or start as a guest.',
   },
   DOCUMENT_RECEIVED: {
-    'hi-IN': 'Aapka document mil gaya, check ho raha hai.',
-    'mr-IN': 'Tumche document milale, tapasani suru aahe.',
+    'hi-IN': 'आपका दस्तावेज़ मिल गया, चेक हो रहा है।',
+    'mr-IN': 'तुमचे कागदपत्र मिळाले, तपासणी सुरू आहे.',
     'en-IN': 'Your document received, checking now.',
   },
   DOCUMENT_VERIFIED: {
-    'hi-IN': 'PAN card verify ho gaya.',
-    'mr-IN': 'PAN card verify zale.',
+    'hi-IN': 'PAN कार्ड वेरिफाई हो गया।',
+    'mr-IN': 'PAN कार्ड verify झाले.',
     'en-IN': 'PAN card verified.',
   },
   REGISTERING_SELLER: {
-    'hi-IN': 'Aapka registration ho raha hai, bas thoda sa wait kijiye.',
-    'mr-IN': 'Tumchi nondani suru aahe, thoda thamba.',
+    'hi-IN': 'आपका रजिस्ट्रेशन हो रहा है, बस थोड़ा सा इंतज़ार कीजिए।',
+    'mr-IN': 'तुमची नोंदणी सुरू आहे, थोडा थांबा.',
     'en-IN': 'Your registration is in progress, just a moment.',
   },
   KYC_SUCCESS: {
-    'hi-IN': 'Aapka registration safal raha. Ab aap products add kar sakte hain ya UPI ID bhej sakte hain.',
-    'mr-IN': 'Tumchi nondani yashashvi zali. Aata tumhi products add karu shakta kinva UPI ID pathavu shakta.',
+    'hi-IN': 'आपका रजिस्ट्रेशन सफल रहा। अब आप प्रोडक्ट्स जोड़ सकते हैं या UPI ID भेज सकते हैं।',
+    'mr-IN': 'तुमची नोंदणी यशस्वी झाली. आता तुम्ही प्रोडक्ट्स जोडू शकता किंवा UPI ID पाठवू शकता.',
     'en-IN': 'Your registration is successful. You can now add products or send your UPI ID.',
   },
   KYC_ERROR: {
@@ -71,18 +71,18 @@ const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> =
     'en-IN': 'There is some problem with the document. Please try again.',
   },
   KYC_INVALID_DOCUMENT: {
-    'hi-IN': 'Yeh PAN card nahi hai. Kripya sirf apne PAN card ki saaf photo bhejiye. Aadhaar ya koi aur document sweekar nahi hoga.',
-    'mr-IN': 'He PAN card nahi. Krupaya phakt tumchya PAN card cha spashta photo pathva. Aadhaar kinva itar kagadpatre chalnar nahit.',
+    'hi-IN': 'यह PAN कार्ड नहीं है। कृपया सिर्फ अपने PAN कार्ड की साफ फोटो भेजिए। आधार या कोई और दस्तावेज़ स्वीकार नहीं होगा।',
+    'mr-IN': 'हे PAN कार्ड नाही. कृपया फक्त तुमच्या PAN कार्डचा स्पष्ट फोटो पाठवा. आधार किंवा इतर कागदपत्रे चालणार नाहीत.',
     'en-IN': 'This is not a PAN card. Please send only your PAN card photo clearly. Aadhaar or other documents will not be accepted.',
   },
   IMAGE_REQUEST: {
-    'hi-IN': 'Bahut accha! Ab kripya product ki photo bhejiye.',
-    'mr-IN': 'Khup chhan! Aata krupaya product cha photo pathva.',
+    'hi-IN': 'बहुत अच्छा! अब कृपया प्रोडक्ट की फोटो भेजिए।',
+    'mr-IN': 'खूप छान! आता कृपया प्रोडक्टचा फोटो पाठवा.',
     'en-IN': 'Great! Now please send the product photo.',
   },
   CATALOG_SUCCESS: {
-    'hi-IN': 'Badhai ho! Aapka product safaltapoorvak jod diya gaya.',
-    'mr-IN': 'Abhinandan! Tumche product yashashviritya jodle gele.',
+    'hi-IN': 'बधाई हो! आपका प्रोडक्ट सफलतापूर्वक जोड़ दिया गया।',
+    'mr-IN': 'अभिनंदन! तुमचे प्रोडक्ट यशस्वीरित्या जोडले गेले.',
     'en-IN': 'Congratulations! Your product has been added successfully.',
   },
   DOCUMENT_UNCLEAR: {
@@ -136,8 +136,8 @@ const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> =
     'en-IN': 'Which information to change? Please send a voice message.',
   },
   HELP_MESSAGE: {
-    'hi-IN': 'Main aapki madad kar sakta hoon. Aap PAN card ki photo bhej sakte hain, ya voice message se bataiye kya bechna hai, ya product ki photo bhejiye. Aap kya karna chahenge?',
-    'mr-IN': 'Mi tumhala madat karu shakto. Tumhi PAN card cha photo pathavu shakta, kinva voice message ne sanga kay vikayche aahe, kinva product cha photo pathva. Tumhala kay karayche aahe?',
+    'hi-IN': 'मैं आपकी मदद कर सकता हूँ। आप PAN कार्ड की फोटो भेज सकते हैं, या वॉइस मैसेज से बताइए क्या बेचना है, या प्रोडक्ट की फोटो भेजिए। आप क्या करना चाहेंगे?',
+    'mr-IN': 'मी तुम्हाला मदत करू शकतो. तुम्ही PAN कार्डचा फोटो पाठवू शकता, किंवा व्हॉइस मेसेजने सांगा काय विकायचे आहे, किंवा प्रोडक्टचा फोटो पाठवा. तुम्हाला काय करायचे आहे?',
     'en-IN': 'I can help you. You can send your PAN card photo, or tell me what you want to sell via voice message, or send a product photo. What would you like to do?',
   },
 };

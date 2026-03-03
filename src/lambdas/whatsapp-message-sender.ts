@@ -158,7 +158,7 @@ export async function sendTypingIndicator(
   try {
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
 
-    await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -172,10 +172,18 @@ export async function sendTypingIndicator(
           type: 'text',
         },
       }),
-    }).catch(() => null);
+    });
 
+    if (!response.ok) {
+      const errText = await response.text().catch(() => 'unknown');
+      console.warn(`Typing indicator API error: ${response.status} — ${errText}`);
+      return { success: false, error: `HTTP ${response.status}: ${errText}` };
+    }
+
+    console.log('Typing indicator sent successfully for:', msgId.substring(0, 20) + '...');
     return { success: true };
-  } catch {
+  } catch (err) {
+    console.warn('Typing indicator exception:', err);
     return { success: true }; // Never fail on typing indicator
   }
 }
