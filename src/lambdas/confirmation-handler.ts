@@ -689,16 +689,57 @@ export async function viewProducts(
 ): Promise<void> {
   const lang = getLanguagePreference(language);
   
-  // TODO: Implement product listing from DynamoDB
-  const message = lang === 'hi-IN'
-    ? '📋 आपके उत्पाद जल्द ही दिखाए जाएंगे।'
-    : lang === 'mr-IN'
-    ? '📋 तुमची उत्पादने लवकरच दाखवली जातील.'
-    : '📋 Your products will be shown soon.';
-  
-  await sendTextMessage(phone, message, lang.split('-')[0] as 'hi' | 'mr' | 'en');
-  
-  console.log('Sent view products message');
+  // Query DynamoDB for seller's catalog items
+  try {
+    const { getCatalogItemsBySeller } = await import('../services/dynamodb-repository');
+    const items = await getCatalogItemsBySeller(phone);
+    
+    if (!items || items.length === 0) {
+      const emptyMsg = lang === 'hi-IN'
+        ? 'आपने अभी कोई उत्पाद नहीं जोड़ा है। वॉइस मैसेज से बताएं क्या बेचना है — जैसे "टमाटर 50 रुपये किलो"।'
+        : lang === 'mr-IN'
+        ? 'तुम्ही अजून कोणतेही उत्पादन जोडलेले नाही. व्हॉइस मेसेजने सांगा काय विकायचे आहे.'
+        : 'You haven\'t added any products yet. Send a voice message to add — like "tomato 50 rupees per kilo".';
+      await sendTextMessage(phone, emptyMsg, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+      return;
+    }
+
+    // Build a clean numbered product list
+    const productLines = items.map((item: any, index: number) => {
+      const name = item.becknItem?.descriptor?.name || item.productName || 'Product';
+      const price = item.becknItem?.price?.value || item.price || '—';
+      const unit = item.becknItem?.price?.currency === 'INR' ? (item.unit || 'unit') : (item.unit || 'unit');
+      const qty = item.quantity || item.becknItem?.quantity?.available?.count || '—';
+      return `${index + 1}. *${name}* — ₹${price}/${unit}, ${qty} ${unit} in stock`;
+    });
+
+    const header = lang === 'hi-IN'
+      ? `*आपके उत्पाद (${items.length}):*\n`
+      : lang === 'mr-IN'
+      ? `*तुमची उत्पादने (${items.length}):*\n`
+      : `*Your Products (${items.length}):*\n`;
+
+    const footer = lang === 'hi-IN'
+      ? '\n\nनया उत्पाद जोड़ने के लिए वॉइस मैसेज भेजें।'
+      : lang === 'mr-IN'
+      ? '\n\nनवीन उत्पादन जोडण्यासाठी व्हॉइस मेसेज पाठवा.'
+      : '\n\nSend a voice message to add a new product.';
+
+    const fullMessage = header + productLines.join('\n') + footer;
+    
+    const { sendTextWithVoice } = await import('./whatsapp-message-sender');
+    await sendTextWithVoice(phone, fullMessage, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+    
+    console.log(`Sent product list: ${items.length} items for seller ${phone}`);
+  } catch (error: any) {
+    console.error('Error fetching products:', error);
+    const errMsg = lang === 'hi-IN'
+      ? '⚠️ उत्पाद लोड करने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+      : lang === 'mr-IN'
+      ? '⚠️ उत्पादने लोड करताना समस्या आली. कृपया पुन्हा प्रयत्न करा.'
+      : '⚠️ Trouble loading products. Please try again.';
+    await sendTextMessage(phone, errMsg, lang.split('-')[0] as 'hi' | 'mr' | 'en');
+  }
 }
 
 /**

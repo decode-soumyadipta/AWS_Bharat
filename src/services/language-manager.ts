@@ -61,9 +61,9 @@ const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> =
     'en-IN': '⏳ Registering seller...',
   },
   KYC_SUCCESS: {
-    'hi-IN': '✅ आपका पंजीकरण सफल रहा! 🎉\n\nअब दो काम कर सकते हैं:\n1️⃣ UPI ID भेजें (जैसे: name@upi) — ताकि ग्राहक सीधे भुगतान कर सकें\n2️⃣ उत्पाद जोड़ें — वॉइस मैसेज से बताएं क्या बेचना है\n\n💡 पहले UPI सेट करें तो पेमेंट आसानी से मिलेगा!',
-    'mr-IN': '✅ तुमची नोंदणी यशस्वी झाली! 🎉\n\nआता दोन गोष्टी करू शकता:\n1️⃣ UPI ID पाठवा (जसे: name@upi) — ग्राहक थेट पेमेंट करू शकतील\n2️⃣ उत्पादने जोडा — व्हॉइस मेसेजने सांगा काय विकायचे आहे\n\n💡 आधी UPI सेट करा म्हणजे पेमेंट सोपे होईल!',
-    'en-IN': '✅ Your registration is successful! 🎉\n\nYou can now do two things:\n1️⃣ Send your UPI ID (like: name@upi) — so customers can pay you directly\n2️⃣ Add products — send a voice message about what you want to sell\n\n💡 Set up UPI first for hassle-free payments!',
+    'hi-IN': '✅ आपका पंजीकरण सफल रहा!\n\nअब दो काम कर सकते हैं:\n1. UPI ID भेजें (जैसे: name@upi) — ताकि ग्राहक सीधे भुगतान कर सकें\n2. उत्पाद जोड़ें — वॉइस मैसेज से बताएं क्या बेचना है\n\nपहले UPI सेट करें तो पेमेंट आसानी से मिलेगा।',
+    'mr-IN': '✅ तुमची नोंदणी यशस्वी झाली!\n\nआता दोन गोष्टी करू शकता:\n1. UPI ID पाठवा (जसे: name@upi) — ग्राहक थेट पेमेंट करू शकतील\n2. उत्पादने जोडा — व्हॉइस मेसेजने सांगा काय विकायचे आहे\n\nआधी UPI सेट करा म्हणजे पेमेंट सोपे होईल!',
+    'en-IN': '✅ Your registration is successful!\n\nYou can now do two things:\n1. Send your UPI ID (like: name@upi) — so customers can pay you directly\n2. Add products — send a voice message about what you want to sell\n\nSet up UPI first for hassle-free payments.',
   },
   KYC_ERROR: {
     'hi-IN': 'दस्तावेज़ में कुछ समस्या है। कृपया फिर से कोशिश करें।',
@@ -71,9 +71,9 @@ const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> =
     'en-IN': 'There is some problem with the document. Please try again.',
   },
   KYC_INVALID_DOCUMENT: {
-    'hi-IN': '⚠️ यह पैन कार्ड नहीं है! 📳 कृपया सिर्फ़ अपने *पैन कार्ड* की साफ़ फोटो भेजें। आधार कार्ड, ड्राइविंग लाइसेंस, या अन्य दस्तावेज़ स्वीकार नहीं होंगे। सिर्फ़ पैन कार्ड! 🙏',
-    'mr-IN': '⚠️ हे पॅन कार्ड नाही! 📳 कृपया फक्त तुमच्या *पॅन कार्डाचा* स्पष्ट फोटो पाठवा. आधार कार्ड, ड्रायव्हिंग लायसन्स किंवा इतर कागदपत्रे चालणार नाहीत. फक्त पॅन कार्ड! 🙏',
-    'en-IN': '⚠️ This is not a PAN card! 📳 Please send only your *PAN card* photo. Aadhaar, driving license, or other documents won\'t work. Only PAN card! 🙏',
+    'hi-IN': '⚠️ यह पैन कार्ड नहीं है! कृपया सिर्फ़ अपने *पैन कार्ड* की साफ़ फोटो भेजें। आधार कार्ड, ड्राइविंग लाइसेंस, या अन्य दस्तावेज़ स्वीकार नहीं होंगे।',
+    'mr-IN': '⚠️ हे पॅन कार्ड नाही! कृपया फक्त तुमच्या *पॅन कार्डाचा* स्पष्ट फोटो पाठवा. आधार कार्ड, ड्रायव्हिंग लायसन्स किंवा इतर कागदपत्रे चालणार नाहीत।',
+    'en-IN': '⚠️ This is not a PAN card. Please send only your *PAN card* photo. Aadhaar, driving license, or other documents won\'t be accepted.',
   },
   IMAGE_REQUEST: {
     'hi-IN': 'बहुत अच्छा! अब कृपया उत्पाद की फोटो भेजें।',

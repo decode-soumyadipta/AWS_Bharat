@@ -237,19 +237,49 @@ export class MarketplaceIntegration extends Construct {
 
     // /products endpoint
     const products = this.marketplaceApi.root.addResource('products');
-    products.addMethod('GET', new apigateway.LambdaIntegration(getProductsLambda));
+    products.addMethod('GET', new apigateway.LambdaIntegration(getProductsLambda), {
+      apiKeyRequired: true,
+    });
 
     // /orders endpoint
     const orders = this.marketplaceApi.root.addResource('orders');
-    orders.addMethod('POST', new apigateway.LambdaIntegration(submitOrderLambda));
+    orders.addMethod('POST', new apigateway.LambdaIntegration(submitOrderLambda), {
+      apiKeyRequired: true,
+    });
 
     // /orders/{orderId} endpoint — GET order status
     const orderById = orders.addResource('{orderId}');
-    orderById.addMethod('GET', new apigateway.LambdaIntegration(submitOrderLambda));
+    orderById.addMethod('GET', new apigateway.LambdaIntegration(submitOrderLambda), {
+      apiKeyRequired: true,
+    });
 
     // /orders/{orderId}/verify-payment endpoint — POST payment verification
     const verifyPayment = orderById.addResource('verify-payment');
-    verifyPayment.addMethod('POST', new apigateway.LambdaIntegration(verifyPaymentLambda));
+    verifyPayment.addMethod('POST', new apigateway.LambdaIntegration(verifyPaymentLambda), {
+      apiKeyRequired: true,
+    });
+
+    // API Key + Usage Plan for rate limiting and auth
+    const apiKey = this.marketplaceApi.addApiKey('MarketplaceApiKey', {
+      apiKeyName: 'marketplace-buyer-key',
+      description: 'API key for marketplace buyer interface',
+    });
+
+    const usagePlan = this.marketplaceApi.addUsagePlan('MarketplaceUsagePlan', {
+      name: 'marketplace-standard',
+      description: 'Standard usage plan for marketplace API',
+      throttle: {
+        rateLimit: 50,
+        burstLimit: 100,
+      },
+      quota: {
+        limit: 10000,
+        period: apigateway.Period.DAY,
+      },
+    });
+
+    usagePlan.addApiKey(apiKey);
+    usagePlan.addApiStage({ stage: this.marketplaceApi.deploymentStage });
 
     // ========================================
     // 6. S3 Bucket for Frontend Hosting

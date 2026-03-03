@@ -12,6 +12,7 @@
  */
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { 
   getConversationContext, 
   addConversationMessage,
@@ -31,7 +32,11 @@ import {
 } from './analytics-service';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const agentRuntimeClient = new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const NOVA_PRO_MODEL_ID = 'amazon.nova-pro-v1:0';
+const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0'; // Fallback model
+const BEDROCK_AGENT_ID = process.env.BEDROCK_AGENT_ID || '';
+const BEDROCK_AGENT_ALIAS_ID = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
 
 // Language codes
 type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
@@ -157,8 +162,22 @@ export async function processWithEnhancedAgent(
   // Keep typing active while model thinks
   await showTypingIndicator(phone);
 
-  // Call Nova Pro
-  const response = await callAgentModel(agentPrompt);
+  // Try Bedrock Agent (agentic tool-use) for data-heavy queries first
+  const agentResult = await callBedrockAgentIfAvailable(
+    userMessage,
+    phone,
+    `Language: ${currentLanguage}, State: ${userState}, Market: ${marketInfo ? 'available' : 'none'}, Analytics: ${analyticsInfo ? 'available' : 'none'}`
+  );
+
+  let response: string;
+  if (agentResult.usedAgent && agentResult.text) {
+    // Bedrock Agent handled it with real tool calls — wrap in structured format
+    console.log('✅ Using Bedrock Agent tool-use response');
+    response = `MESSAGE: ${agentResult.text}\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 92\nREASONING: Bedrock Agent with tool-use`;
+  } else {
+    // Fallback to direct InvokeModel with prompt engineering
+    response = await callAgentModel(agentPrompt);
+  }
 
   // Parse response
   const agentResponse = parseEnhancedResponse(response, currentLanguage);
@@ -469,8 +488,8 @@ function buildEnhancedPrompt(
 - तुम बहुत समझदार हो - उपयोगकर्ता की हर बात समझते हो
 - तुम कभी भी हार्डकोडेड टेम्पलेट का उपयोग नहीं करते
 - तुम हर बार नया, ताज़ा, प्राकृतिक जवाब देते हो
-- तुम इमोजी का भरपूर उपयोग करते हो 😊
-- तुम 2-3 वाक्यों में बात करते हो
+- तुम इमोजी संयम से उपयोग करते हो — सिर्फ स्टेटस दिखाने के लिए (✅ ❌ ⚠️)। 😊 🤔 😔 जैसे इमोजी कभी मत लगाओ।
+- तुम 2-3 वाक्यों में बात करते हो, प्रोडक्शन-ग्रेड प्रोफेशनल अंदाज़ में
 
 तुम्हारी जिम्मेदारियां:
 - हर ऑर्डर को पूरी तरह ट्रैक करना
@@ -489,8 +508,8 @@ Your personality:
 - You are very understanding - you get every point
 - You NEVER use hardcoded templates
 - You give fresh, natural responses every time
-- You use emojis generously 😊
-- You speak in 2-3 sentences
+- You use emojis sparingly — only status indicators (✅ ❌ ⚠️). Never use decorative emojis like 😊 🤔 😔 at the end of sentences.
+- You speak in 2-3 sentences, in a professional yet warm tone
 
 Your responsibilities:
 - Track every order completely
@@ -509,8 +528,8 @@ Your responsibilities:
 - तू खूप समजूतदार आहेस - प्रत्येक गोष्ट समजतोस
 - तू कधीही हार्डकोडेड टेम्पलेट वापरत नाहीस
 - तू प्रत्येक वेळी नवीन, ताजे, नैसर्गिक उत्तर देतोस
-- तू इमोजी भरपूर वापरतोस 😊
-- तू 2-3 वाक्यांत बोलतोस`;
+- तू इमोजी संयमाने वापरतोस — फक्त स्टेटस दाखवण्यासाठी (✅ ❌ ⚠️)। 😊 🤔 😔 सारखे इमोजी कधी वापरू नकोस।
+- तू 2-3 वाक्यांत बोलतोस, व्यावसायिक पण मैत्रीपूर्ण स्वरात`;
   } else { // Bengali
     prompt = `তুমি "ব্যাপার বাণী" - একজন অত্যন্ত ব্যক্তিগত এবং যত্নশীল AI ব্যবসা সহায়ক।
 
@@ -521,8 +540,8 @@ Your responsibilities:
 - তুমি খুব বোঝাপড়ার - প্রতিটি কথা বোঝো
 - তুমি কখনও হার্ডকোডেড টেমপ্লেট ব্যবহার করো না
 - তুমি প্রতিবার নতুন, তাজা, প্রাকৃতিক উত্তর দাও
-- তুমি ইমোজি প্রচুর ব্যবহার করো 😊
-- তুমি 2-3 বাক্যে কথা বলো`;
+- তুমি ইমোজি সংযমের সাথে ব্যবহার করো — শুধু স্ট্যাটাস দেখাতে (✅ ❌ ⚠️)। 😊 🤔 😔 এর মতো ইমোজি কখনও ব্যবহার করো না।
+- তুমি 2-3 বাক্যে কথা বলো, পেশাদার কিন্তু উষ্ণ ভাবে`;
   }
 
   // Add conversation history
@@ -624,6 +643,7 @@ The product addition workflow has STRICT steps. You must follow them IN ORDER:
 10. For analytics responses, be concise - just state the numbers clearly.
 11. ALWAYS end with a friendly follow-up question like "Aur kya madad chahiye?" / "Aur kuch?" / "What else can I help with?" — never leave a dead-end.
 12. NEVER show errors, technical messages, or stack traces. If something fails internally, casually ask the user to try again.
+13. EMOJI RULE: Use maximum 1-2 emojis per message. Only use status emojis (✅ ❌ ⚠️) at the START of key lines. NEVER end sentences with 😊 🤔 😔 or any decorative emoji. Keep tone professional and warm without emoji clutter.
 
 💳 UPI GUIDANCE:
 ${sellerInfo.upiId 
@@ -678,48 +698,116 @@ Respond now in ${langName}:`;
 
 
 /**
- * Call agent model with timeout protection
+ * Call agent model with timeout protection, retry, and model fallback.
+ * Strategy: Nova Pro (12s) → retry Nova Pro (8s) → fallback Nova Lite (10s) → hardcoded fallback
  */
 async function callAgentModel(prompt: string): Promise<string> {
-  const requestBody = {
-    messages: [
-      {
-        role: 'user',
-        content: [{ text: prompt }],
-      },
-    ],
+  const buildRequest = (modelId: string, maxTokens: number) => ({
+    messages: [{ role: 'user' as const, content: [{ text: prompt }] }],
     inferenceConfig: {
-      max_new_tokens: 600, // More room for detailed, helpful responses
-      temperature: 0.7, // Slightly creative for natural conversation
+      max_new_tokens: maxTokens,
+      temperature: 0.7,
       top_p: 0.92,
     },
-  };
-
-  const command = new InvokeModelCommand({
-    modelId: NOVA_PRO_MODEL_ID,
-    contentType: 'application/json',
-    accept: 'application/json',
-    body: JSON.stringify(requestBody),
   });
 
-  // Timeout protection: 12 seconds max for model inference (upgraded for better quality)
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Model inference timeout')), 12000)
-  );
+  const invokeWithTimeout = async (modelId: string, timeoutMs: number, maxTokens: number): Promise<string> => {
+    const command = new InvokeModelCommand({
+      modelId,
+      contentType: 'application/json',
+      accept: 'application/json',
+      body: JSON.stringify(buildRequest(modelId, maxTokens)),
+    });
 
-  try {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Model timeout (${modelId})`)), timeoutMs)
+    );
+
     const response = await Promise.race([
       bedrockClient.send(command),
       timeoutPromise,
     ]);
     const responseBody = JSON.parse(new TextDecoder().decode(response.body));
     return responseBody.output.message.content[0].text.trim();
-  } catch (error: any) {
-    if (error.message === 'Model inference timeout') {
-      console.warn('⚠️ Model inference timed out, returning fallback');
-      return 'MESSAGE: माफ़ करें, जवाब में थोड़ी देर हो गई। कृपया फिर से पूछें।\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 50\nREASONING: Model timeout';
+  };
+
+  // Attempt 1: Nova Pro with 12s timeout
+  try {
+    return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 12000, 600);
+  } catch (err1: any) {
+    console.warn('⚠️ Nova Pro attempt 1 failed:', err1.message);
+
+    // Attempt 2: Retry Nova Pro with 8s timeout (might be transient)
+    try {
+      return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 8000, 400);
+    } catch (err2: any) {
+      console.warn('⚠️ Nova Pro attempt 2 failed:', err2.message);
+
+      // Attempt 3: Fallback to Nova Lite (cheaper, faster, still reasonable)
+      try {
+        console.log('🔄 Falling back to Nova Lite model');
+        return await invokeWithTimeout(NOVA_LITE_MODEL_ID, 10000, 400);
+      } catch (err3: any) {
+        console.error('❌ All model attempts failed:', err3.message);
+        return 'MESSAGE: माफ़ करें, जवाब में थोड़ी देर हो गई। कृपया फिर से पूछें।\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 50\nREASONING: All model attempts failed';
+      }
     }
-    throw error;
+  }
+}
+
+/**
+ * Invoke Bedrock Agent with tool-use (agentic AI path).
+ * The agent autonomously decides which tools to call, chains multiple calls,
+ * and synthesizes a final answer — true agentic behavior vs prompt-routing.
+ *
+ * Falls back to direct InvokeModel (callAgentModel) if agent is not configured.
+ */
+async function callBedrockAgentIfAvailable(
+  userMessage: string,
+  phone: string,
+  sessionContext: string
+): Promise<{ text: string; usedAgent: boolean }> {
+  if (!BEDROCK_AGENT_ID) {
+    return { text: '', usedAgent: false };
+  }
+
+  try {
+    console.log('🤖 Invoking Bedrock Agent with tool-use...');
+    const sessionId = `session-${phone.replace(/\+/g, '')}`; // Stable session per seller
+
+    const command = new InvokeAgentCommand({
+      agentId: BEDROCK_AGENT_ID,
+      agentAliasId: BEDROCK_AGENT_ALIAS_ID,
+      sessionId,
+      inputText: `[Seller Phone: ${phone}] ${userMessage}\n\n[Context: ${sessionContext}]`,
+    });
+
+    const response = await Promise.race([
+      agentRuntimeClient.send(command),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Bedrock Agent timeout')), 20000)
+      ),
+    ]);
+
+    // Collect streamed response chunks
+    let fullText = '';
+    if (response.completion) {
+      for await (const chunk of response.completion) {
+        if (chunk.chunk?.bytes) {
+          fullText += new TextDecoder().decode(chunk.chunk.bytes);
+        }
+      }
+    }
+
+    if (fullText.trim()) {
+      console.log('✅ Bedrock Agent responded with tool-use result');
+      return { text: fullText.trim(), usedAgent: true };
+    }
+
+    return { text: '', usedAgent: false };
+  } catch (err: any) {
+    console.warn('⚠️ Bedrock Agent call failed, falling back to direct model:', err.message);
+    return { text: '', usedAgent: false };
   }
 }
 

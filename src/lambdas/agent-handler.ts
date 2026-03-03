@@ -219,9 +219,9 @@ async function processAgentEvent(event: any): Promise<any> {
       console.log('⚠️ No user message to process, sending helpful response');
       // NEVER fail silently — always respond to the user
       const emptyMsgResponse: Record<string, string> = {
-        'hi-IN': '🤔 मुझे आपका मैसेज समझ नहीं आया। कृपया दुबारा वॉइस मैसेज भेजें या टाइप करके बताएं की आपको क्या चाहिए 🙏',
-        'mr-IN': '🤔 मला तुमचा मेसेज समजला नाही. कृपया पुन्हा  व्हॉइस मेसेज पाठवा 🙏',
-        'en-IN': '🤔 I couldn\'t understand your message. Please send a voice message again or type what you need 🙏',
+        'hi-IN': 'मुझे आपका मैसेज समझ नहीं आया। कृपया दुबारा वॉइस मैसेज भेजें या टाइप करके बताएं की आपको क्या चाहिए।',
+        'mr-IN': 'मला तुमचा मेसेज समजला नाही. कृपया पुन्हा व्हॉइस मेसेज पाठवा।',
+        'en-IN': 'I couldn\'t understand your message. Please send a voice message again or type what you need.',
       };
       try {
         await sendEnhancedAgentMessage(phone, emptyMsgResponse[language] || emptyMsgResponse['hi-IN'], language, 'voice');
@@ -288,20 +288,20 @@ async function processAgentEvent(event: any): Promise<any> {
         
         if (errMsg.includes('transcription') || errMsg.includes('audio') || errMsg.includes('download')) {
           errorMessage = language === 'en-IN' 
-            ? '🎙️ I couldn\'t catch that voice message clearly. Could you send it again, a bit louder? I\'m all ears! 😊' 
-            : '🎙️ वॉइस मैसेज अच्छे से सुनाई नहीं दिया। क्या आप थोड़ा ज़ोर से दुबारा भेज सकते हैं? मैं सुन रहा हूँ! 😊';
+            ? '🎙️ Voice message was not clear. Could you send it again, a bit louder?' 
+            : '🎙️ वॉइस मैसेज अच्छे से सुनाई नहीं दिया। क्या आप थोड़ा ज़ोर से दुबारा भेज सकते हैं?';
         } else if (errMsg.includes('image') || errMsg.includes('Image')) {
           errorMessage = language === 'en-IN'
-            ? '📷 That photo didn\'t come through properly. Could you send it once more? 😊'
-            : '📷 फोटो ठीक से नहीं मिली। क्या आप दुबारा भेज सकते हैं? 😊';
+            ? '⚠️ That photo didn\'t come through properly. Could you send it once more?'
+            : '⚠️ फोटो ठीक से नहीं मिली। क्या आप दुबारा भेज सकते हैं?';
         } else if (errMsg.includes('timeout') || errMsg.includes('Timeout')) {
           errorMessage = language === 'en-IN'
-            ? '⏳ That took a bit long! I\'m ready now — what would you like to do? 😊'
-            : '⏳ थोड़ी देर हो गई! अब मैं तैयार हूँ — बताइए क्या करना है? 😊';
+            ? '⚠️ That took a bit long. I\'m ready now — what would you like to do?'
+            : '⚠️ थोड़ी देर हो गई। अब मैं तैयार हूँ — बताइए क्या करना है?';
         } else {
           errorMessage = language === 'en-IN'
-            ? '🙏 Oops, let me try again! What were you saying? Send a voice message or type your question 😊'
-            : '🙏 अरे, एक बार फिर बताइए! वॉइस मैसेज भेजें या टाइप करें — मैं यहाँ हूँ! 😊';
+            ? 'Something went wrong. Please tell me again — send a voice message or type your question.'
+            : 'एक बार फिर बताइए! वॉइस मैसेज भेजें या टाइप करें — मैं यहाँ हूँ।';
         }
 
         await sendEnhancedAgentMessage(phone, errorMessage, language, 'voice');
@@ -476,9 +476,9 @@ async function handleImageMessage(
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for image');
     const errMsg: Record<string, string> = {
-      'hi-IN': '📸 फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया दुबारा भेजें! 🙏',
-      'mr-IN': '📸 फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया पुन्हा पाठवा! 🙏',
-      'en-IN': '📸 Got the photo but had trouble processing it. Please send it again! 🙏',
+      'hi-IN': '⚠️ फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया दुबारा भेजें।',
+      'mr-IN': '⚠️ फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया पुन्हा पाठवा।',
+      'en-IN': '⚠️ Got the photo but had trouble processing it. Please send it again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
@@ -489,9 +489,9 @@ async function handleImageMessage(
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Image download failed');
     const errMsg: Record<string, string> = {
-      'hi-IN': '📸 फोटो डाउनलोड नहीं हो पाई। कृपया दुबारा भेजें! 🙏',
-      'mr-IN': '📸 फोटो डाउनलोड झालं नाही. कृपया पुन्हा पाठवा! 🙏',
-      'en-IN': '📸 Couldn\'t download the photo. Please send it again! 🙏',
+      'hi-IN': '⚠️ फोटो डाउनलोड नहीं हो पाई। कृपया दुबारा भेजें।',
+      'mr-IN': '⚠️ फोटो डाउनलोड झालं नाही. कृपया पुन्हा पाठवा।',
+      'en-IN': '⚠️ Couldn\'t download the photo. Please send it again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
@@ -995,10 +995,10 @@ async function createCatalog(phone: string, language: string): Promise<void> {
   // Send success message via agent
   const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
   const successMsg = lang === 'hi'
-    ? '🎉 बहुत बढ़िया! आपका उत्पाद सफलतापूर्वक जोड़ा गया है। अब यह ऑनलाइन बिक्री के लिए तैयार है!'
+    ? '✅ आपका उत्पाद सफलतापूर्वक जोड़ा गया है। अब यह ऑनलाइन बिक्री के लिए तैयार है।'
     : lang === 'mr'
-    ? '🎉 खूप छान! तुमचे उत्पादन यशस्वीरित्या जोडले गेले आहे. आता ते ऑनलाइन विक्रीसाठी तयार आहे!'
-    : '🎉 Excellent! Your product has been successfully added. It\'s now ready for online sale!';
+    ? '✅ तुमचे उत्पादन यशस्वीरित्या जोडले गेले आहे. आता ते ऑनलाइन विक्रीसाठी तयार आहे.'
+    : '✅ Your product has been successfully added. It\'s now ready for online sale.';
 
   await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
 }
@@ -1134,10 +1134,10 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
 
     const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
     const successMsg = lang === 'hi'
-      ? `✅ UPI ID *${upiId}* सफलतापूर्वक रजिस्टर हो गया! अब ग्राहक सीधे UPI से भुगतान कर सकते हैं। 💳`
+      ? `✅ UPI ID *${upiId}* सफलतापूर्वक रजिस्टर हो गया। अब ग्राहक सीधे UPI से भुगतान कर सकते हैं।`
       : lang === 'mr'
-      ? `✅ UPI ID *${upiId}* यशस्वीरित्या नोंदणीकृत! आता ग्राहक थेट UPI ने पैसे देऊ शकतात। 💳`
-      : `✅ UPI ID *${upiId}* registered successfully! Customers can now pay you directly via UPI. 💳`;
+      ? `✅ UPI ID *${upiId}* यशस्वीरित्या नोंदणीकृत। आता ग्राहक थेट UPI ने पैसे देऊ शकतात।`
+      : `✅ UPI ID *${upiId}* registered successfully. Customers can now pay you directly via UPI.`;
     await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
 
     // Also update all existing marketplace products with the new UPI ID

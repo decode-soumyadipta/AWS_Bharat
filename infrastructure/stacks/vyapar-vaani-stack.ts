@@ -11,6 +11,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { MarketplaceIntegration } from './marketplace-integration';
 
@@ -173,6 +174,13 @@ export class VyaparVaaniStack extends cdk.Stack {
       eventPattern: {
         source: events.Match.prefix('vyapar.vaani'),
       },
+    });
+
+    // Dead Letter Queue for EventBridge rule failures
+    const eventBridgeDlq = new sqs.Queue(this, 'EventBridgeDLQ', {
+      queueName: 'vyapar-vaani-eventbridge-dlq',
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
     });
 
     // CloudWatch Log Groups
@@ -584,7 +592,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: [EVENT_SOURCES.WHATSAPP],
         detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_TEXT],
       },
-      targets: [new targets.LambdaFunction(intentClassificationLambda)],
+      targets: [new targets.LambdaFunction(intentClassificationLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule 2: Voice messages → Voice Transcription
@@ -594,7 +602,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: [EVENT_SOURCES.WHATSAPP],
         detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_VOICE],
       },
-      targets: [new targets.LambdaFunction(voiceTranscriptionLambda)],
+      targets: [new targets.LambdaFunction(voiceTranscriptionLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule 3: Image messages → Image Enhancement
@@ -627,7 +635,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: ['vyapar.vaani.internal'],
         detailType: ['intent.classified'],
       },
-      targets: [new targets.LambdaFunction(entityExtractionLambda)],
+      targets: [new targets.LambdaFunction(entityExtractionLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule 5: WhatsApp message send events → WhatsApp Sender
@@ -637,7 +645,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: ['vyapar.vaani.internal'],
         detailType: ['whatsapp.message.send'],
       },
-      targets: [new targets.LambdaFunction(whatsappSenderLambda)],
+      targets: [new targets.LambdaFunction(whatsappSenderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule 6: Catalog build requested (after confirmation) → Catalog Builder
@@ -649,7 +657,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: ['vyapar.vaani.internal'],
         detailType: ['catalog.build_requested'],
       },
-      targets: [new targets.LambdaFunction(catalogBuilderLambda)],
+      targets: [new targets.LambdaFunction(catalogBuilderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule 7: Catalog created → Catalog Storage Broadcast
@@ -659,7 +667,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: ['vyapar.vaani.internal'],
         detailType: ['catalog.created'],
       },
-      targets: [new targets.LambdaFunction(catalogStorageBroadcastLambda)],
+      targets: [new targets.LambdaFunction(catalogStorageBroadcastLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // ========================================
@@ -680,7 +688,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           'order.update.requested',
         ],
       },
-      targets: [new targets.LambdaFunction(bppAdapterLambda)],
+      targets: [new targets.LambdaFunction(bppAdapterLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule: ONDC search events → BPP Adapter
@@ -696,7 +704,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           'order.init.received',
         ],
       },
-      targets: [new targets.LambdaFunction(bppAdapterLambda)],
+      targets: [new targets.LambdaFunction(bppAdapterLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Step Functions State Machine for KYC Processing
@@ -978,7 +986,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           state: ['NEW', 'KYC_PENDING'],
         },
       },
-      targets: [new targets.LambdaFunction(kycHandlerLambda)],
+      targets: [new targets.LambdaFunction(kycHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule: Voice Handler - Audio/text messages in KYC_VERIFIED, VOICE_RECEIVED, or ACTIVE state
@@ -997,7 +1005,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           state: ['KYC_VERIFIED', 'VOICE_RECEIVED', 'ACTIVE', 'CONFIRMATION_PENDING'],
         },
       },
-      targets: [new targets.LambdaFunction(voiceHandlerLambda)],
+      targets: [new targets.LambdaFunction(voiceHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Agent Handler Lambda - Unified AI agent for all message types
@@ -1018,6 +1026,8 @@ export class VyaparVaaniStack extends cdk.Stack {
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_BUSINESS_ACCOUNT_ID: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
         CONFIRMATION_HANDLER_FUNCTION_NAME: 'vyapar-vaani-confirmation-handler',
+        BEDROCK_AGENT_ID: '', // Set after agent deployment via: aws lambda update-function-configuration
+        BEDROCK_AGENT_ALIAS_ID: 'TSTALIASID',
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
     });
@@ -1031,14 +1041,17 @@ export class VyaparVaaniStack extends cdk.Stack {
     imageEnhancementLambda.grantInvoke(agentHandlerLambda);
     confirmationHandlerLambda.grantInvoke(agentHandlerLambda);
 
-    // Grant Bedrock permissions for AI agent (Nova Pro + Titan Image Generator v2)
+    // Grant Bedrock permissions for AI agent (Nova Pro + Nova Lite fallback + Titan Image Generator v2)
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ['bedrock:InvokeModel'],
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeAgent'],
         resources: [
           'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0',
+          'arn:aws:bedrock:*::foundation-model/us.amazon.nova-lite-v1:0',
           'arn:aws:bedrock:*::foundation-model/amazon.titan-image-generator-v2:0',
+          `arn:aws:bedrock:${this.region}:${this.account}:agent/*`,
+          `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/*`,
         ],
       })
     );
@@ -1092,7 +1105,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           handler: ['AGENT'],
         },
       },
-      targets: [new targets.LambdaFunction(agentHandlerLambda)],
+      targets: [new targets.LambdaFunction(agentHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule: Image Handler - Image messages in IMAGE_PENDING or ACTIVE state
@@ -1108,7 +1121,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           state: ['IMAGE_PENDING', 'ACTIVE'],
         },
       },
-      targets: [new targets.LambdaFunction(imageHandlerLambda)],
+      targets: [new targets.LambdaFunction(imageHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule: Image Request - Send WhatsApp message requesting product image
@@ -1120,7 +1133,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         source: [EVENT_SOURCES.INTERNAL],
         detailType: ['voice.image_request.needed'],
       },
-      targets: [new targets.LambdaFunction(whatsappSenderLambda)],
+      targets: [new targets.LambdaFunction(whatsappSenderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
     // Rule: Confirmation Handler - Button clicks in CONFIRMATION_PENDING state
@@ -1143,7 +1156,192 @@ export class VyaparVaaniStack extends cdk.Stack {
           handler: ['CONFIRMATION'],
         },
       },
-      targets: [new targets.LambdaFunction(confirmationHandlerLambda)],
+      targets: [new targets.LambdaFunction(confirmationHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
+    });
+
+    // ========================================
+    // Bedrock Agent — Agentic AI with Tool-Use
+    // ========================================
+
+    // Agent Tools Lambda — implements the 5 action group tools
+    const agentToolsLambda = new lambda.Function(this, 'AgentToolsLambda', {
+      functionName: 'vyapar-vaani-agent-tools',
+      description: 'Bedrock Agent action group — market prices, catalog, orders, stock, analytics',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/agent-tools.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        MARKETPLACE_PRODUCTS_TABLE: 'marketplace-products',
+      },
+      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // Grant Bedrock Agent service permission to invoke the tools Lambda
+    agentToolsLambda.addPermission('BedrockAgentInvoke', {
+      principal: new iam.ServicePrincipal('bedrock.amazonaws.com'),
+      action: 'lambda:InvokeFunction',
+      sourceAccount: this.account,
+    });
+
+    // Bedrock Agent IAM Role
+    const bedrockAgentRole = new iam.Role(this, 'BedrockAgentRole', {
+      roleName: 'vyapar-vaani-bedrock-agent-role',
+      assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
+      description: 'Role for Vyapar Vaani Bedrock Agent',
+    });
+
+    bedrockAgentRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['bedrock:InvokeModel'],
+      resources: [
+        'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0',
+        'arn:aws:bedrock:*::foundation-model/us.amazon.nova-lite-v1:0',
+      ],
+    }));
+
+    bedrockAgentRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['lambda:InvokeFunction'],
+      resources: [agentToolsLambda.functionArn],
+    }));
+
+    // Bedrock Agent (L1 CfnAgent construct)
+    const bedrockAgent = new cdk.CfnResource(this, 'VyaparVaaniBedrockAgent', {
+      type: 'AWS::Bedrock::Agent',
+      properties: {
+        AgentName: 'vyapar-vaani-agent',
+        Description: 'Vyapar Vaani AI agent — helps rural Indian sellers manage commerce via WhatsApp voice/text',
+        AgentResourceRoleArn: bedrockAgentRole.roleArn,
+        FoundationModel: 'amazon.nova-pro-v1:0',
+        IdleSessionTTLInSeconds: 600,
+        Instruction: [
+          'You are Vyapar Vaani, an AI assistant for rural Indian sellers.',
+          'You help sellers manage products, check market prices, track orders, and grow their business.',
+          'You communicate in Hindi, English, Marathi, and Bengali.',
+          'Always use the available tools to fetch real data before responding.',
+          'Use get_market_price to provide live mandi prices.',
+          'Use search_catalog to look up seller products.',
+          'Use get_order_details to check order status.',
+          'Use update_stock to change product quantities.',
+          'Use get_seller_analytics to provide business insights.',
+          'Keep responses concise. Use ✅ ❌ ⚠️ sparingly.',
+        ].join(' '),
+        ActionGroups: [
+          {
+            ActionGroupName: 'VyaparVaaniTools',
+            ActionGroupExecutor: {
+              Lambda: agentToolsLambda.functionArn,
+            },
+            Description: 'Tools for market prices, catalog, orders, stock, and analytics',
+            FunctionSchema: {
+              Functions: [
+                {
+                  Name: 'get_market_price',
+                  Description: 'Get live mandi/commodity prices for agricultural products',
+                  Parameters: {
+                    product_name: {
+                      Type: 'string',
+                      Description: 'Name of the product/commodity (e.g., tomato, potato, onion)',
+                      Required: true,
+                    },
+                    region: {
+                      Type: 'string',
+                      Description: 'Region or market name (optional)',
+                      Required: false,
+                    },
+                  },
+                },
+                {
+                  Name: 'search_catalog',
+                  Description: 'Search seller product catalog from database',
+                  Parameters: {
+                    seller_phone: {
+                      Type: 'string',
+                      Description: 'Seller phone number',
+                      Required: true,
+                    },
+                    query: {
+                      Type: 'string',
+                      Description: 'Optional search filter for product name or category',
+                      Required: false,
+                    },
+                  },
+                },
+                {
+                  Name: 'get_order_details',
+                  Description: 'Look up order status and details by order ID',
+                  Parameters: {
+                    order_id: {
+                      Type: 'string',
+                      Description: 'The order ID to look up',
+                      Required: true,
+                    },
+                  },
+                },
+                {
+                  Name: 'update_stock',
+                  Description: 'Update product stock quantity for a seller',
+                  Parameters: {
+                    product_id: {
+                      Type: 'string',
+                      Description: 'Product ID to update',
+                      Required: true,
+                    },
+                    new_quantity: {
+                      Type: 'integer',
+                      Description: 'New stock quantity',
+                      Required: true,
+                    },
+                    seller_phone: {
+                      Type: 'string',
+                      Description: 'Seller phone number who owns the product',
+                      Required: true,
+                    },
+                  },
+                },
+                {
+                  Name: 'get_seller_analytics',
+                  Description: 'Get sales analytics — revenue, orders, top products for a seller',
+                  Parameters: {
+                    seller_phone: {
+                      Type: 'string',
+                      Description: 'Seller phone number',
+                      Required: true,
+                    },
+                    period: {
+                      Type: 'string',
+                      Description: 'Time period: today, week, month, all-time',
+                      Required: false,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    new cdk.CfnOutput(this, 'BedrockAgentId', {
+      value: bedrockAgent.ref,
+      description: 'Bedrock Agent ID for InvokeAgent calls',
+      exportName: 'VyaparVaaniBedrockAgentId',
+    });
+
+    new cdk.CfnOutput(this, 'AgentToolsLambdaArn', {
+      value: agentToolsLambda.functionArn,
+      description: 'Agent Tools Lambda ARN',
+      exportName: 'VyaparVaaniAgentToolsLambdaArn',
+    });
+
+    new cdk.CfnOutput(this, 'EventBridgeDLQUrl', {
+      value: eventBridgeDlq.queueUrl,
+      description: 'DLQ for failed EventBridge rule deliveries',
+      exportName: 'VyaparVaaniEventBridgeDLQUrl',
     });
 
     // Outputs
