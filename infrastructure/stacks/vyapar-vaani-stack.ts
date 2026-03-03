@@ -983,7 +983,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_IMAGE],
         detail: {
           handler: ['KYC'],
-          state: ['NEW', 'KYC_PENDING'],
+          state: ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE'],
         },
       },
       targets: [new targets.LambdaFunction(kycHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
@@ -1087,7 +1087,7 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Rule: Agent Handler - ALL messages routed to AGENT handler across all post-KYC states
+    // Rule: Agent Handler - ALL messages routed to AGENT handler across ALL states (including NEW, GUEST)
     new events.Rule(this, 'AgentHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-agent-handler-rule',
@@ -1101,7 +1101,7 @@ export class VyaparVaaniStack extends cdk.Stack {
           WHATSAPP_EVENT_TYPES.BUTTON_CLICKED,
         ],
         detail: {
-          state: ['ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'],
+          state: ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'],
           handler: ['AGENT'],
         },
       },
