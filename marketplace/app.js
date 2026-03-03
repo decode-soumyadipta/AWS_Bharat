@@ -4,6 +4,9 @@
  */
 
 const API_BASE_URL = window.API_BASE_URL || 'https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/';
+const API_KEY = 'xGe2KPsiRr2YBfmSLmPBd22NJTphvbLP6H0bdzdh';
+const API_HEADERS = { 'x-api-key': API_KEY };
+const API_HEADERS_JSON = { 'Content-Type': 'application/json', 'x-api-key': API_KEY };
 
 // ── Global State ──
 let currentUser = null;
@@ -253,7 +256,7 @@ function initComponents() {
 // ── PRODUCTS ──
 async function loadProducts() {
   try {
-    const r = await fetch(`${API_BASE_URL}/products`);
+    const r = await fetch(`${API_BASE_URL}/products`, { headers: API_HEADERS });
     const d = await r.json();
     if (d.success && d.products) {
       const changed = productsChanged(d.products);
@@ -508,7 +511,7 @@ async function handleSubmitOrder(e) {
   };
   try {
     showToast('Placing order...', 'info');
-    const r = await fetch(`${API_BASE_URL}/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orderData) });
+    const r = await fetch(`${API_BASE_URL}/orders`, { method: 'POST', headers: API_HEADERS_JSON, body: JSON.stringify(orderData) });
     const result = await r.json();
     if (result.success || r.status === 207) {
       // Store order(s) locally for panel tracking
@@ -637,7 +640,7 @@ async function submitRef(orderId) {
   try {
     showToast('Verifying...', 'info');
     const r = await fetch(`${API_BASE_URL}/orders/${orderId}/verify-payment`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: API_HEADERS_JSON,
       body: JSON.stringify({ verificationType: 'manual_ref', transactionRef: ref }),
     });
     const res = await r.json();
@@ -655,7 +658,7 @@ async function submitSS(orderId) {
     btn.disabled = true; btn.textContent = '🔄 Analyzing...';
     const base64 = await fileToBase64(file);
     const r = await fetch(`${API_BASE_URL}/orders/${orderId}/verify-payment`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: API_HEADERS_JSON,
       body: JSON.stringify({ verificationType: 'screenshot', screenshotBase64: base64 }),
     });
     const res = await r.json();
@@ -768,7 +771,7 @@ async function pollOrders() {
   let changed = false;
   for (const o of active) {
     try {
-      const r = await fetch(`${API_BASE_URL}/orders/${o.orderId}`);
+      const r = await fetch(`${API_BASE_URL}/orders/${o.orderId}`, { headers: API_HEADERS });
       if (!r.ok) continue;
       const data = await r.json();
       const newStatus = data.status || data.order?.status;

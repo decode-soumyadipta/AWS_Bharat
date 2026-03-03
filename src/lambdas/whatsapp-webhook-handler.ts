@@ -400,6 +400,18 @@ export async function handler(
       // Publish to EventBridge for processing
       await publishToEventBridge(inboundEvent, userState, routeDecision);
 
+      // Send typing indicator IMMEDIATELY in webhook (before EventBridge + Lambda cold start delay)
+      // This ensures the user sees "typing..." as soon as their message is received
+      try {
+        const { sendTypingIndicator, markMessageAsRead, setLastMessageId } = await import('./whatsapp-message-sender');
+        setLastMessageId(inboundEvent.from, inboundEvent.messageId);
+        // Fire and forget — don't block the webhook response
+        Promise.all([
+          sendTypingIndicator(inboundEvent.from, inboundEvent.messageId),
+          markMessageAsRead(inboundEvent.messageId),
+        ]).catch(() => {}); // Never fail on typing indicator
+      } catch {} // Never fail on typing indicator
+
       return {
         statusCode: 200,
         body: JSON.stringify({ 

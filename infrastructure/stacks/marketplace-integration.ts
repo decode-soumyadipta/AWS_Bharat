@@ -231,7 +231,7 @@ export class MarketplaceIntegration extends Construct {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
-        allowHeaders: ['Content-Type', 'Authorization'],
+        allowHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
       },
     });
 
