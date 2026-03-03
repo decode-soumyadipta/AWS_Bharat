@@ -168,13 +168,15 @@ export async function processWithEnhancedAgent(
   // Bedrock Agent only has catalog-search/market tools — it CANNOT do STORE_DATA, SKIP_KYC, etc.
   // Use enhanced prompt (with full STORE_DATA logic) for all product-adding states.
   // Only use Bedrock Agent for ACTIVE users who have products and need catalog queries.
-  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'ACTIVE', 'CONFIRMATION_PENDING'];
+  // Onboarding states need STORE_DATA/SKIP_KYC logic that only the enhanced prompt supports.
+  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'];
   
   if (skipBedrockAgentStates.includes(currentUserState)) {
     console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
     response = await callAgentModel(agentPrompt);
   } else {
-    // ACTIVE/CONFIRMATION_PENDING users — try Bedrock Agent for catalog queries
+    // ACTIVE users — try Bedrock Agent for dynamic tool-use (catalog queries, analytics)
+    // Falls back to enhanced prompt if agent unavailable or returns empty
     const agentResult = await callBedrockAgentIfAvailable(
       userMessage,
       phone,
@@ -320,6 +322,9 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
 
 /**
  * Get analytics information using date-range or top-selling queries
+ * 
+ * Passes both sellerId (UUID) and phone number to analytics functions
+ * because marketplace orders use phone as seller key while ONDC uses UUID.
  */
 async function getAnalyticsInfo(
   phone: string,
@@ -339,12 +344,12 @@ async function getAnalyticsInfo(
     const lang = language.split('-')[0] as 'hi' | 'en' | 'mr';
 
     if (query.type === 'top_selling') {
-      const topProducts = await getTopSellingProducts(userState.sellerId, 5);
+      const topProducts = await getTopSellingProducts(userState.sellerId, 5, undefined, phone);
       return formatTopSellingProducts(topProducts, lang);
     }
 
     if (query.type === 'sales_summary') {
-      const summary = await getSalesSummary(userState.sellerId);
+      const summary = await getSalesSummary(userState.sellerId, undefined, phone);
       if (lang === 'hi') {
         return `बिक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई। टॉप: ${summary.topProduct || 'कोई नहीं'}`;
       } else if (lang === 'mr') {
@@ -354,7 +359,7 @@ async function getAnalyticsInfo(
     }
 
     // Date-range queries: yesterday, today, last_week, last_month  
-    const analytics = await getDateRangeAnalytics(userState.sellerId, query.type);
+    const analytics = await getDateRangeAnalytics(userState.sellerId, query.type, phone);
     return formatDateRangeAnalytics(analytics, lang);
   } catch (error) {
     console.error('Analytics query failed:', error);

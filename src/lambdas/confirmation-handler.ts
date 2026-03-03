@@ -59,7 +59,8 @@ export const handler = async (event: any): Promise<any> => {
   try {
     // Parse event detail with multiple fallback paths
     const eventDetail = event.detail || event;
-    let { phone, action, field } = eventDetail;
+    const { phone } = eventDetail;
+    let { action, field } = eventDetail;
 
     console.log('Parsed event detail:', {
       phone,

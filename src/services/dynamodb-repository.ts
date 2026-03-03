@@ -387,10 +387,15 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
 /**
  * Get all orders for a seller using GSI2
  * 
- * @param sellerId - Seller ID
+ * Queries by sellerId (UUID from registration) AND optionally by phone number,
+ * because marketplace orders store GSI2PK as SELLER#<phone> while ONDC orders
+ * use SELLER#<uuid>. Merges and deduplicates by orderId.
+ * 
+ * @param sellerId - Seller ID (UUID)
+ * @param sellerPhone - Optional seller phone number for marketplace order lookup
  * @returns Array of orders
  */
-export async function getOrdersBySeller(sellerId: string): Promise<Order[]> {
+export async function getOrdersBySeller(sellerId: string, sellerPhone?: string): Promise<Order[]> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
     IndexName: 'GSI2',
@@ -402,7 +407,35 @@ export async function getOrdersBySeller(sellerId: string): Promise<Order[]> {
   };
 
   const result = await docClient.send(new QueryCommand(params));
-  return (result.Items || []) as Order[];
+  const orders = (result.Items || []) as Order[];
+
+  // Also query by phone number if provided and different from sellerId
+  // (marketplace submitOrder stores GSI2PK as SELLER#<phone>)
+  if (sellerPhone && sellerPhone !== sellerId) {
+    const phoneParams: QueryCommandInput = {
+      TableName: TABLE_NAME,
+      IndexName: 'GSI2',
+      KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `SELLER#${sellerPhone}`,
+        ':sk': 'STATUS#',
+      },
+    };
+
+    const phoneResult = await docClient.send(new QueryCommand(phoneParams));
+    const phoneOrders = (phoneResult.Items || []) as Order[];
+
+    // Deduplicate by orderId
+    const seenIds = new Set(orders.map(o => o.orderId));
+    for (const order of phoneOrders) {
+      if (!seenIds.has(order.orderId)) {
+        orders.push(order);
+        seenIds.add(order.orderId);
+      }
+    }
+  }
+
+  return orders;
 }
 
 /**

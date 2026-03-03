@@ -291,7 +291,7 @@ export async function getYesterdayOrders(phone: string): Promise<any[]> {
 
   // Query orders from DynamoDB
   const { getOrdersBySeller } = await import('./dynamodb-repository');
-  const allOrders = await getOrdersBySeller(userState.sellerId);
+  const allOrders = await getOrdersBySeller(userState.sellerId, phone);
 
   // Filter orders from yesterday
   const yesterdayOrders = allOrders.filter((order) => {

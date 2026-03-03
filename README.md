@@ -13,6 +13,9 @@ Enabling low-literacy merchants to sell online through voice messages — no typ
 [![Node.js](https://img.shields.io/badge/Node.js-20.x-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Amazon Bedrock](https://img.shields.io/badge/Amazon%20Bedrock-AI-232F3E?logo=amazon-aws)](https://aws.amazon.com/bedrock/)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp-Business%20API-25D366?logo=whatsapp&logoColor=white)](https://business.whatsapp.com/)
+[![ESLint](https://img.shields.io/badge/ESLint-0%20errors-4B32C3?logo=eslint&logoColor=white)](https://eslint.org/)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
+[![ONDC](https://img.shields.io/badge/ONDC-Beckn%20Protocol-0055A4)](https://ondc.org/)
 
 [**Live Marketplace**](https://d29x1w2stzqkag.cloudfront.net) · [**API**](https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/) · [**Webhook**](https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook) · [**Docs**](docs/)
 
@@ -166,15 +169,51 @@ sequenceDiagram
 
 The core challenge is **bridging the digital divide** — turning unstructured voice in regional languages into structured e-commerce data, with zero manual intervention.
 
-| AI Service | Why It's Essential |
-|---|---|
-| **Amazon Nova Pro** (Bedrock) | Conversational AI agent — understands Hindi/Hinglish intent, extracts product entities from natural speech (e.g., *"do sau pachaas rupaye kilo tamatar"* → ₹250/kg tomatoes), generates descriptions, verifies UPI screenshots via vision |
-| **Amazon Transcribe** | Converts Hindi/Marathi voice messages to text — the only input method for low-literacy sellers |
-| **Titan Image Gen v2** (Bedrock) | Enhances poor-quality phone photos into professional product images — critical for marketplace trust |
-| **Amazon Textract** | Extracts PAN card details for automated KYC — no manual data entry |
-| **Amazon Rekognition** | Image quality analysis + content moderation before marketplace listing |
-| **Amazon Polly** (Neural) | Speaks responses back in seller's language — completing the voice-first loop |
-| **Amazon Nova Lite** (Bedrock) | Lightweight image quality feedback and price recommendation reasoning |
+| AI Service | Why It's Essential | Where Used |
+|---|---|---|
+| **Amazon Nova Pro** (Bedrock) | Conversational AI agent — understands Hindi/Hinglish intent, extracts product entities from natural speech (e.g., *"do sau pachaas rupaye kilo tamatar"* → ₹250/kg tomatoes), generates descriptions, verifies UPI screenshots via vision | `enhanced-agent.ts` → `callAgentModel()` every user interaction |
+| **Amazon Bedrock Agent** (Agentic AI) | Managed agent with tool-use capabilities — autonomously calls catalog search, analytics, and market price tools for ACTIVE sellers. True agentic behavior vs simple prompt-routing | `enhanced-agent.ts` → `callBedrockAgentIfAvailable()` for ACTIVE state |
+| **Amazon Transcribe** | Converts Hindi/Marathi voice messages to text — the only input method for low-literacy sellers | `voice-transcriber.ts` — processes every voice message |
+| **Titan Image Gen v2** (Bedrock) | Enhances poor-quality phone photos into professional product images — critical for marketplace trust | `image-enhancer.ts` — triggered on every product photo |
+| **Amazon Textract** | Extracts PAN card details (name, number, DOB) for automated KYC — no manual data entry | `document-extraction.ts` — KYC pipeline |
+| **Amazon Rekognition** | Image quality analysis + content moderation before marketplace listing | `kyc-handler.ts` — validates document images |
+| **Amazon Polly** (Neural SSML) | Speaks responses back in seller's language with natural prosody — completing the voice-first loop | `whatsapp-message-sender.ts` — every response |
+| **Amazon Nova Lite** (Bedrock) | Fast fallback model when Nova Pro times out. Also used for lightweight reasoning tasks | `enhanced-agent.ts` — 3-tier fallback chain |
+
+### AI Decision Flow
+
+Every user message passes through this pipeline:
+
+1. **Voice → Text**: Amazon Transcribe (if voice message)
+2. **Intent Detection**: Regex-based fast-path for price queries, analytics, language switch
+3. **Context Assembly**: DynamoDB state + conversation memory + partial catalog data + live market prices
+4. **Model Invocation**: Nova Pro (12s timeout) → retry (8s) → Nova Lite fallback (10s)
+5. **Bedrock Agent**: For ACTIVE sellers, the managed Bedrock Agent with tool-use runs first; falls back to direct model if unavailable
+6. **Response Parsing**: Structured MESSAGE/ACTION/DATA extraction from model output
+7. **Action Execution**: EventBridge routes STORE_DATA, CREATE_CATALOG, DELETE_PRODUCT, REGISTER_UPI to handler Lambdas
+8. **Voice Synthesis**: Amazon Polly (SSML) converts response to audio, sent via WhatsApp
+
+---
+
+## AWS Services — Why Each One
+
+| Service | Role | Why This Service |
+|---|---|---|
+| **Lambda** (17 functions) | All compute — webhook, agent, KYC, catalog, voice, image, marketplace API | Zero cold-start cost for bursty WhatsApp traffic; pay-per-invocation fits hackathon budget |
+| **DynamoDB** (single-table) | All state — user sessions, seller profiles, catalog items, orders, conversations | Single-digit ms latency for real-time WhatsApp responses; single-table design with 4 GSIs avoids joins |
+| **EventBridge** | Event-driven routing between all Lambdas | Decouples webhook from processing; 30-day event archive for debugging; pattern matching routes to correct handler |
+| **S3** (3 buckets) | Product images, KYC documents, marketplace SPA | Presigned URLs for secure image access; static website hosting for marketplace |
+| **CloudFront** | CDN for marketplace SPA | Sub-100ms page loads across India; HTTPS by default |
+| **API Gateway v2** (HTTP) | WhatsApp webhook endpoint | Lower latency than REST API; Lambda proxy integration |
+| **API Gateway v1** (REST) | Marketplace API (products, orders, payments) | API key support for marketplace security; CORS preflight handling |
+| **Step Functions** | KYC validation pipeline | Orchestrates Textract → validation → registration with built-in retry/error handling |
+| **Polly** (Neural) | Voice response generation | Neural voices (Kajal/Hindi, Aditi/Marathi) sound natural; SSML for prosody control |
+| **Bedrock** | Foundation model inference | Managed service — no model hosting; Nova Pro/Lite for text, Titan for images |
+| **Transcribe** | Voice-to-text | Hindi/Marathi language support; real-time transcription |
+| **Textract** | Document OCR | Structured data extraction from PAN cards; handles low-quality photos |
+| **KMS** | Encryption at rest | All DynamoDB data and S3 objects encrypted |
+| **CloudWatch** | Monitoring + alerting | 9 alarms, composite health, custom metrics, SNS email alerts |
+| **SNS** | Alert notifications | Email alerts on alarm state changes |
 
 ---
 
@@ -193,19 +232,54 @@ The core challenge is **bridging the digital divide** — turning unstructured v
 
 ---
 
+## ONDC Beckn Protocol Integration
+
+Vyapar Vaani implements the ONDC Beckn Protocol (v1.2.0) for interoperable open commerce:
+
+- **BPP (Buyer Platform Provider)**: Every seller registered through WhatsApp gets a unique ONDC subscriber ID (`vyapar-vaani.ondc.in/sellers/<uuid>`)
+- **Ed25519 Signing**: Each seller gets a cryptographic key pair for Beckn request signing, stored in S3
+- **Catalog Broadcast**: Product additions trigger `on_search` responses in Beckn format
+- **Order Protocol**: Orders follow Beckn state machine (Created → Accepted → Packed → Shipped → Delivered)
+- **Domain**: `ONDC:RET10` (Food & Grocery)
+
+This means products listed via WhatsApp voice messages are discoverable by any ONDC-compatible buyer app across India.
+
+---
+
+## Code Quality
+
+| Check | Status |
+|---|---|
+| TypeScript strict compilation | 0 errors |
+| ESLint (typescript-eslint) | 0 errors, warnings-only |
+| CI/CD | GitHub Actions (lint → build → test → deploy) |
+| Tests | Unit (27) + Integration (5) + Property-based (27) |
+
+```bash
+npm run lint          # ESLint check
+npm run lint:fix      # Auto-fix
+npx tsc --noEmit      # Type check
+npm test              # All tests
+```
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | **Compute** | AWS Lambda (Node.js 20.x) — 17+ functions |
-| **AI/ML** | Amazon Bedrock (Nova Pro, Nova Lite, Titan Image), Transcribe, Polly, Textract, Rekognition |
+| **AI/ML** | Amazon Bedrock (Nova Pro, Nova Lite, Titan Image), Bedrock Agent (tool-use), Transcribe, Polly, Textract, Rekognition |
 | **Data** | DynamoDB (single-table design, 4 GSIs, TTL), S3 |
 | **Orchestration** | EventBridge (event-driven routing, 30-day archive), Step Functions (KYC pipeline) |
 | **API** | API Gateway v2 (HTTP — webhook), API Gateway v1 (REST — marketplace) |
 | **Frontend** | Vanilla JS SPA, CloudFront CDN, S3 hosting |
-| **Security** | KMS encryption at rest, WhatsApp signature validation |
+| **Security** | KMS encryption at rest, WhatsApp signature validation, API key auth |
 | **Monitoring** | CloudWatch (9 alarms + composite health), SNS email alerts, custom metrics namespace |
 | **IaC** | AWS CDK (TypeScript) |
+| **CI/CD** | GitHub Actions (lint → build → test → deploy) |
+| **Code Quality** | ESLint + typescript-eslint, TypeScript strict mode |
+| **Protocol** | ONDC Beckn v1.2.0, Ed25519 signing |
 
 ---
 
@@ -224,11 +298,35 @@ The core challenge is **bridging the digital divide** — turning unstructured v
 
 ## Monitoring
 
+### Real CloudWatch Metrics (Last 14 Days)
+
+*Pulled from `AWS/Lambda` and `VyaparVaani` namespaces — real production data.*
+
+| Lambda Function | Invocations | Avg Latency | P100 Latency |
+|---|---|---|---|
+| **whatsapp-webhook** | 4,234 | 50ms | 8,992ms |
+| **agent-handler** | 97 | 12,123ms | 200,074ms |
+| **voice-transcription** | 247 | 4,785ms | 64,399ms |
+| **image-enhancement** | 108 | 2,374ms | 12,017ms |
+| **kyc-handler** | 37 | 16,588ms | 30,000ms |
+
+### Custom Metrics (VyaparVaani Namespace)
+
+| Metric | Description |
+|---|---|
+| `TimeToNetwork` | End-to-end latency from webhook receipt to WhatsApp response delivery |
+| `MediaDownloadDuration` | Time to download voice/image files from WhatsApp CDN |
+| `KYCProcessingDuration` | Full PAN card processing pipeline (Textract + validation + registration) |
+| `StateTransitionDuration` | Time for user state transitions in DynamoDB |
+| `StateTransition` | Count of state transitions (NEW → KYC_PENDING → ACTIVE etc.) |
+| `Voice/TranscriptionFailure` | Failed voice-to-text conversions |
+
+### Alarms & Alerting
+
 - **9 CloudWatch Alarms** — error rate, state transitions, media downloads, KYC, transcription, image enhancement, DynamoDB throttling, Lambda errors, Lambda duration
 - **Composite Health Alarm** — triggers on any critical alarm
-- **Custom Metrics** — `TimeToNetwork`, `CatalogRejectionRate`, `ImageEnhancementSuccessRate`, `OrderAcceptanceRate`
-- **Event Archive** — 30-day EventBridge retention for all `vyapar.vaani.*` events
 - **SNS Notifications** — email alerts on alarm state changes
+- **Event Archive** — 30-day EventBridge retention for all `vyapar.vaani.*` events
 
 ---
 

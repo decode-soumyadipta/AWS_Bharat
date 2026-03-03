@@ -48,12 +48,13 @@ export interface DateRangeAnalytics {
 export async function getTopSellingProducts(
   sellerId: string,
   limit: number = 5,
-  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000 // 30 days
+  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000, // 30 days
+  sellerPhone?: string
 ): Promise<ProductSalesStats[]> {
-  console.log(`📊 Getting top selling products for seller: ${sellerId}`);
+  console.log(`📊 Getting top selling products for seller: ${sellerId} (phone: ${sellerPhone || 'N/A'})`);
 
-  // Get all orders for the seller
-  const allOrders = await getOrdersBySeller(sellerId);
+  // Get all orders for the seller (queries both UUID and phone-based keys)
+  const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
 
   // Filter orders within time range
   const cutoffTime = Date.now() - timeRangeMs;
@@ -111,7 +112,8 @@ export async function getTopSellingProducts(
  */
 export async function getSalesSummary(
   sellerId: string,
-  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000 // 30 days
+  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000, // 30 days
+  sellerPhone?: string
 ): Promise<{
   totalOrders: number;
   totalRevenue: number;
@@ -119,7 +121,7 @@ export async function getSalesSummary(
   topProduct: string | null;
   timeRange: string;
 }> {
-  const allOrders = await getOrdersBySeller(sellerId);
+  const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
   const cutoffTime = Date.now() - timeRangeMs;
   const recentOrders = allOrders.filter((order) => order.createdAt >= cutoffTime);
 
@@ -130,7 +132,7 @@ export async function getSalesSummary(
   const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
   // Get top product
-  const topProducts = await getTopSellingProducts(sellerId, 1, timeRangeMs);
+  const topProducts = await getTopSellingProducts(sellerId, 1, timeRangeMs, sellerPhone);
   const topProduct = topProducts.length > 0 ? topProducts[0].productName : null;
 
   const timeRangeDays = Math.floor(timeRangeMs / (24 * 60 * 60 * 1000));
@@ -199,7 +201,8 @@ export function formatTopSellingProducts(
  */
 export async function getDateRangeAnalytics(
   sellerId: string,
-  dateQuery: string
+  dateQuery: string,
+  sellerPhone?: string
 ): Promise<DateRangeAnalytics> {
   const now = new Date();
   let startTime: number;
@@ -267,7 +270,7 @@ export async function getDateRangeAnalytics(
     }
   }
 
-  const allOrders = await getOrdersBySeller(sellerId);
+  const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
   const filteredOrders = allOrders.filter(
     (order) => order.createdAt >= startTime && order.createdAt <= endTime
   );

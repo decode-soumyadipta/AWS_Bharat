@@ -1,0 +1,42 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "plugins": ["@typescript-eslint"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended"
+  ],
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "@typescript-eslint/no-require-imports": "off",
+    "no-console": "off",
+    "prefer-const": "error",
+    "no-var": "error",
+    "eqeqeq": ["error", "always"],
+    "no-throw-literal": "error",
+    "no-case-declarations": "warn",
+    "no-useless-escape": "warn",
+    "no-misleading-character-class": "warn"
+  },
+  "ignorePatterns": [
+    "dist/",
+    "node_modules/",
+    "coverage/",
+    "cdk.out/",
+    "aws_env/",
+    "backend/",
+    "marketplace/",
+    "*.js",
+    "*.d.ts"
+  ]
+}
