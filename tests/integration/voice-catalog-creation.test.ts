@@ -23,7 +23,6 @@ import * as mediaDownload from '../../src/services/media-download';
 import * as stateManager from '../../src/services/state-manager';
 import * as partialDataStore from '../../src/services/partial-data-store';
 import * as languageManager from '../../src/services/language-manager';
-import * as missingInfoHandler from '../../src/services/missing-info-handler';
 import { lambdaClient, s3Client, eventBridgeClient } from '../../src/config/aws-clients';
 import { InvokeCommand } from '@aws-sdk/client-lambda';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -68,7 +67,6 @@ jest.mock('../../src/services/media-download');
 jest.mock('../../src/services/state-manager');
 jest.mock('../../src/services/partial-data-store');
 jest.mock('../../src/services/language-manager');
-jest.mock('../../src/services/missing-info-handler');
 
 // Mock DynamoDB repository
 jest.mock('../../src/services/dynamodb-repository', () => ({
@@ -215,16 +213,6 @@ describe('Voice Catalog Creation Integration Test', () => {
     });
     (partialDataStore.deletePartialData as jest.Mock).mockResolvedValue(undefined);
     (partialDataStore.isPartialDataComplete as jest.Mock).mockReturnValue(true);
-    
-    // Mock missing info handler
-    (missingInfoHandler.validateRequiredFields as jest.Mock).mockReturnValue({
-      missingFields: [],
-      isComplete: true,
-    });
-    (missingInfoHandler.generateAndSendVoicePrompt as jest.Mock).mockResolvedValue({
-      success: true,
-      audioUrl: 's3://test-products-bucket/voice-prompts/test.mp3',
-    });
   });
 
   afterEach(() => {

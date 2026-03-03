@@ -176,8 +176,8 @@ export async function updateUserState(
   const previousState = currentState?.state || 'UNKNOWN';
   
   const now = Date.now();
-  const ttl = newState === 'ACTIVE' 
-    ? undefined // No TTL for active users
+  const ttl = (newState === 'ACTIVE' || newState === 'GUEST_ACTIVE' || newState === 'KYC_VERIFIED')
+    ? undefined // No TTL for active/verified/guest users — prevent re-NEW-ification
     : Math.floor(now / 1000) + (STATE_TTL_DAYS * 24 * 60 * 60);
 
   const updateExpressions: string[] = ['#state = :state', '#updatedAt = :updatedAt'];

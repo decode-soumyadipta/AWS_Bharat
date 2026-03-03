@@ -214,21 +214,38 @@ export async function generateConfirmation(
   const quantity = partialData.quantity ? `${partialData.quantity} ${unit}` : '—';
   const category = partialData.category || '—';
   
-  // Fetch today's market price for the product
+  // Fetch today's LIVE market price from data.gov.in API (not hardcoded fallback)
   let marketPriceLine = '';
   let marketVoiceLine = '';
   try {
-    const { getLocalMarketPrice } = await import('../tools/web-search');
-    const marketPrice = getLocalMarketPrice(productName);
-    if (marketPrice.found) {
+    const { fetchLiveMarketPrice, getLocalMarketPrice } = await import('../tools/web-search');
+    let marketPrice;
+    try {
+      // Primary: Live price from data.gov.in
+      const liveResult = await fetchLiveMarketPrice(productName);
+      if (liveResult.found) {
+        marketPrice = liveResult;
+      }
+    } catch (liveErr) {
+      console.warn('Live market price fetch failed, using fallback:', liveErr);
+    }
+    // Fallback: static prices only if live API fails
+    if (!marketPrice) {
+      const fallback = getLocalMarketPrice(productName);
+      if (fallback.found) {
+        marketPrice = { found: true, priceInfo: fallback.priceInfo, sourceName: fallback.sourceName, sourceUrl: fallback.sourceUrl, isLive: false };
+      }
+    }
+    if (marketPrice && marketPrice.found) {
+      const liveTag = marketPrice.isLive ? '🟢 LIVE' : '📋';
       if (lang === 'hi-IN') {
-        marketPriceLine = `\n📈 आज का बाज़ार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketPriceLine = `\n${liveTag} आज का बाज़ार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}`;
         marketVoiceLine = `, आज बाज़ार भाव ${marketPrice.priceInfo}`;
       } else if (lang === 'mr-IN') {
-        marketPriceLine = `\n📈 आजचा बाजार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketPriceLine = `\n${liveTag} आजचा बाजार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}`;
         marketVoiceLine = `, आज बाजार भाव ${marketPrice.priceInfo}`;
       } else {
-        marketPriceLine = `\n📈 Today's market: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}: ${marketPrice.sourceUrl}`;
+        marketPriceLine = `\n${liveTag} Today's market: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}`;
         marketVoiceLine = `, today's market price ${marketPrice.priceInfo}`;
       }
     }

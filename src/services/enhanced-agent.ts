@@ -168,7 +168,7 @@ export async function processWithEnhancedAgent(
   // Bedrock Agent only has catalog-search/market tools — it CANNOT do STORE_DATA, SKIP_KYC, etc.
   // Use enhanced prompt (with full STORE_DATA logic) for all product-adding states.
   // Only use Bedrock Agent for ACTIVE users who have products and need catalog queries.
-  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING'];
+  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'ACTIVE', 'CONFIRMATION_PENDING'];
   
   if (skipBedrockAgentStates.includes(currentUserState)) {
     console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
@@ -373,25 +373,39 @@ function detectPriceQuery(message: string, language: LanguageCode): string | nul
     /(\w+)\s*(?:ka|ki|ke)\s*(?:bhav|keemat|rate|price|daam|dam)/i,
     /(?:bhav|keemat|rate|price|daam|dam)\s*(?:kya|kitna|kitni)?\s*(?:hai|he)?\s*(?:of\s+)?(\w+)/i,
     /(?:aaj|today)\s+(\w+)\s*(?:ka|ki|ke)?\s*(?:bhav|keemat|rate|price)/i,
+    /(?:aaj|today)\s*(?:ka|ki|ke)?\s*(?:bhav|keemat|rate|price|daam|dam)\s+(\w+)/i,
     /market\s*price\s*(?:of\s+)?(\w+)/i,
     /(\w+)\s+(?:market\s*)?price/i,
     /(\w+)\s+(?:mandi|mandee)\s*(?:bhav|rate)/i,
+    /(?:asli|real|live)\s*(?:bhav|price|rate|daam)\s*(?:of\s+)?(\w+)/i,
+    /(\w+)\s*(?:ka|ki|ke)\s*(?:asli|real|live)\s*(?:bhav|price|rate)/i,
   ];
 
   for (const pattern of romanizedPricePatterns) {
     const match = lower.match(pattern);
     if (match) {
-      const product = match[1]?.trim();
+      const product = (match[1] || match[2])?.trim();
       // Filter out noise words
-      if (product && !['kya', 'hai', 'he', 'aaj', 'kal', 'the', 'what', 'is', 'of'].includes(product)) {
+      if (product && !['kya', 'hai', 'he', 'aaj', 'kal', 'the', 'what', 'is', 'of', 'ka', 'ki', 'ke', 'real', 'asli', 'live'].includes(product)) {
         return product;
       }
     }
   }
 
-  // Hindi Devanagari patterns
+  // Hindi Devanagari patterns — broad coverage
   const hindiMatch = message.match(/([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|रेट|दाम)/);
   if (hindiMatch) return hindiMatch[1];
+
+  // "आज [product] का भाव" or "आज का भाव [product]"
+  const hindiAajMatch = message.match(/आज\s+([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|दाम)/);
+  if (hindiAajMatch) return hindiAajMatch[1];
+
+  const hindiAajMatch2 = message.match(/आज\s*(का|की|के)?\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
+  if (hindiAajMatch2) return hindiAajMatch2[3];
+
+  // "असली/लाइव भाव [product]" pattern
+  const hindiLiveMatch = message.match(/(असली|लाइव|रियल)\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
+  if (hindiLiveMatch) return hindiLiveMatch[3];
   
   const hindiMatch2 = message.match(/(भाव|कीमत|दाम)\s*(क्या|कितन[ाीे])?\s*(है)?\s*([\u0900-\u097F]+)/);
   if (hindiMatch2) return hindiMatch2[4];
@@ -636,16 +650,29 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
 - If they want to skip KYC → use SKIP_KYC action.
 - Do NOT use STORE_DATA for KYC_PENDING users — onboarding must finish first.
 - If they ask "kya ho raha hai" / "ab kya karna hai" → tell them: "Aap PAN card ki photo bhej sakte hain verification ke liye, ya 'skip' bol ke guest mode mein shuru kar sakte hain."`;
+  } else {
+    // ALL other states: ACTIVE, KYC_VERIFIED, VOICE_RECEIVED, IMAGE_PENDING, CONFIRMATION_PENDING
+    // PAN is already handled — NEVER ask about it again
+    prompt += `\n\nONBOARDING STATE: FULLY ONBOARDED (PAN already handled)
+- This user has ALREADY completed or skipped PAN verification. NEVER ask about PAN, KYC, or verification again.
+- Do NOT mention PAN card, KYC, verification, or onboarding in any response.
+- Focus entirely on their current request: adding products, pricing, analytics, UPI, marketplace, etc.
+- If they want to verify PAN later, they will bring it up themselves — you should NEVER prompt them.
+- Treat this user as a fully active seller with all features available.`;
   }
 
-  // Add conversation history
+  // Add conversation history (filter out PAN/KYC related messages to prevent LLM from re-initiating)
   if (conversationContext && conversationContext.messages.length > 0) {
     const recentMessages = conversationContext.messages.slice(-10);
-    prompt += `\n\nRecent conversation:\n`;
-    recentMessages.forEach(msg => {
-      const role = msg.role === 'user' ? 'User' : 'You';
-      prompt += `${role}: ${msg.content}\n`;
-    });
+    const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
+    const filteredMessages = recentMessages.filter(msg => !panFilterRegex.test(msg.content));
+    if (filteredMessages.length > 0) {
+      prompt += `\n\nRecent conversation:\n`;
+      filteredMessages.forEach(msg => {
+        const role = msg.role === 'user' ? 'User' : 'You';
+        prompt += `${role}: ${msg.content}\n`;
+      });
+    }
   }
 
   // Add user patterns

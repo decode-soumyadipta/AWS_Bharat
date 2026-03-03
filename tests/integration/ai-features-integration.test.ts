@@ -11,8 +11,7 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
 import { generateProductDescription, validateDescription } from '../../src/services/ai-description-generator';
 import { suggestOptimalPrice } from '../../src/services/price-recommendation';
-import { generateContextualInstructions } from '../../src/services/voice-guidance-generator';
-import { checkImageQuality } from '../../src/services/image-quality-checker';
+// Removed: voice-guidance-generator and image-quality-checker (dead code cleanup)
 
 describe('AI Features Integration Tests', () => {
   
@@ -166,121 +165,7 @@ describe('AI Features Integration Tests', () => {
     }, 30000);
   });
 
-  // ========================================================================
-  // Feature 3: Context-Aware Voice Guidance
-  // ========================================================================
-  describe('Feature 3: Context-Aware Voice Guidance', () => {
-    
-    it('should generate Hindi voice guidance with product name', async () => {
-      const result = await generateContextualInstructions(
-        'आम',
-        50,
-        20,
-        'किलो',
-        'hi-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.instructions).toBeTruthy();
-      expect(result.examples).toBeInstanceOf(Array);
-      expect(result.examples.length).toBeGreaterThan(0);
-      expect(result.tips).toBeTruthy();
-      expect(result.confidence).toBeGreaterThan(0); // Accept any confidence > 0
-      
-      // Verify examples mention the product name
-      const mentionsProduct = result.examples.some(ex => ex.includes('आम'));
-      expect(mentionsProduct).toBe(true);
-    }, 30000);
-
-    it('should generate English voice guidance with product name', async () => {
-      const result = await generateContextualInstructions(
-        'Clay Pot',
-        200,
-        10,
-        'pieces',
-        'en-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.examples).toBeInstanceOf(Array);
-      
-      // Verify examples mention the product name
-      const mentionsProduct = result.examples.some(ex => 
-        ex.toLowerCase().includes('clay pot')
-      );
-      expect(mentionsProduct).toBe(true);
-    }, 30000);
-
-    it('should generate Marathi voice guidance with product name', async () => {
-      const result = await generateContextualInstructions(
-        'टोमॅटो',
-        30,
-        50,
-        'किलो',
-        'mr-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.examples).toBeInstanceOf(Array);
-      
-      // Verify examples mention the product name
-      const mentionsProduct = result.examples.some(ex => ex.includes('टोमॅटो'));
-      expect(mentionsProduct).toBe(true);
-    }, 30000);
-
-    it('should use fallback when AI fails', async () => {
-      const result = await generateContextualInstructions(
-        'Test Product',
-        100,
-        10,
-        'units',
-        'hi-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.instructions).toBeTruthy();
-      expect(result.examples).toBeInstanceOf(Array);
-      expect(result.examples.length).toBeGreaterThan(0);
-    }, 30000);
-  });
-
-  // ========================================================================
-  // Feature 4: Image Quality Checker
-  // ========================================================================
-  describe('Feature 4: Image Quality Checker', () => {
-    
-    it('should check image quality and provide feedback', async () => {
-      // Note: This test requires actual S3 bucket and image
-      // For now, we'll test the fallback mechanism
-      const result = await checkImageQuality(
-        'test-bucket',
-        'test-key.jpg',
-        'hi-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.isGoodQuality).toBeDefined();
-      expect(result.score).toBeGreaterThanOrEqual(0);
-      expect(result.score).toBeLessThanOrEqual(100);
-      expect(result.issues).toBeInstanceOf(Array);
-      expect(result.suggestions).toBeInstanceOf(Array);
-      expect(result.feedback).toBeTruthy();
-      expect(result.confidence).toBeGreaterThan(0);
-    }, 30000);
-
-    it('should handle errors gracefully', async () => {
-      const result = await checkImageQuality(
-        'non-existent-bucket',
-        'non-existent-key.jpg',
-        'en-IN'
-      );
-
-      expect(result).toBeDefined();
-      expect(result.feedback).toBeTruthy();
-      // Should return fallback report
-      expect(result.isGoodQuality).toBe(true);
-    }, 30000);
-  });
+  // Features 3 (Voice Guidance) and 4 (Image Quality Checker) removed — dead code cleanup
 
   // ========================================================================
   // Cross-Feature Integration Tests
@@ -317,20 +202,9 @@ describe('AI Features Integration Tests', () => {
       );
       expect(priceRec.competitive).toBeDefined();
 
-      // 3. Generate voice guidance
-      const guidance = await generateContextualInstructions(
-        productName,
-        price,
-        quantity,
-        unit,
-        language
-      );
-      expect(guidance.examples.length).toBeGreaterThan(0);
-
       // All features should work together
       expect(description).toBeDefined();
       expect(priceRec).toBeDefined();
-      expect(guidance).toBeDefined();
     }, 60000);
   });
 
@@ -371,20 +245,6 @@ describe('AI Features Integration Tests', () => {
       expect(duration).toBeLessThan(10000);
     }, 15000);
 
-    it('should complete voice guidance within 10 seconds', async () => {
-      const startTime = Date.now();
-      
-      await generateContextualInstructions(
-        'Test Product',
-        100,
-        10,
-        'units',
-        'hi-IN'
-      );
-      
-      const duration = Date.now() - startTime;
-      expect(duration).toBeLessThan(10000);
-    }, 15000);
   });
 
   // ========================================================================
@@ -421,17 +281,6 @@ describe('AI Features Integration Tests', () => {
       expect(result.recommendedMax).toBeGreaterThan(result.recommendedMin);
     }, 30000);
 
-    it('should handle zero quantities', async () => {
-      const result = await generateContextualInstructions(
-        'Test',
-        100,
-        0,
-        'units',
-        'hi-IN'
-      );
 
-      expect(result).toBeDefined();
-      expect(result.examples).toBeInstanceOf(Array);
-    }, 30000);
   });
 });
