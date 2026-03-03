@@ -260,6 +260,14 @@ export const handler = withXRayTracing(async (
           await sendUpiNudgeMessage(phone, language, extractedName);
           logStructured('INFO', 'UPI nudge message sent');
 
+          // Step 9: Send onboarding guide (feature tour) after 3 seconds
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const { sendOnboardingGuide } = await import('../services/onboarding-guide');
+          await sendOnboardingGuide(phone, language);
+          // Mark guide as sent in metadata
+          await updateUserState(phone, 'KYC_VERIFIED', { guideSent: true });
+          logStructured('INFO', 'Onboarding guide sent');
+
           Annotations.setSuccess(true);
           Metadata.setResponseDetails({
             sellerId: registrationResult.sellerId,

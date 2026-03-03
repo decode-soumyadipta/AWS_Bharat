@@ -179,9 +179,17 @@ export async function processWithEnhancedAgent(
     );
 
     if (agentResult.usedAgent && agentResult.text) {
-      // Bedrock Agent handled it with real tool calls — wrap in structured format
+      // Bedrock Agent handled it with real tool calls
       console.log('✅ Using Bedrock Agent tool-use response');
-      response = `MESSAGE: ${agentResult.text}\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 92\nREASONING: Bedrock Agent with tool-use`;
+      // Check if Bedrock Agent response is already in structured format
+      if (agentResult.text.includes('MESSAGE:') || agentResult.text.includes('ACTION:')) {
+        response = agentResult.text;
+      } else {
+        // Wrap in our format, then refine through enhanced prompt for proper actions
+        // Run the enhanced prompt with the Bedrock Agent's data so we get proper ACTION/DATA
+        const refinedPrompt = agentPrompt + `\n\n[Bedrock Agent tool-use data]: ${agentResult.text}\nUse this data in your response. Format properly with MESSAGE/ACTION/DATA.`;
+        response = await callAgentModel(refinedPrompt);
+      }
     } else {
       // Fallback to direct InvokeModel with prompt engineering
       response = await callAgentModel(agentPrompt);
@@ -563,18 +571,22 @@ Your responsibilities:
   if (userState?.state === 'NEW') {
     prompt += `\n\nONBOARDING STATE: BRAND NEW USER (first contact)
 This is the user's very first message. Give a warm, natural welcome.
-- Introduce yourself as Vyapar Vaani — their AI business assistant for selling products online.
-- Mention that for full verification, they can send a PAN card photo. But make it OPTIONAL.
-- Clearly say: "Agar abhi PAN card nahi hai toh koi baat nahi, aap guest ke roop mein shuru kar sakte hain, baad mein bhej dijiyega." (in ${langName})
-- If user just says "hi" or greeting → welcome + explain PAN optional + offer guest mode
-- If user sends PAN card related text → guide them to send the PAN card PHOTO
-- If user says "skip", "guest", "baad mein", "nahi hai", "proceed" → use SKIP_KYC action immediately
-- If user sends a UPI ID → use REGISTER_UPI action
-- If user describes a PRODUCT they want to sell (with name, price, quantity, etc.) → use STORE_DATA action with the product info. Welcome them and save their product in one response. Example: user says "2 kilo aam bechna hai" → use STORE_DATA with productName=Mango, quantity=2, unit=kg, category=fruits. Say something like "Swagat hai! Aapka aam note kar liya hai, ab bas price bataiye aur photo bhejiye."
-- After welcoming, ALWAYS tell user what to do next
-- RESPONSE_MODE should be "both" for the very first welcome (text + voice so they see and hear the welcome)`;
+IMPORTANT: No matter what the user says in their first message (even if they mention a product, price, or anything else), you MUST welcome them first and ask about PAN verification. Do NOT use STORE_DATA or any product action for a NEW user. Onboarding comes first.
+
+Your response should:
+1. Welcome them warmly to Vyapar Vaani — their AI business assistant for selling products online on ONDC marketplace.
+2. Ask for PAN card photo for full verification. But clearly say it is OPTIONAL.
+3. Tell them: "Agar abhi PAN card nahi hai toh koi baat nahi, aap 'skip' bol ke guest ke roop mein shuru kar sakte hain, baad mein bhej dijiyega." (in ${langName})
+4. If they mentioned a product in this message, acknowledge it briefly: "Aapka [product] hum baad mein add karenge, pehle verification ho jaaye."
+
+Action rules for NEW users:
+- If user says "skip", "guest", "baad mein", "nahi hai", "proceed", "chhodo" → use SKIP_KYC action immediately
+- If user sends PAN card related text → tell them to send the PAN card PHOTO (image)
+- For ALL other messages (greetings, product descriptions, anything) → welcome + PAN prompt, ACTION: NONE
+- RESPONSE_MODE must be "both" (text + voice for very first welcome)
+- NEVER use STORE_DATA, REGISTER_UPI, or any other action for NEW users except SKIP_KYC`;
   } else if (userState?.state === 'GUEST_ACTIVE') {
-    prompt += `\n\nONBOARDING STATE: GUEST USER (no KYC done — all features available)
+    prompt += `\n\nONBOARDING STATE: GUEST USER (no KYC — all features available)
 - User is a guest — they skipped PAN verification. They can do EVERYTHING: add products, check prices, set UPI, use marketplace.
 - Do NOT nag about PAN. Only mention it naturally once every 5-6 messages IF relevant.
 - If user sends a PAN card photo → the KYC handler will process it automatically, you don't need to do anything special.
@@ -584,8 +596,8 @@ This is the user's very first message. Give a warm, natural welcome.
 - User started KYC but it's not complete yet. They may re-send PAN card photo.
 - If they ask a question or say something unrelated → answer it naturally. Don't force them back to KYC.
 - If they want to skip KYC → use SKIP_KYC action.
-- If they describe a PRODUCT to sell → use STORE_DATA action with the product info. The system will auto-promote them to guest mode.
-- If they ask "kya ho raha hai" / "ab kya karna hai" → tell them: "Aap PAN card ki photo bhej sakte hain verification ke liye, ya guest ke roop mein shuru kar sakte hain."`;
+- Do NOT use STORE_DATA for KYC_PENDING users — onboarding must finish first.
+- If they ask "kya ho raha hai" / "ab kya karna hai" → tell them: "Aap PAN card ki photo bhej sakte hain verification ke liye, ya 'skip' bol ke guest mode mein shuru kar sakte hain."`;
   }
 
   // Add conversation history
