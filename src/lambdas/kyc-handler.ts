@@ -95,11 +95,10 @@ export const handler = withXRayTracing(async (
 
           const language = getLanguagePreference(userState.language);
 
-          // Send initial acknowledgment message
-          await sendFeedbackMessage(phone, 'DOCUMENT_RECEIVED', language);
-          
-          // Wait 1 second before processing
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Send typing indicator + single acknowledgment (not voice — just read receipt + typing)
+          const { sendTypingIndicator, setLastMessageId } = await import('./whatsapp-message-sender');
+          if (detail?.messageId) { setLastMessageId(phone, detail.messageId); }
+          await sendTypingIndicator(phone, detail?.messageId);
 
           // Step 1: Download image from WhatsApp
           logStructured('INFO', 'Downloading image from WhatsApp', { mediaId });
@@ -175,11 +174,11 @@ export const handler = withXRayTracing(async (
             hasAadhaar: !!extractedData.aadharNumber,
           });
 
-          // Send verification progress message
-          await sendFeedbackMessage(phone, 'DOCUMENT_VERIFIED', language);
+          // Keep typing indicator active during verification
+          await sendTypingIndicator(phone);
           
-          // Wait 1.5 seconds before validation
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          // Brief pause before validation
+          await new Promise(resolve => setTimeout(resolve, 500));
 
           // Step 4: Validate PAN format and Aadhaar presence
           const validation = validateKYCData(extractedData);
@@ -203,11 +202,8 @@ export const handler = withXRayTracing(async (
             };
           }
 
-          // Send registration progress message
-          await sendFeedbackMessage(phone, 'REGISTERING_SELLER', language);
-          
-          // Wait 1.5 seconds before registration
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          // Keep typing indicator active during registration
+          await sendTypingIndicator(phone);
 
           // Step 5: Call seller-registration Lambda
           logStructured('INFO', 'Calling seller-registration Lambda');
@@ -248,25 +244,26 @@ export const handler = withXRayTracing(async (
           
           logStructured('INFO', 'User state updated to KYC_VERIFIED');
 
-          // Step 7: Send confirmation message with extracted name
-          // Wait 2 seconds before final success message
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Step 7: Send consolidated success message (text + voice)
+          await new Promise(resolve => setTimeout(resolve, 1000));
           const extractedName = extractedData.name?.value || '';
           await sendSuccessMessage(phone, language, extractedName, extractedData.panNumber?.value || '');
-          logStructured('INFO', 'Confirmation message sent');
+          logStructured('INFO', 'Success message sent');
 
-          // Step 8: Send UPI setup nudge after 3 seconds
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          await sendUpiNudgeMessage(phone, language, extractedName);
-          logStructured('INFO', 'UPI nudge message sent');
-
-          // Step 9: Send onboarding guide (feature tour) after 3 seconds
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          const { sendOnboardingGuide } = await import('../services/onboarding-guide');
-          await sendOnboardingGuide(phone, language);
-          // Mark guide as sent in metadata
-          await updateUserState(phone, 'KYC_VERIFIED', { guideSent: true });
-          logStructured('INFO', 'Onboarding guide sent');
+          // Step 8: Send onboarding guide (feature tour including UPI) after 2 seconds
+          // Wrapped in try/catch — guide failure must NOT trigger KYC_ERROR after successful verification
+          try {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const { sendOnboardingGuide } = await import('../services/onboarding-guide');
+            await sendOnboardingGuide(phone, language);
+            // Mark guide as sent in metadata
+            await updateUserState(phone, 'KYC_VERIFIED', { guideSent: true });
+            logStructured('INFO', 'Onboarding guide sent');
+          } catch (guideError: any) {
+            logStructured('WARN', 'Onboarding guide failed (non-fatal, KYC already verified)', {
+              error: guideError.message,
+            });
+          }
 
           Annotations.setSuccess(true);
           Metadata.setResponseDetails({
@@ -295,11 +292,15 @@ export const handler = withXRayTracing(async (
     Annotations.setErrorCode(error.code || ErrorCodes.UNEXPECTED_ERROR);
     Metadata.setErrorDetails(error);
     
-    // Try to send error message to user
+    // Only send KYC_ERROR if user hasn't already been verified (avoid confusing "error" after success)
     try {
       const userState = await getUserState(phone);
-      const language = getLanguagePreference(userState?.language);
-      await sendErrorMessage(phone, 'KYC_ERROR', language);
+      if (userState?.state !== 'KYC_VERIFIED') {
+        const language = getLanguagePreference(userState?.language);
+        await sendErrorMessage(phone, 'KYC_ERROR', language);
+      } else {
+        logStructured('WARN', 'Skipping KYC_ERROR message — user already KYC_VERIFIED', { phone });
+      }
     } catch (msgError) {
       logStructured('ERROR', 'Failed to send error message', {
         error: msgError,
@@ -464,24 +465,39 @@ async function sendSuccessMessage(
 }
 
 /**
- * Send error message via WhatsApp with voice
+ * Send error message via WhatsApp with voice — romanized for voice clarity
  */
 async function sendErrorMessage(
   phone: string,
   messageKey: 'DOCUMENT_UNCLEAR' | 'KYC_INVALID_DOCUMENT' | 'KYC_ERROR',
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
 ): Promise<void> {
-  const message = translateMessage(messageKey, language);
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   
-  // Import sendTextWithVoice dynamically
-  const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+  // Use romanized messages for voice (no Devanagari — this is spoken aloud)
+  const errorMessages: Record<string, Record<string, string>> = {
+    'DOCUMENT_UNCLEAR': {
+      'hi-IN': 'Aapki document photo saaf nahi aayi. Kripya PAN card ki photo dubara bhejiye, acchi roshni mein aur poora card dikhna chahiye.',
+      'mr-IN': 'Tumchya document chi photo spasht nahi aali. Krupya PAN card chi photo punha pathva, changlyaa prakashat aani poorna card disayla have.',
+      'en-IN': 'Your document photo was not clear. Please send the PAN card photo again, in good lighting with the full card visible.',
+    },
+    'KYC_INVALID_DOCUMENT': {
+      'hi-IN': 'Ye PAN card nahi lag raha. Kripya apne PAN card ki saaf photo bhejiye. PAN number card pe clearly dikhna chahiye.',
+      'mr-IN': 'He PAN card nahi disatay. Krupya tumchya PAN card chi spasht photo pathva. PAN number card var clearly disayla have.',
+      'en-IN': 'This doesn\'t appear to be a PAN card. Please send a clear photo of your PAN card with the PAN number clearly visible.',
+    },
+    'KYC_ERROR': {
+      'hi-IN': 'Document check karne mein thodi dikkat hui. Kripya ek baar phir se PAN card ki photo bhejiye. Ya "skip" bolke guest mode mein shuru kar sakte hain.',
+      'mr-IN': 'Document check kartana thodi adchan aali. Krupya ek vela punha PAN card chi photo pathva. Kinva "skip" bolun guest mode madhye suru karu shakta.',
+      'en-IN': 'Had some trouble checking your document. Please send the PAN card photo once more. Or say "skip" to start in guest mode.',
+    },
+  };
+
+  const message = errorMessages[messageKey]?.[language] || errorMessages[messageKey]?.['hi-IN'] || 'Kripya dubara koshish karein.';
   
-  // Show typing indicator
+  const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   await sendTypingIndicator(phone);
-  
-  // Send message with voice
-  await sendTextWithVoice(phone, message, langCode);
+  await sendVoiceOnly(phone, message, langCode);
 }
 
 /**

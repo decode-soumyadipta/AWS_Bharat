@@ -127,9 +127,18 @@ export async function markMessageAsRead(
 }
 
 /**
- * Sends WhatsApp typing indicator ("recording" or "typing" action)
- * Shows the real typing bubble in WhatsApp for ~25 seconds
+ * Sends WhatsApp typing indicator using the Cloud API.
+ * Shows the real "typing..." bubble in WhatsApp for ~25 seconds or until a response is sent.
+ * Uses the message_id from the received message + typing_indicator field per WhatsApp docs.
  */
+
+// Cache the last message ID per phone so typing works even without explicit messageId
+const lastMessageIdByPhone: Record<string, string> = {};
+
+export function setLastMessageId(phone: string, messageId: string): void {
+  lastMessageIdByPhone[phone] = messageId;
+}
+
 export async function sendTypingIndicator(
   to: string,
   messageId?: string
@@ -140,10 +149,16 @@ export async function sendTypingIndicator(
     return { success: false, error: 'Configuration missing' };
   }
 
+  // Use provided messageId, cached one, or skip
+  const msgId = messageId || lastMessageIdByPhone[to];
+  if (!msgId) {
+    return { success: true }; // No message ID to mark — skip silently
+  }
+
   try {
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
 
-    const response = await fetch(url, {
+    await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -151,17 +166,13 @@ export async function sendTypingIndicator(
       },
       body: JSON.stringify({
         messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to,
-        type: 'reaction',
-        // WhatsApp Cloud API: use "status" endpoint for typing
+        status: 'read',
+        message_id: msgId,
+        typing_indicator: {
+          type: 'text',
+        },
       }),
     }).catch(() => null);
-
-    // Best-effort: also mark as read if we have messageId
-    if (messageId) {
-      markMessageAsRead(messageId).catch(() => {});
-    }
 
     return { success: true };
   } catch {

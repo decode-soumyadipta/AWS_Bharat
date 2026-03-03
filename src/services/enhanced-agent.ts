@@ -165,13 +165,16 @@ export async function processWithEnhancedAgent(
   let response: string;
   const currentUserState = userState?.state || 'UNKNOWN';
 
-  // For NEW/KYC_PENDING users, ALWAYS use enhanced prompt (has onboarding logic, SKIP_KYC, etc.)
-  // Bedrock Agent only has catalog/market tools — it doesn't know about onboarding
-  if (currentUserState === 'NEW' || currentUserState === 'KYC_PENDING') {
-    console.log('🆕 NEW/KYC_PENDING user — using enhanced prompt (skip Bedrock Agent)');
+  // Bedrock Agent only has catalog-search/market tools — it CANNOT do STORE_DATA, SKIP_KYC, etc.
+  // Use enhanced prompt (with full STORE_DATA logic) for all product-adding states.
+  // Only use Bedrock Agent for ACTIVE users who have products and need catalog queries.
+  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING'];
+  
+  if (skipBedrockAgentStates.includes(currentUserState)) {
+    console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
     response = await callAgentModel(agentPrompt);
   } else {
-    // Try Bedrock Agent (agentic tool-use) for data-heavy queries first
+    // ACTIVE/CONFIRMATION_PENDING users — try Bedrock Agent for catalog queries
     const agentResult = await callBedrockAgentIfAvailable(
       userMessage,
       phone,
@@ -179,19 +182,14 @@ export async function processWithEnhancedAgent(
     );
 
     if (agentResult.usedAgent && agentResult.text) {
-      // Bedrock Agent handled it with real tool calls
       console.log('✅ Using Bedrock Agent tool-use response');
-      // Check if Bedrock Agent response is already in structured format
       if (agentResult.text.includes('MESSAGE:') || agentResult.text.includes('ACTION:')) {
         response = agentResult.text;
       } else {
-        // Wrap in our format, then refine through enhanced prompt for proper actions
-        // Run the enhanced prompt with the Bedrock Agent's data so we get proper ACTION/DATA
         const refinedPrompt = agentPrompt + `\n\n[Bedrock Agent tool-use data]: ${agentResult.text}\nUse this data in your response. Format properly with MESSAGE/ACTION/DATA.`;
         response = await callAgentModel(refinedPrompt);
       }
     } else {
-      // Fallback to direct InvokeModel with prompt engineering
       response = await callAgentModel(agentPrompt);
     }
   }

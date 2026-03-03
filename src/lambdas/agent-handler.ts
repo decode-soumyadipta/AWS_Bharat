@@ -155,9 +155,13 @@ async function processAgentEvent(event: any): Promise<any> {
     }
 
     // Send typing indicator IMMEDIATELY to show we're processing
-    const { sendTypingIndicator, markMessageAsRead } = await import('./whatsapp-message-sender');
+    const { sendTypingIndicator, markMessageAsRead, setLastMessageId } = await import('./whatsapp-message-sender');
+    // Cache the message ID per phone so all typing indicators in this session work
+    if (eventDetail.messageId) {
+      setLastMessageId(phone, eventDetail.messageId);
+    }
     await Promise.all([
-      sendTypingIndicator(phone),
+      sendTypingIndicator(phone, eventDetail.messageId),
       eventDetail.messageId ? markMessageAsRead(eventDetail.messageId) : Promise.resolve(),
     ]);
 
@@ -457,57 +461,70 @@ async function handleImageMessage(
 ): Promise<string> {
   const partialData = await getPartialData(phone);
 
-  if (!partialData || !partialData.productName) {
-    // No product context — send guidance directly and return skip flag
-    const guidance: Record<string, string> = {
-      'hi-IN': '📸 फोटो मिल गई! लेकिन पहले मुझे बताइए कि यह किस उत्पाद की फोटो है? कृपया वॉइस मैसेज से बताएं — जैसे "टमाटर 50 रुपये किलो"। फिर मैं यह फोटो उसमें जोड़ दूंगा! 😊',
-      'mr-IN': '📸 फोटो मिळाला! पण आधी सांगा हे कोणत्या उत्पादाचे आहे? कृपया व्हॉइस मेसेज पाठवा — जसे "टोमॅटो 50 रुपये किलो". मग मी फोटो जोडतो! 😊',
-      'en-IN': '📸 Got the photo! But first tell me which product this is for. Please send a voice message — like "tomato 50 rupees per kilo". Then I\'ll add this photo to it! 😊',
-    };
-    await sendEnhancedAgentMessage(phone, guidance[language] || guidance['hi-IN'], language as any, 'voice');
-    return '__HANDLED__';
-  }
-
-  // Download and enhance image
+  // Try to download + store image FIRST, regardless of product context.
+  // This handles rapid sequential messages (voice + photo) where voice hasn't finished yet.
   const { downloadImage } = await import('../services/media-download');
-  const { handler: enhancementHandler } = await import('./image-enhancement');
-
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+  
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for image');
     const errMsg: Record<string, string> = {
-      'hi-IN': 'फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया प्रोडक्ट की साफ फोटो दुबारा भेजें।',
-      'mr-IN': 'फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया उत्पादनाचा स्पष्ट फोटो पुन्हा पाठवा.',
+      'hi-IN': 'Photo mili, lekin process karne mein dikkat hui. Kripya product ki saaf photo dubara bhejiye.',
+      'mr-IN': 'Photo milala, pan process kartana adchan aali. Krupya utpadnacha spasht photo punha pathva.',
       'en-IN': 'Got the photo but had trouble processing it. Please send a clear product photo again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
   }
 
-  // Download image
+  // Download image from WhatsApp and upload to S3
   const downloadResult = await downloadImage(eventDetail.content.mediaUrl, bucketName);
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Image download failed');
     const errMsg: Record<string, string> = {
-      'hi-IN': 'फोटो डाउनलोड नहीं हो पाई। कृपया प्रोडक्ट की फोटो दुबारा भेजें।',
-      'mr-IN': 'फोटो डाउनलोड झालं नाही. कृपया उत्पादनाचा फोटो पुन्हा पाठवा.',
+      'hi-IN': 'Photo download nahi ho payi. Kripya product ki photo dubara bhejiye.',
+      'mr-IN': 'Photo download zala nahi. Krupya utpadnacha photo punha pathva.',
       'en-IN': 'Couldn\'t download the photo. Please send the product photo again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
   }
 
-  // Store original image URL
-  await mergePartialData(phone, {
-    originalImageUrl: downloadResult.s3Url,
-  });
+  // Always store the image URL in partial data immediately
+  await mergePartialData(phone, { originalImageUrl: downloadResult.s3Url });
+  console.log('📸 Image stored in partial data:', downloadResult.s3Url);
 
-  // Enhance image (background removal)
+  // If no product context yet, the photo was sent before/alongside product info
+  // Store the image and send a brief acknowledgment — when STORE_DATA runs, it'll merge
+  if (!partialData || !partialData.productName) {
+    // Wait briefly in case voice message STORE_DATA is completing right now
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const refreshedData = await getPartialData(phone);
+    
+    if (refreshedData && refreshedData.productName) {
+      // Voice message was processed during our wait — continue with the product context
+      console.log('📸 Product context available after brief wait, continuing with image processing');
+    } else {
+      // Still no product context — acknowledge the photo and wait for product info
+      const guidance: Record<string, string> = {
+        'hi-IN': 'Photo mil gayi! Ab voice message mein product ka naam aur daam bata dijiye, jaise "tamatar pachaas rupaye kilo". Photo automatically jud jaayegi.',
+        'mr-IN': 'Photo milala! Aata voice message madhye product che naav aani kimmat sanga, jase "tomato pachaas rupaye kilo". Photo aapoaap judel.',
+        'en-IN': 'Got your photo! Now send a voice message with the product name and price, like "tomato fifty rupees per kilo". The photo will be linked automatically.',
+      };
+      await sendEnhancedAgentMessage(phone, guidance[language] || guidance['hi-IN'], language as any, 'voice');
+      return '__HANDLED__';
+    }
+  }
+
+  // We have product context — proceed with image enhancement
+  const { handler: enhancementHandler } = await import('./image-enhancement');
+
   try {
+    const currentPartial = await getPartialData(phone);
     const enhancementResult = await enhancementHandler({
       rawImageUrl: downloadResult.s3Url,
-      productName: partialData.productName || 'Product',
-      productCategory: partialData.category,
+      productName: currentPartial?.productName || partialData?.productName || 'Product',
+      productCategory: currentPartial?.category || partialData?.category,
       itemId: `${phone}-${Date.now()}`,
       sellerId: phone,
     });
@@ -541,8 +558,7 @@ async function handleImageMessage(
       console.log('✅ Confirmation handler invoked successfully');
     } catch (confErr) {
       console.error('⚠️ Confirmation handler invoke failed, sending manual confirmation:', confErr);
-      // Fallback: send a text summary
-      const summary = `📋 *${updatedPartial.productName}*\n💰 ₹${updatedPartial.price}/${updatedPartial.unit}\n📦 ${updatedPartial.quantity} ${updatedPartial.unit}\n\nक्या यह सही है? "हां" बोलें या बदलाव बताएं।`;
+      const summary = `${updatedPartial.productName}, ${updatedPartial.price} rupaye per ${updatedPartial.unit}, ${updatedPartial.quantity} ${updatedPartial.unit}. Kya yeh sahi hai? Haan bolein ya badlav bataayein.`;
       await sendEnhancedAgentMessage(phone, summary, language as any, 'both');
     }
     return '__CONFIRMATION_TRIGGERED__';
@@ -551,10 +567,11 @@ async function handleImageMessage(
   // Image received but some product fields still missing → ask for them
   const missingStr = updatedPartial?.missingFields?.join(', ') || 'details';
   console.log('📸 Image received but missing fields:', missingStr);
+  const missingLabel = missingStr === 'price' ? 'keemat' : missingStr === 'quantity' ? 'matra' : missingStr === 'unit' ? 'ikaai, jaise kilo ya piece' : 'kuch jaankari';
   const askMissing: Record<string, string> = {
-    'hi-IN': `📸 फोटो मिल गई! अब बस ${missingStr === 'price' ? 'कीमत' : missingStr === 'quantity' ? 'मात्रा' : missingStr === 'unit' ? 'इकाई (किलो/पीस)' : 'कुछ जानकारी'} बता दीजिए तो उत्पाद जोड़ देता हूँ! 😊`,
-    'mr-IN': `📸 फोटो मिळाला! आता फक्त ${missingStr} सांगा म्हणजे उत्पादन जोडतो! 😊`,
-    'en-IN': `📸 Got the photo! Just tell me the ${missingStr} and I'll add your product! 😊`,
+    'hi-IN': `Photo mil gayi! Ab bas ${missingLabel} bata dijiye toh product jod deta hoon.`,
+    'mr-IN': `Photo milala! Aata phakta ${missingStr} sanga mhanje utpadan jodto.`,
+    'en-IN': `Got the photo! Just tell me the ${missingStr} and I'll add your product.`,
   };
   await sendEnhancedAgentMessage(phone, askMissing[language] || askMissing['hi-IN'], language as any, 'voice');
   return '__HANDLED__';
