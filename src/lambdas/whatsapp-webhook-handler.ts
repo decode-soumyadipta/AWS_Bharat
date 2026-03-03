@@ -15,7 +15,7 @@ import { EVENT_SOURCES, WHATSAPP_EVENT_TYPES } from '../config/event-patterns';
 import { WhatsAppInboundEvent, WhatsAppEventDetail } from '../models/whatsapp';
 import { getUserState, initializeNewUser, UserState } from '../services/state-manager';
 import { route, MessageType } from '../services/state-router';
-import { sendTextMessage } from './whatsapp-message-sender';
+import { sendTextMessage, sendTypingIndicator, markMessageAsRead, setLastMessageId } from './whatsapp-message-sender';
 import crypto from 'crypto';
 
 /**
@@ -250,11 +250,9 @@ async function publishToEventBridge(
 async function sendGuidanceMessage(phone: string, guidanceMessage: string): Promise<void> {
   try {
     // Import sendTextWithVoice dynamically
-    const { sendTextWithVoice, sendTypingIndicator } = await import('./whatsapp-message-sender');
+    const { sendTextWithVoice } = await import('./whatsapp-message-sender');
     
-    // Show typing indicator
-    await sendTypingIndicator(phone);
-    
+    // Typing indicator already sent at the top of the handler
     // Send message with voice (default to Hindi)
     await sendTextWithVoice(phone, guidanceMessage, 'hi');
     
@@ -342,6 +340,18 @@ export async function handler(
         type: inboundEvent.type,
       });
 
+      // ─── TYPING INDICATOR: IMMEDIATELY after parsing, BEFORE any DynamoDB calls ───
+      // This matches the reference implementation: markMessageAsRead(messageID, true) as FIRST call
+      // Must happen before getUserState/route which add 100-200ms DynamoDB latency
+      try {
+        setLastMessageId(inboundEvent.from, inboundEvent.messageId);
+        const typingResult = await markMessageAsRead(inboundEvent.messageId, true);
+        console.log('✅ Typing indicator + mark-as-read result:', JSON.stringify(typingResult));
+      } catch (typingErr) {
+        console.warn('⚠️ Typing indicator failed (non-blocking):', typingErr);
+      }
+      // ─── END TYPING INDICATOR ───
+
       // Determine actual message type (the type from webhook might not be accurate)
       const actualMessageType = determineMessageType(inboundEvent);
       console.log('Actual message type determined:', actualMessageType);
@@ -395,18 +405,6 @@ export async function handler(
             action: 'guidance_sent',
           }),
         };
-      }
-
-      // Send typing indicator IMMEDIATELY — BEFORE EventBridge publish
-      // This ensures the user sees blue tick + "typing..." as soon as their message is received
-      try {
-        const { sendTypingIndicator, setLastMessageId } = await import('./whatsapp-message-sender');
-        setLastMessageId(inboundEvent.from, inboundEvent.messageId);
-        // MUST await — otherwise Lambda terminates before HTTP call completes
-        const typingResult = await sendTypingIndicator(inboundEvent.from, inboundEvent.messageId);
-        console.log('Typing indicator result:', typingResult);
-      } catch (typingErr) {
-        console.warn('Typing indicator failed (non-blocking):', typingErr);
       }
 
       // Publish to EventBridge for processing

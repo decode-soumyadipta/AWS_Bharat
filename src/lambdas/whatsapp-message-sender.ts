@@ -83,12 +83,15 @@ export function formatMessage(
 }
 
 /**
- * Marks a WhatsApp message as read
- * This provides visual feedback to the sender that their message was received
+ * Marks a WhatsApp message as read, optionally with typing indicator.
+ * Matches WhatsApp Cloud API reference implementation:
+ *   POST /{PHONE_NUMBER_ID}/messages
+ *   { messaging_product: 'whatsapp', status: 'read', message_id: '...', typing_indicator: { type: 'text' } }
  */
 export async function markMessageAsRead(
-  messageId: string
-): Promise<{ success: boolean; error?: string }> {
+  messageId: string,
+  showTypingIndicator: boolean = false
+): Promise<{ success: boolean; data?: any; error?: string }> {
   const config = getWhatsAppConfig();
   
   if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
@@ -99,27 +102,38 @@ export async function markMessageAsRead(
   try {
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
     
+    const payload: any = {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId,
+    };
+
+    if (showTypingIndicator) {
+      payload.typing_indicator = { type: 'text' };
+    }
+
+    console.log('markMessageAsRead payload:', JSON.stringify(payload));
+    console.log('markMessageAsRead URL:', url);
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.accessToken}`,
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        status: 'read',
-        message_id: messageId,
-      }),
+      body: JSON.stringify(payload),
     });
 
+    const responseBody = await response.text();
+    console.log(`markMessageAsRead response: ${response.status} — ${responseBody}`);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      console.warn('Failed to mark message as read:', response.status, errorText);
-      return { success: false, error: `HTTP ${response.status}` };
+      return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
     }
 
-    console.log('Message marked as read:', messageId);
-    return { success: true };
+    let parsed;
+    try { parsed = JSON.parse(responseBody); } catch { parsed = responseBody; }
+    return { success: true, data: parsed };
   } catch (error) {
     console.warn('Error marking message as read:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -155,33 +169,10 @@ export async function sendTypingIndicator(
     return { success: true }; // No message ID to mark — skip silently
   }
 
+  // Delegate to markMessageAsRead with typing=true (same API, same pattern as reference implementation)
   try {
-    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.accessToken}`,
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        status: 'read',
-        message_id: msgId,
-        typing_indicator: {
-          type: 'text',
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => 'unknown');
-      console.warn(`Typing indicator API error: ${response.status} — ${errText}`);
-      return { success: false, error: `HTTP ${response.status}: ${errText}` };
-    }
-
-    console.log('Typing indicator sent successfully for:', msgId.substring(0, 20) + '...');
-    return { success: true };
+    const result = await markMessageAsRead(msgId, true);
+    return result;
   } catch (err) {
     console.warn('Typing indicator exception:', err);
     return { success: true }; // Never fail on typing indicator

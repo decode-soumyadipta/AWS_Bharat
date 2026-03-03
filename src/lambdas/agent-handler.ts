@@ -160,10 +160,10 @@ async function processAgentEvent(event: any): Promise<any> {
     if (eventDetail.messageId) {
       setLastMessageId(phone, eventDetail.messageId);
     }
-    await Promise.all([
-      sendTypingIndicator(phone, eventDetail.messageId),
-      eventDetail.messageId ? markMessageAsRead(eventDetail.messageId) : Promise.resolve(),
-    ]);
+    // Use markMessageAsRead with typing=true (same single API call as reference implementation)
+    if (eventDetail.messageId) {
+      await markMessageAsRead(eventDetail.messageId, true);
+    }
 
     // Get user state and context
     const userState = await getUserState(phone);
