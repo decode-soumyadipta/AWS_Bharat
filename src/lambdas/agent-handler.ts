@@ -288,20 +288,20 @@ async function processAgentEvent(event: any): Promise<any> {
         
         if (errMsg.includes('transcription') || errMsg.includes('audio') || errMsg.includes('download')) {
           errorMessage = language === 'en-IN' 
-            ? '🎙️ Voice message was not clear. Could you send it again, a bit louder?' 
-            : '🎙️ वॉइस मैसेज अच्छे से सुनाई नहीं दिया। क्या आप थोड़ा ज़ोर से दुबारा भेज सकते हैं?';
+            ? 'Your voice message was not clear. Could you send it again, a bit louder? You can also type your message if you prefer.' 
+            : 'वॉइस मैसेज अच्छे से सुनाई नहीं दिया। क्या आप थोड़ा ज़ोर से दुबारा भेज सकते हैं? चाहें तो टाइप भी कर सकते हैं।';
         } else if (errMsg.includes('image') || errMsg.includes('Image')) {
           errorMessage = language === 'en-IN'
-            ? '⚠️ That photo didn\'t come through properly. Could you send it once more?'
-            : '⚠️ फोटो ठीक से नहीं मिली। क्या आप दुबारा भेज सकते हैं?';
+            ? 'That photo didn\'t come through properly. Could you send it once more? Make sure it\'s a clear photo of the product.'
+            : 'फोटो ठीक से नहीं मिली। क्या आप दुबारा भेज सकते हैं? प्रोडक्ट की साफ फोटो भेजिए।';
         } else if (errMsg.includes('timeout') || errMsg.includes('Timeout')) {
           errorMessage = language === 'en-IN'
-            ? '⚠️ That took a bit long. I\'m ready now — what would you like to do?'
-            : '⚠️ थोड़ी देर हो गई। अब मैं तैयार हूँ — बताइए क्या करना है?';
+            ? 'That took a bit long. I\'m ready now. You can send a voice message or type what you need.'
+            : 'थोड़ी देर हो गई। अब मैं तैयार हूँ। वॉइस मैसेज भेजिए या टाइप कर दीजिए क्या करना है।';
         } else {
           errorMessage = language === 'en-IN'
-            ? 'Something went wrong. Please tell me again — send a voice message or type your question.'
-            : 'एक बार फिर बताइए! वॉइस मैसेज भेजें या टाइप करें — मैं यहाँ हूँ।';
+            ? 'Something went wrong on my end. Please tell me again. Send a voice message or type your question.'
+            : 'मेरी तरफ से कुछ गड़बड़ हो गई। एक बार फिर बताइए। वॉइस मैसेज भेजें या टाइप करें।';
         }
 
         await sendEnhancedAgentMessage(phone, errorMessage, language, 'voice');
@@ -476,9 +476,9 @@ async function handleImageMessage(
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for image');
     const errMsg: Record<string, string> = {
-      'hi-IN': '⚠️ फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया दुबारा भेजें।',
-      'mr-IN': '⚠️ फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया पुन्हा पाठवा।',
-      'en-IN': '⚠️ Got the photo but had trouble processing it. Please send it again.',
+      'hi-IN': 'फोटो मिल गई, लेकिन प्रोसेस करने में दिक्कत हुई। कृपया प्रोडक्ट की साफ फोटो दुबारा भेजें।',
+      'mr-IN': 'फोटो मिळाला, पण प्रोसेस करताना अडचण आली. कृपया उत्पादनाचा स्पष्ट फोटो पुन्हा पाठवा.',
+      'en-IN': 'Got the photo but had trouble processing it. Please send a clear product photo again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
@@ -489,9 +489,9 @@ async function handleImageMessage(
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Image download failed');
     const errMsg: Record<string, string> = {
-      'hi-IN': '⚠️ फोटो डाउनलोड नहीं हो पाई। कृपया दुबारा भेजें।',
-      'mr-IN': '⚠️ फोटो डाउनलोड झालं नाही. कृपया पुन्हा पाठवा।',
-      'en-IN': '⚠️ Couldn\'t download the photo. Please send it again.',
+      'hi-IN': 'फोटो डाउनलोड नहीं हो पाई। कृपया प्रोडक्ट की फोटो दुबारा भेजें।',
+      'mr-IN': 'फोटो डाउनलोड झालं नाही. कृपया उत्पादनाचा फोटो पुन्हा पाठवा.',
+      'en-IN': 'Couldn\'t download the photo. Please send the product photo again.',
     };
     await sendEnhancedAgentMessage(phone, errMsg[language] || errMsg['hi-IN'], language as any, 'voice');
     return '__HANDLED__';
@@ -706,20 +706,20 @@ function buildStockVoiceMessage(
   const lines = stockResults.map(s => {
     if (s.outOfStock) {
       return isHindi
-        ? `⚠️ *${s.name}*: स्टॉक खत्म! (${s.orderedQty} ${s.unit} बिक गए)`
-        : `⚠️ *${s.name}*: Out of stock! (${s.orderedQty} ${s.unit} sold)`;
+        ? `${s.name} का स्टॉक खत्म हो गया। ${s.orderedQty} ${s.unit} बिक गए।`
+        : `${s.name} is out of stock. ${s.orderedQty} ${s.unit} sold.`;
     }
     return isHindi
-      ? `📦 *${s.name}*: ${s.remainingQty} ${s.unit} बाकी (${s.orderedQty} ${s.unit} बिके)`
-      : `📦 *${s.name}*: ${s.remainingQty} ${s.unit} left (${s.orderedQty} ${s.unit} sold)`;
+      ? `${s.name} में ${s.remainingQty} ${s.unit} बाकी हैं। ${s.orderedQty} ${s.unit} बिके।`
+      : `${s.name} has ${s.remainingQty} ${s.unit} left. ${s.orderedQty} ${s.unit} sold.`;
   });
 
-  const header = isHindi ? '📊 *स्टॉक अपडेट:*' : '📊 *Stock Update:*';
+  const header = isHindi ? 'स्टॉक अपडेट' : 'Stock Update';
   const warning = stockResults.some(s => s.outOfStock)
-    ? (isHindi ? '\n\n⚠️ कुछ उत्पादों का स्टॉक खत्म। कृपया अपडेट करें।' : '\n\n⚠️ Some products are out of stock. Please restock.')
+    ? (isHindi ? ' कुछ उत्पादों का स्टॉक खत्म है, कृपया अपडेट करें।' : ' Some products are out of stock. Please restock.')
     : '';
 
-  return `${header}\n\n${lines.join('\n')}${warning}`;
+  return `${header}। ${lines.join(' ')}${warning}`;
 }
 
 /**
@@ -833,15 +833,15 @@ async function handleOrderAcceptReject(
     } else {
       // -- Seller rejection confirmation --
       const sellerMsg = lang === 'hi'
-        ? `❌ ऑर्डर अस्वीकार किया गया। ग्राहक को सूचित कर दिया गया है।`
-        : `❌ Order rejected. The buyer has been notified.`;
+        ? `ऑर्डर अस्वीकार किया गया। ग्राहक को सूचित कर दिया गया है। अगर कोई और ऑर्डर आए तो आपको बताएंगे।`
+        : `Order rejected. The buyer has been notified. We'll let you know when new orders come in.`;
       await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
 
       // -- Buyer notification --
       if (buyerPhone) {
         const buyerMsg = lang === 'hi'
-          ? `😔 माफ़ कीजिए, विक्रेता ने आपका ऑर्डर स्वीकार नहीं किया।\n📦 ${itemSummary}\n\nकृपया दूसरे विक्रेता से ऑर्डर करें।`
-          : `😔 Sorry, the seller couldn't accept your order.\n📦 ${itemSummary}\n\nPlease try ordering from another seller.`;
+          ? `माफ़ कीजिए, विक्रेता ने आपका ऑर्डर स्वीकार नहीं किया। ${itemSummary}. कृपया दूसरे विक्रेता से ऑर्डर करें।`
+          : `Sorry, the seller couldn't accept your order. ${itemSummary}. Please try ordering from another seller.`;
         await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
       }
     }
@@ -850,8 +850,8 @@ async function handleOrderAcceptReject(
     try {
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
-        ? '⚠️ ऑर्डर प्रोसेस करने में समस्या हुई। कृपया दुबारा कोशिश करें।'
-        : '⚠️ There was an issue processing the order. Please try again.';
+        ? 'ऑर्डर प्रोसेस करने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+        : 'There was an issue processing the order. Please try again.';
       await sendEnhancedAgentMessage(sellerPhone, errMsg, language as any, 'voice');
     } catch (e) {
       console.error('Failed to send error msg:', e);
