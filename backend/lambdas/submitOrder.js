@@ -26,7 +26,7 @@ const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME;
 const CORS_HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, x-api-key, Authorization',
     'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
 };
 

@@ -104,7 +104,7 @@ exports.handler = async (event) => {
             headers: {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Headers': 'Content-Type, x-api-key, Authorization',
                 'Access-Control-Allow-Methods': 'GET, OPTIONS'
             },
             body: JSON.stringify({
@@ -124,7 +124,9 @@ exports.handler = async (event) => {
             statusCode: 500,
             headers: {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type, x-api-key, Authorization',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS'
             },
             body: JSON.stringify({
                 success: false,
