@@ -57,7 +57,7 @@ export interface EnhancedAgentResponse {
 }
 
 export interface AgentAction {
-  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI';
+  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI' | 'SKIP_KYC';
   data?: any;
 }
 
@@ -162,21 +162,30 @@ export async function processWithEnhancedAgent(
   // Keep typing active while model thinks
   await showTypingIndicator(phone);
 
-  // Try Bedrock Agent (agentic tool-use) for data-heavy queries first
-  const agentResult = await callBedrockAgentIfAvailable(
-    userMessage,
-    phone,
-    `Language: ${currentLanguage}, State: ${userState}, Market: ${marketInfo ? 'available' : 'none'}, Analytics: ${analyticsInfo ? 'available' : 'none'}`
-  );
-
   let response: string;
-  if (agentResult.usedAgent && agentResult.text) {
-    // Bedrock Agent handled it with real tool calls — wrap in structured format
-    console.log('✅ Using Bedrock Agent tool-use response');
-    response = `MESSAGE: ${agentResult.text}\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 92\nREASONING: Bedrock Agent with tool-use`;
-  } else {
-    // Fallback to direct InvokeModel with prompt engineering
+  const currentUserState = userState?.state || 'UNKNOWN';
+
+  // For NEW/KYC_PENDING users, ALWAYS use enhanced prompt (has onboarding logic, SKIP_KYC, etc.)
+  // Bedrock Agent only has catalog/market tools — it doesn't know about onboarding
+  if (currentUserState === 'NEW' || currentUserState === 'KYC_PENDING') {
+    console.log('🆕 NEW/KYC_PENDING user — using enhanced prompt (skip Bedrock Agent)');
     response = await callAgentModel(agentPrompt);
+  } else {
+    // Try Bedrock Agent (agentic tool-use) for data-heavy queries first
+    const agentResult = await callBedrockAgentIfAvailable(
+      userMessage,
+      phone,
+      `Language: ${currentLanguage}, State: ${currentUserState}, Market: ${marketInfo ? 'available' : 'none'}, Analytics: ${analyticsInfo ? 'available' : 'none'}`
+    );
+
+    if (agentResult.usedAgent && agentResult.text) {
+      // Bedrock Agent handled it with real tool calls — wrap in structured format
+      console.log('✅ Using Bedrock Agent tool-use response');
+      response = `MESSAGE: ${agentResult.text}\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 92\nREASONING: Bedrock Agent with tool-use`;
+    } else {
+      // Fallback to direct InvokeModel with prompt engineering
+      response = await callAgentModel(agentPrompt);
+    }
   }
 
   // Parse response
@@ -560,8 +569,9 @@ This is the user's very first message. Give a warm, natural welcome.
 - If user just says "hi" or greeting → welcome + explain PAN optional + offer guest mode
 - If user sends PAN card related text → guide them to send the PAN card PHOTO
 - If user says "skip", "guest", "baad mein", "nahi hai", "proceed" → use SKIP_KYC action immediately
-- If user sends a UPI ID → use REGISTER_UPI action AND SKIP_KYC together
-- After welcoming, ALWAYS tell user what to do next: "PAN card ki photo bhejiye, ya 'guest' boliye aur seedha shuru karein"
+- If user sends a UPI ID → use REGISTER_UPI action
+- If user describes a PRODUCT they want to sell (with name, price, quantity, etc.) → use STORE_DATA action with the product info. Welcome them and save their product in one response. Example: user says "2 kilo aam bechna hai" → use STORE_DATA with productName=Mango, quantity=2, unit=kg, category=fruits. Say something like "Swagat hai! Aapka aam note kar liya hai, ab bas price bataiye aur photo bhejiye."
+- After welcoming, ALWAYS tell user what to do next
 - RESPONSE_MODE should be "both" for the very first welcome (text + voice so they see and hear the welcome)`;
   } else if (userState?.state === 'GUEST_ACTIVE') {
     prompt += `\n\nONBOARDING STATE: GUEST USER (no KYC done — all features available)
@@ -574,6 +584,7 @@ This is the user's very first message. Give a warm, natural welcome.
 - User started KYC but it's not complete yet. They may re-send PAN card photo.
 - If they ask a question or say something unrelated → answer it naturally. Don't force them back to KYC.
 - If they want to skip KYC → use SKIP_KYC action.
+- If they describe a PRODUCT to sell → use STORE_DATA action with the product info. The system will auto-promote them to guest mode.
 - If they ask "kya ho raha hai" / "ab kya karna hai" → tell them: "Aap PAN card ki photo bhej sakte hain verification ke liye, ya guest ke roop mein shuru kar sakte hain."`;
   }
 

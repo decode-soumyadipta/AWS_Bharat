@@ -882,6 +882,43 @@ async function executeAgentActions(
 
         case 'STORE_DATA':
           if (action.data) {
+            // If user is NEW/KYC_PENDING, auto-promote to GUEST_ACTIVE first so product flow works
+            const preStoreState = (await getUserState(phone))?.state;
+            if (preStoreState === 'NEW' || preStoreState === 'KYC_PENDING') {
+              console.log('🆕 Auto-promoting to GUEST_ACTIVE for STORE_DATA (was:', preStoreState, ')');
+              // Execute SKIP_KYC logic inline
+              await updateUserState(phone, 'GUEST_ACTIVE');
+              try {
+                const { createSellerProfile, getSellerByPhone } = await import('../services/dynamodb-repository');
+                const existingSeller = await getSellerByPhone(phone);
+                if (!existingSeller) {
+                  const { randomUUID } = await import('crypto');
+                  const sellerId = randomUUID();
+                  const now = Date.now();
+                  await createSellerProfile({
+                    PK: `SELLER#${sellerId}`,
+                    SK: 'PROFILE',
+                    GSI1PK: phone,
+                    GSI1SK: 'PROFILE',
+                    entityType: 'SELLER_PROFILE',
+                    sellerId,
+                    phone,
+                    name: '',
+                    language: language.split('-')[0] as 'hi' | 'mr' | 'en',
+                    onboardingState: 'GUEST',
+                    kyc: { panNumber: '', verified: false } as any,
+                    ondc: { subscriberId: '', subscriberUrl: '', signingPublicKey: '', encryptionPublicKey: '' },
+                    createdAt: now,
+                    updatedAt: now,
+                  });
+                  const { updateUserSellerId } = await import('../services/state-manager');
+                  await updateUserSellerId(phone, sellerId);
+                }
+              } catch (e) {
+                console.warn('Auto guest profile creation failed (non-blocking):', e);
+              }
+            }
+
             const merged = await mergePartialData(phone, action.data);
             console.log('📦 STORE_DATA merged:', {
               productName: merged.productName,
