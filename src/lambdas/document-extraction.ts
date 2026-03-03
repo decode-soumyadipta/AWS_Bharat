@@ -338,6 +338,51 @@ function extractPANFields(
       }
     }
   }
+
+  // PAN name extraction from raw text lines:
+  // PAN cards have a standard layout — name is printed in UPPERCASE between header and PAN number.
+  const lines = allText.split(/\s{3,}|\n/).map(l => l.trim()).filter(Boolean);
+  console.log('PAN text lines for name extraction:', JSON.stringify(lines));
+  
+  // Strategy 1: Find line after a name-like label
+  for (let i = 0; i < lines.length - 1; i++) {
+    const lower = lines[i].toLowerCase();
+    if (lower === 'name' || lower === 'full name' || lower.includes('holder name') || lower === 'naam') {
+      const nameLine = lines[i + 1].trim();
+      if (nameLine.length > 2 && !PAN_REGEX.test(nameLine) && 
+          !nameLine.toLowerCase().includes('income tax') &&
+          !nameLine.toLowerCase().includes('govt') &&
+          !nameLine.toLowerCase().includes('date') &&
+          !/^\d+$/.test(nameLine)) {
+        data.name = { value: nameLine, confidence: 0.8 };
+        console.log('PAN name extracted (after label):', nameLine);
+        return;
+      }
+    }
+  }
+
+  // Strategy 2: UPPERCASE alphabetical names (PAN cards print names in CAPS)
+  if (!data.name) {
+    const panNum = data.panNumber?.value || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^[A-Z][A-Z\s]{2,}$/.test(trimmed) && 
+          trimmed !== panNum &&
+          !trimmed.includes('INCOME TAX') && 
+          !trimmed.includes('GOVT') &&
+          !trimmed.includes('INDIA') &&
+          !trimmed.includes('PERMANENT') &&
+          !trimmed.includes('DEPARTMENT') &&
+          !trimmed.includes('ACCOUNT') &&
+          !trimmed.includes('NUMBER') &&
+          !trimmed.includes('FATHER') &&
+          trimmed.length >= 3 && trimmed.length <= 50) {
+        data.name = { value: trimmed, confidence: 0.7 };
+        console.log('PAN name extracted (CAPS heuristic):', trimmed);
+        break;
+      }
+    }
+  }
 }
 
 /**
@@ -382,12 +427,23 @@ function extractCommonFields(
   data: ExtractedKYCData,
   keyValuePairs: Record<string, ExtractedField>
 ): void {
-  // Extract name
+  // Extract name — try multiple strategies
   const nameKeys = ['name', 'full name', 'cardholder name', 'holder name'];
   for (const key of nameKeys) {
     if (keyValuePairs[key]) {
       data.name = keyValuePairs[key];
       break;
+    }
+  }
+
+  // Fallback: partial key match (Textract may return 'Name :' or 'Naam' etc.)
+  if (!data.name) {
+    for (const [key, field] of Object.entries(keyValuePairs)) {
+      const lk = key.toLowerCase();
+      if ((lk.includes('name') || lk.includes('naam')) && !lk.includes('father') && !lk.includes('pita')) {
+        data.name = field;
+        break;
+      }
     }
   }
   

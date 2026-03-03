@@ -442,13 +442,15 @@ async function sendSuccessMessage(
   
   await sendTypingIndicator(phone);
   
-  // Text message showing extracted KYC info
-  const nameDisplay = extractedName || 'N/A';
-  const panDisplay = panNumber ? `${panNumber.slice(0, 3)}****${panNumber.slice(-1)}` : 'N/A';
+  // Text message showing extracted KYC info — in user's native script
+  const panDisplay = panNumber ? `${panNumber.slice(0, 3)}****${panNumber.slice(-1)}` : '';
+  const nameBlock = extractedName ? `\nनाम: ${extractedName}` : '';
+  const nameBlockMr = extractedName ? `\nनाव: ${extractedName}` : '';
+  const nameBlockEn = extractedName ? `\nName: ${extractedName}` : '';
   const textData: Record<string, string> = {
-    'hi-IN': `Verification safal!\nNaam: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
-    'mr-IN': `Verification yashashvi!\nNav: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
-    'en-IN': `Verification successful!\nName: ${nameDisplay}\nPAN: ${panDisplay}\nStatus: Verified`,
+    'hi-IN': `✅ वेरिफिकेशन सफल!${nameBlock}\nPAN: ${panDisplay}\nस्टेटस: Verified`,
+    'mr-IN': `✅ व्हेरिफिकेशन यशस्वी!${nameBlockMr}\nPAN: ${panDisplay}\nस्टेटस: Verified`,
+    'en-IN': `✅ Verification successful!${nameBlockEn}\nPAN: ${panDisplay}\nStatus: Verified`,
   };
   await sendTextMessage(phone, textData[language] || textData['hi-IN']);
   
