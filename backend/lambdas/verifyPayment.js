@@ -3,9 +3,11 @@
  * POST /orders/{orderId}/verify-payment
  *
  * Supports:
- * 1. Screenshot upload → Bedrock Nova Pro multimodal AI analysis
- *    - Validates: transaction status, amount (±2%), date (within 48 h), receiver UPI
- *    - Returns structured failure reason + canRetry flag for clean frontend UX
+ * 1. Screenshot upload → Two-stage Bedrock Nova Pro multimodal verification:
+ *    Stage 1 – EXTRACT:  Pure OCR extraction of all fields (no judgement)
+ *    Stage 2 – CONFIRM:  Binary YES/NO confirmation with dynamic expected-value prompt
+ *    Backend validates:  amount (±2%), date (within 48 h), status
+ *    Returns structured failure reason + canRetry flag for clean frontend UX
  * 2. Manual UPI transaction reference submission
  *
  * Updates order payment status in DynamoDB and notifies seller + buyer via WhatsApp.
@@ -66,24 +68,66 @@ function amountsMatch(extracted, expected) {
     return diff <= tolerance;
 }
 
+/** English month name → 0-based index map used by date parser */
+const MONTH_MAP = {
+    jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
+    jul:6, aug:7, sep:8, oct:9, nov:10, dec:11,
+};
+
 /**
- * Parse a date string from UPI screenshot into a Date object.
- * Handles: "15 Jan 2026, 3:45 PM", "2026-01-15 15:45:00", "15/01/26", etc.
+ * Parse a date string from a UPI screenshot into a JS Date.
+ * Covers every format seen in Indian UPI apps:
+ *   "30 Jul 2024, 12:32 pm"    ← Google Pay
+ *   "15 Jan 2026, 3:45 PM"
+ *   "2026-01-15T15:45:00"      ← ISO
+ *   "15-01-2026 15:45"         ← BHIM / SBI
+ *   "15/01/26"                 ← short date only
+ *   "Jan 30, 2024 at 12:32 PM" ← some apps
  */
 function parseTransactionDate(dateStr) {
-    if (!dateStr) return null;
+    if (!dateStr || typeof dateStr !== 'string') return null;
+    const s = dateStr.trim();
     try {
-        // Try direct parse first
-        const d = new Date(dateStr);
-        if (!isNaN(d)) return d;
-        // Indian format: "15 Jan 2026, 3:45 PM" or "15-01-2026 15:45"
-        const normalized = dateStr
-            .replace(/(\d{2})[\/\-](\d{2})[\/\-](\d{2,4})/, (_, d, m, y) => {
-                const year = y.length === 2 ? `20${y}` : y;
-                return `${year}-${m}-${d}`;
-            });
-        const d2 = new Date(normalized);
-        return isNaN(d2) ? null : d2;
+        // ── 1. "30 Jul 2024, 12:32 pm"  or  "15 Jan 2026, 3:45 PM" ─────────
+        const m1 = s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i);
+        if (m1) {
+            const [, d, mon, y, h, min, , ampm] = m1;
+            const month = MONTH_MAP[mon.toLowerCase()];
+            if (month !== undefined) {
+                let hour = parseInt(h, 10);
+                if (ampm?.toLowerCase() === 'pm' && hour < 12) hour += 12;
+                if (ampm?.toLowerCase() === 'am' && hour === 12) hour = 0;
+                return new Date(parseInt(y, 10), month, parseInt(d, 10), hour, parseInt(min, 10));
+            }
+        }
+
+        // ── 2. "Jan 30, 2024 at 12:32 PM" ────────────────────────────────────
+        const m2 = s.match(/^([A-Za-z]{3})\s+(\d{1,2}),?\s+(\d{4})\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+        if (m2) {
+            const [, mon, d, y, h, min, ampm] = m2;
+            const month = MONTH_MAP[mon.toLowerCase()];
+            if (month !== undefined) {
+                let hour = parseInt(h, 10);
+                if (ampm?.toLowerCase() === 'pm' && hour < 12) hour += 12;
+                if (ampm?.toLowerCase() === 'am' && hour === 12) hour = 0;
+                return new Date(parseInt(y, 10), month, parseInt(d, 10), hour, parseInt(min, 10));
+            }
+        }
+
+        // ── 3. ISO / "15-01-2026 15:45" / "15/01/26" ─────────────────────────
+        //    Normalise DD/MM/YY(YY) → YYYY-MM-DD then let Date() parse
+        const normalised = s.replace(
+            /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
+            (_, d, m, y) => `${y.length === 2 ? '20' + y : y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+        );
+        const d3 = new Date(normalised);
+        if (!isNaN(d3.getTime())) return d3;
+
+        // ── 4. Raw Date() last-resort (handles ISO 8601 variants) ──────────────
+        const d4 = new Date(s);
+        if (!isNaN(d4.getTime())) return d4;
+
+        return null;
     } catch {
         return null;
     }
@@ -91,56 +135,54 @@ function parseTransactionDate(dateStr) {
 
 /**
  * Check if a transaction date is within the last 48 hours.
- * Returns { valid: bool, hoursAgo: number }
+ * CRITICAL: if date is unparseable (valid: null) we REJECT — never let through.
+ * Returns { valid: true|false|null, hoursAgo: number|null, display: string }
  */
 function validateTransactionDate(dateStr) {
     const txDate = parseTransactionDate(dateStr);
-    if (!txDate) return { valid: null, hoursAgo: null, display: dateStr || 'unknown' };
-    const hoursAgo = (Date.now() - txDate.getTime()) / 36e5;
+    if (!txDate) {
+        // Cannot parse → treat as INVALID (fail safe, not fail open)
+        return { valid: false, hoursAgo: null, display: dateStr || 'unknown', unparseable: true };
+    }
+    const hoursAgo = (Date.now() - txDate.getTime()) / 3.6e6;
     return {
-        valid: hoursAgo <= 48 && hoursAgo >= -1, // -1 = slight clock skew tolerance
+        valid: hoursAgo <= 48 && hoursAgo >= -1, // -1 handles minor clock skew
         hoursAgo: Math.round(hoursAgo * 10) / 10,
         display: txDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
     };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TWO-STAGE NOVA PRO VERIFICATION
+//
+//  Stage 1 – EXTRACT:  Pure OCR – model reads all visible text, no judgement.
+//  Stage 2 – CONFIRM:  Dynamic binary YES/NO per-order question – model
+//                       answers "valid?" with the expected values embedded.
+//  Backend runs independent strict checks between and after stages.
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Analyze UPI payment screenshot using Bedrock Nova Pro multimodal.
- * Returns structured result with all extracted fields and validation outcomes.
+ * STAGE 1: Ask Nova Pro to extract raw fields from the screenshot like an OCR engine.
+ * No validation logic – pure field extraction.
  */
-async function analyzePaymentScreenshot(imageBase64, expectedAmount, expectedUpiId, orderId) {
-    const nowIST = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    const imageFormat = detectImageFormat(imageBase64);
+async function extractPaymentData(imageBase64, imageFormat) {
+    const extractionPrompt = `You are an OCR system for UPI payment receipts.
+Read ALL visible text from this screenshot and return it as structured JSON.
+Do NOT make any judgements — only extract exactly what you see.
 
-    const prompt = `You are a UPI payment verification system for an Indian e-commerce platform.
-Today's date and time in IST is: ${nowIST}
-Order ID being verified: ${orderId}
-Expected payment amount: ₹${expectedAmount}
-${expectedUpiId ? `Expected receiver UPI ID: ${expectedUpiId}` : ''}
-
-Carefully analyze this UPI payment screenshot and extract ALL visible information.
-
-IMPORTANT INSTRUCTIONS:
-- Read the EXACT amount shown (look for ₹ symbol, numbers in large text)
-- Read the EXACT transaction status (look for "Success", "Successful", "सफल", "Failed", "Pending", green/red indicators)
-- Read the EXACT UTR / Transaction Reference number (12-digit number, or alphanumeric code)
-- Read the EXACT date and time of transaction (shown at bottom or top of receipt)
-- Read the receiver UPI ID or VPA (e.g., seller@paytm, 9876543210@upi)
-- Read the sender name or UPI ID
-
-Respond ONLY with this exact JSON (no other text):
+Return ONLY this JSON (no other text):
 {
-  "transactionStatus": "success" | "failed" | "pending" | "unclear",
-  "isSuccessfulPayment": true | false,
-  "amount": <number in rupees, e.g. 250.00, or null if not readable>,
-  "transactionRef": "<UTR/ref number as string, or null>",
-  "senderName": "<sender name or UPI ID, or null>",
-  "receiverUpiId": "<receiver UPI ID, or null>",
-  "dateTimeRaw": "<exact date/time text from screenshot, or null>",
-  "bankOrApp": "<payment app name: PhonePe/Google Pay/Paytm/BHIM/other, or null>",
-  "confidence": "high" | "medium" | "low",
-  "notAPaymentScreenshot": true | false,
-  "reasoning": "<one-sentence explanation of what you see>"
+  "amount": <numeric rupee amount as a number, e.g. 250, or null>,
+  "status": "<exact status text shown, e.g. 'Completed', 'Successful', 'सफल', 'Failed', 'Pending', or null>",
+  "dateTimeRaw": "<complete date and time text exactly as shown, e.g. '30 Jul 2024, 12:32 pm', or null>",
+  "upiTransactionId": "<UTR or UPI transaction ID number/string, or null>",
+  "googleTransactionId": "<Google Pay / other app transaction ID if shown, or null>",
+  "senderName": "<sender full name as shown, or null>",
+  "senderUpiId": "<sender's UPI address e.g. name@okicici, or null>",
+  "receiverName": "<receiver full name, or null>",
+  "receiverUpiId": "<receiver's UPI address, or null>",
+  "paymentApp": "<app name: 'Google Pay' | 'PhonePe' | 'Paytm' | 'BHIM' | 'Amazon Pay' | 'other' | null>",
+  "notAPaymentScreenshot": <true if this is clearly NOT a payment receipt, false otherwise>
 }`;
 
     try {
@@ -152,40 +194,179 @@ Respond ONLY with this exact JSON (no other text):
                 messages: [{
                     role: 'user',
                     content: [
-                        {
-                            image: {
-                                format: imageFormat,
-                                source: { bytes: imageBase64 },
-                            },
-                        },
-                        { text: prompt },
+                        { image: { format: imageFormat, source: { bytes: imageBase64 } } },
+                        { text: extractionPrompt },
                     ],
                 }],
-                inferenceConfig: {
-                    maxTokens: 512,
-                    temperature: 0.05,
-                },
+                inferenceConfig: { maxTokens: 400, temperature: 0.0 },
             }),
         }));
-
         const result = JSON.parse(new TextDecoder().decode(response.body));
         const text = result.output?.message?.content?.[0]?.text || '';
-        console.log('Nova Pro raw response:', text.substring(0, 500));
-
+        console.log('Stage 1 extraction raw:', text.substring(0, 600));
         const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            return { confidence: 'low', notAPaymentScreenshot: true, reasoning: 'Could not parse AI response' };
-        }
+        if (!jsonMatch) return { notAPaymentScreenshot: true, _parseError: true };
         return JSON.parse(jsonMatch[0]);
-    } catch (error) {
-        console.error('Bedrock analysis failed:', error);
-        return { confidence: 'low', reasoning: `AI analysis error: ${error.message}` };
+    } catch (err) {
+        console.error('Stage 1 extraction failed:', err.message);
+        return { notAPaymentScreenshot: false, _extractError: err.message };
     }
 }
 
 /**
+ * STAGE 2: Ask Nova Pro a focused binary question after backend pre-validation passes.
+ * The prompt is fully dynamic — it embeds the expected order values.
+ * Returns { valid: boolean, confidence: 'high'|'medium'|'low', reason: string }
+ */
+async function confirmPaymentBinary(extracted, imageBase64, imageFormat, expectedAmount, expectedUpiId, orderId) {
+    const nowIST = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+    // Build a concise summary of what was extracted (Stage 1 result)
+    const extractedSummary = [
+        extracted.amount != null   ? `Amount: ₹${extracted.amount}`             : 'Amount: not readable',
+        extracted.dateTimeRaw      ? `Date/time: ${extracted.dateTimeRaw}`       : 'Date: not visible',
+        extracted.status           ? `Status: ${extracted.status}`               : 'Status: not visible',
+        extracted.receiverUpiId    ? `Receiver UPI: ${extracted.receiverUpiId}`  : '',
+        extracted.senderName       ? `Sender: ${extracted.senderName}`           : '',
+        extracted.upiTransactionId ? `UTR/Txn ID: ${extracted.upiTransactionId}` : '',
+    ].filter(Boolean).join('\n');
+
+    const confirmationPrompt = `You are a payment fraud-detection system.
+Current date and time (IST): ${nowIST}
+
+The following fields were OCR-extracted from a UPI payment screenshot:
+${extractedSummary}
+
+This screenshot is being submitted as proof of payment for:
+  Order ID : ${orderId}
+  Expected amount : ₹${expectedAmount}
+  ${expectedUpiId ? `Expected receiver UPI : ${expectedUpiId}` : ''}
+
+Look at the screenshot carefully and answer:
+1. Does the screenshot show a COMPLETED / SUCCESSFUL transaction? (not pending, not failed)
+2. Is the amount ₹${expectedAmount} (within ₹5 or 2% tolerance)?
+3. Is the transaction date RECENT — i.e., within the last 48 hours of today (${nowIST})?
+${expectedUpiId ? `4. Is the receiver UPI ID "${expectedUpiId}" or very similar?` : ''}
+
+If ALL of the above are YES → answer valid: true.
+If ANY one is NO → answer valid: false.
+
+Return ONLY this JSON (no other text):
+{
+  "valid": true | false,
+  "confidence": "high" | "medium" | "low",
+  "statusOk": true | false,
+  "amountOk": true | false,
+  "dateOk": true | false,
+  ${expectedUpiId ? '"receiverOk": true | false,' : ''}
+  "reason": "<one-sentence plain-language explanation>"
+}`;
+
+    try {
+        const response = await bedrockClient.send(new InvokeModelCommand({
+            modelId: 'amazon.nova-pro-v1:0',
+            contentType: 'application/json',
+            accept: 'application/json',
+            body: JSON.stringify({
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { image: { format: imageFormat, source: { bytes: imageBase64 } } },
+                        { text: confirmationPrompt },
+                    ],
+                }],
+                inferenceConfig: { maxTokens: 256, temperature: 0.0 },
+            }),
+        }));
+        const result = JSON.parse(new TextDecoder().decode(response.body));
+        const text = result.output?.message?.content?.[0]?.text || '';
+        console.log('Stage 2 binary confirmation raw:', text.substring(0, 400));
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return { valid: false, confidence: 'low', reason: 'Could not parse binary confirmation response' };
+        return JSON.parse(jsonMatch[0]);
+    } catch (err) {
+        console.error('Stage 2 confirmation failed:', err.message);
+        return { valid: false, confidence: 'low', reason: `Confirmation error: ${err.message}` };
+    }
+}
+
+/**
+ * ORCHESTRATOR: Run both stages and return a unified aiResult compatible with buildVerdict.
+ */
+async function analyzePaymentScreenshot(imageBase64, expectedAmount, expectedUpiId, orderId) {
+    const imageFormat = detectImageFormat(imageBase64);
+
+    // ── STAGE 1: Extract ──────────────────────────────────────────────────────
+    const extracted = await extractPaymentData(imageBase64, imageFormat);
+    console.log('Stage 1 extracted:', JSON.stringify(extracted));
+
+    // Fast-fail: not a payment screenshot
+    if (extracted.notAPaymentScreenshot) {
+        return {
+            notAPaymentScreenshot: true,
+            confidence: 'high',
+            reasoning: 'Image does not appear to be a UPI payment receipt.',
+            ...extracted,
+        };
+    }
+
+    // Normalise status to our internal vocabulary
+    const rawStatus = (extracted.status || '').toLowerCase();
+    let transactionStatus = 'unclear';
+    if (/complet|success|सफल|successful/i.test(rawStatus)) transactionStatus = 'success';
+    else if (/fail|fail/i.test(rawStatus)) transactionStatus = 'failed';
+    else if (/pend/i.test(rawStatus)) transactionStatus = 'pending';
+
+    // Derive confidence from how much was extracted
+    const fieldsExtracted = [extracted.amount, extracted.dateTimeRaw, extracted.status].filter(Boolean).length;
+    const confidence = fieldsExtracted >= 3 ? 'high' : fieldsExtracted === 2 ? 'medium' : 'low';
+
+    // ── STAGE 2: Binary confirmation (only if enough data extracted) ──────────
+    let binaryResult = { valid: null, confidence, reason: 'Skipped (insufficient extraction)' };
+    if (confidence !== 'low' && transactionStatus !== 'unclear') {
+        binaryResult = await confirmPaymentBinary(extracted, imageBase64, imageFormat, expectedAmount, expectedUpiId, orderId);
+        console.log('Stage 2 binary result:', JSON.stringify(binaryResult));
+    }
+
+    // ── Combine into unified result ───────────────────────────────────────────
+    return {
+        // Core fields consumed by buildVerdict
+        transactionStatus,
+        isSuccessfulPayment: transactionStatus === 'success' && binaryResult.valid === true,
+        amount: extracted.amount,
+        dateTimeRaw: extracted.dateTimeRaw,
+        transactionRef: extracted.upiTransactionId || extracted.googleTransactionId,
+        senderName: extracted.senderName,
+        receiverUpiId: extracted.receiverUpiId,
+        bankOrApp: extracted.paymentApp,
+        notAPaymentScreenshot: false,
+        confidence: binaryResult.confidence || confidence,
+        // Binary result
+        binaryValid: binaryResult.valid,
+        binaryStatusOk: binaryResult.statusOk,
+        binaryAmountOk: binaryResult.amountOk,
+        binaryDateOk: binaryResult.dateOk,
+        binaryReceiverOk: binaryResult.receiverOk,
+        reasoning: binaryResult.reason || extracted.status,
+    };
+}
+
+/**
  * Build a structured verification verdict from raw AI output.
- * Returns: { passed, paymentStatus, failureCode, failureMessage, details }
+ * Uses both the extracted fields (Stage 1) and the binary confirmation (Stage 2).
+ * Returns: { passed, paymentStatus, failureCode, failureMessage, canRetry, details }
+ *
+ * Check order:
+ *  1. notAPaymentScreenshot
+ *  2. low confidence (unreadable)
+ *  3. transaction pending
+ *  4. transaction failed
+ *  5. date invalid (backend date math — primary gate against old screenshots)
+ *  6. binary model says date not OK (secondary gate)
+ *  7. amount mismatch (backend fuzzy math)
+ *  8. binary says amount not OK (secondary gate)
+ *  9. final binary valid === false (catch-all)
+ * 10. PAID ✅
  */
 function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
     const details = {
@@ -198,10 +379,14 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
         confidence: aiResult.confidence,
         aiReasoning: aiResult.reasoning,
         transactionStatus: aiResult.transactionStatus,
+        binaryValid: aiResult.binaryValid ?? null,
+        binaryStatusOk: aiResult.binaryStatusOk ?? null,
+        binaryAmountOk: aiResult.binaryAmountOk ?? null,
+        binaryDateOk: aiResult.binaryDateOk ?? null,
     };
 
-    // Not a payment screenshot at all
-    if (aiResult.notAPaymentScreenshot || aiResult.transactionStatus === 'unclear' && aiResult.confidence === 'low') {
+    // ── 1. Not a payment screenshot ───────────────────────────────────────────
+    if (aiResult.notAPaymentScreenshot) {
         return {
             passed: false,
             paymentStatus: 'VERIFICATION_FAILED',
@@ -212,7 +397,7 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
         };
     }
 
-    // AI is too uncertain
+    // ── 2. Unreadable / low confidence ────────────────────────────────────────
     if (aiResult.confidence === 'low') {
         return {
             passed: false,
@@ -224,7 +409,7 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
         };
     }
 
-    // Transaction pending (check before failed — pending is not yet failed)
+    // ── 3. Transaction pending ─────────────────────────────────────────────────
     if (aiResult.transactionStatus === 'pending') {
         return {
             passed: false,
@@ -236,7 +421,7 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
         };
     }
 
-    // Transaction itself failed
+    // ── 4. Transaction failed ─────────────────────────────────────────────────
     if (!aiResult.isSuccessfulPayment || aiResult.transactionStatus === 'failed') {
         return {
             passed: false,
@@ -248,20 +433,38 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
         };
     }
 
-    // Date validation — reject screenshots older than 48 hours
+    // ── 5. Backend date validation (PRIMARY gate — catches old screenshots) ────
+    //      validateTransactionDate now returns valid:false for unparseable dates too
     const dateCheck = validateTransactionDate(aiResult.dateTimeRaw);
     if (dateCheck.valid === false) {
+        const hoursMsg = dateCheck.hoursAgo != null
+            ? `This screenshot is ${dateCheck.hoursAgo} hours old (dated ${dateCheck.display}).`
+            : dateCheck.unparseable
+                ? `The transaction date "${aiResult.dateTimeRaw || 'unknown'}" could not be verified.`
+                : `Transaction date "${dateCheck.display}" is outside the allowed 48-hour window.`;
         return {
             passed: false,
             paymentStatus: 'VERIFICATION_FAILED',
             canRetry: false,
             failureCode: 'old_screenshot',
-            failureMessage: `This screenshot is ${dateCheck.hoursAgo} hours old (dated ${dateCheck.display}). Please make payment first, then upload the fresh receipt.`,
+            failureMessage: `${hoursMsg} Please make the payment now and upload the fresh receipt.`,
             details: { ...details, parsedDate: dateCheck.display, hoursAgo: dateCheck.hoursAgo },
         };
     }
 
-    // Amount validation
+    // ── 6. Binary model says date not OK (secondary gate) ────────────────────
+    if (aiResult.binaryDateOk === false) {
+        return {
+            passed: false,
+            paymentStatus: 'VERIFICATION_FAILED',
+            canRetry: false,
+            failureCode: 'old_screenshot',
+            failureMessage: `The AI confirmed this screenshot is not from today. Date shown: ${aiResult.dateTimeRaw || 'unknown'}. Please pay and upload today's receipt.`,
+            details,
+        };
+    }
+
+    // ── 7. Backend amount fuzzy-match ─────────────────────────────────────────
     if (!amountsMatch(aiResult.amount, expectedAmount)) {
         const diff = aiResult.amount != null ? Math.abs(aiResult.amount - expectedAmount) : null;
         return {
@@ -271,19 +474,43 @@ function buildVerdict(aiResult, expectedAmount, expectedUpiId) {
             failureCode: 'amount_mismatch',
             failureMessage: aiResult.amount != null
                 ? `Screenshot shows ₹${aiResult.amount}, but order requires ₹${expectedAmount}. Please pay the exact amount and re-upload.`
-                : `Could not read the payment amount from the screenshot. Please ensure the amount ₹${expectedAmount} is clearly visible.`,
+                : `Could not read the payment amount from the screenshot. Please ensure ₹${expectedAmount} is clearly visible.`,
             details: { ...details, expectedAmount, amountDiff: diff },
         };
     }
 
-    // All checks passed
+    // ── 8. Binary model says amount not OK ────────────────────────────────────
+    if (aiResult.binaryAmountOk === false) {
+        return {
+            passed: false,
+            paymentStatus: 'VERIFICATION_FAILED',
+            canRetry: true,
+            failureCode: 'amount_mismatch',
+            failureMessage: `The AI confirmed the screenshot amount does not match the required ₹${expectedAmount}. ${aiResult.reasoning || ''}`,
+            details,
+        };
+    }
+
+    // ── 9. Final binary catch-all ─────────────────────────────────────────────
+    if (aiResult.binaryValid === false) {
+        return {
+            passed: false,
+            paymentStatus: 'VERIFICATION_FAILED',
+            canRetry: true,
+            failureCode: 'verification_failed',
+            failureMessage: `Payment could not be verified: ${aiResult.reasoning || 'screenshot does not match the expected payment.'}`,
+            details,
+        };
+    }
+
+    // ── 10. All checks passed → PAID ✅ ───────────────────────────────────────
     return {
         passed: true,
         paymentStatus: 'PAID',
         canRetry: false,
         failureCode: null,
         failureMessage: null,
-        details: { ...details, parsedDate: validateTransactionDate(aiResult.dateTimeRaw).display },
+        details: { ...details, parsedDate: dateCheck.display },
     };
 }
 
