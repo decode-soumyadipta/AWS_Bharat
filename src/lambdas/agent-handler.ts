@@ -189,16 +189,18 @@ async function processAgentEvent(event: any): Promise<any> {
       throw new Error('Phone number is required');
     }
 
-    // Send typing indicator IMMEDIATELY to show we're processing
+    // ── TYPING INDICATOR: Exact reference implementation ──────────────────────
+    // markMessageAsRead(messageID, true) = read receipt + typing bubble (~25s)
+    // Called unconditionally here, same as: markMessageAsRead(messageID, true)
     const { sendTypingIndicator, markMessageAsRead, setLastMessageId } = await import('./whatsapp-message-sender');
-    // Cache the message ID per phone so all typing indicators in this session work
     if (eventDetail.messageId) {
       setLastMessageId(phone, eventDetail.messageId);
-    }
-    // Use markMessageAsRead with typing=true (same single API call as reference implementation)
-    if (eventDetail.messageId) {
       await markMessageAsRead(eventDetail.messageId, true);
+    } else {
+      // No messageId in event (e.g. internal re-trigger) — still refresh typing via cache
+      await sendTypingIndicator(phone);
     }
+    // ── END TYPING INDICATOR ────────────────────────────────────────────────────
 
     // Get user state and context
     const userState = await getUserState(phone);

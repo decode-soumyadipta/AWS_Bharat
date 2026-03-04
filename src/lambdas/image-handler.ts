@@ -19,7 +19,7 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { downloadImage } from '../services/media-download';
 import { getUserState, updateUserState } from '../services/state-manager';
 import { getPartialData, savePartialData } from '../services/partial-data-store';
-import { sendTextMessage } from './whatsapp-message-sender';
+import { sendTextMessage, markMessageAsRead, sendTypingIndicator, setLastMessageId } from './whatsapp-message-sender';
 import { PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { ImageEnhancementRequest, ImageEnhancementResponse } from './image-enhancement';
 
@@ -73,6 +73,18 @@ export const handler = async (
     if (!phone || !mediaId) {
       throw new Error('Phone number and media ID are required');
     }
+
+    // ── TYPING INDICATOR: Exact reference implementation ──────────────────────
+    // markMessageAsRead(messageID, true) = read receipt + typing bubble (25s)
+    if (messageId) {
+      setLastMessageId(phone, messageId);
+      await markMessageAsRead(messageId, true);
+      console.log('✅ Image handler: typing indicator sent');
+    } else {
+      // No messageId cached yet — still try typing via cached value
+      await sendTypingIndicator(phone);
+    }
+    // ── END TYPING INDICATOR ─────────────────────────────────────────────────
 
     // Get user state
     const userState = await getUserState(phone);

@@ -79,6 +79,32 @@ export async function processWithEnhancedAgent(
   const conversationContext = await getConversationContext(phone);
   const partialData = await getPartialData(phone);
   const userState = await getUserState(phone);
+  const currentUserState = userState?.state || 'UNKNOWN';
+
+  // ── PRE-LLM SKIP-KYC SHORTCUT ─────────────────────────────────────────────
+  // When user says skip/guest/later in KYC state, detect it from keywords alone.
+  // Audio transcripts may contain the skip keyword alongside other words —
+  // read every word to find skip intent, then act immediately without LLM.
+  if (detectSkipKycIntent(userMessage, currentUserState)) {
+    console.log('⚡ Pre-LLM skip KYC detected — bypassing model call');
+    await addConversationMessage(phone, { timestamp: Date.now(), role: 'user', content: userMessage, messageType });
+    const lang = currentLanguage.split('-')[0] as 'hi' | 'mr' | 'en';
+    const skipAck: Record<string, string> = {
+      'hi': 'ठीक है! गेस्ट के रूप में शुरू करते हैं। अब आप प्रोडक्ट जोड़ सकते हैं।',
+      'mr': 'ठीक आहे! गेस्ट म्हणून सुरू करतो. आता तुम्ही प्रोडक्ट जोडू शकता.',
+      'en': 'Sure! Starting as guest. You can now add your products.',
+    };
+    const ackMsg = skipAck[lang] || skipAck['hi'];
+    await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: ackMsg, messageType: 'text' });
+    return {
+      message: ackMsg,
+      actions: [{ type: 'SKIP_KYC' }],
+      responseMode: 'voice',
+      confidence: 1.0,
+      reasoning: 'Pre-LLM keyword-detected skip/guest intent',
+    };
+  }
+  // ── END PRE-LLM SKIP-KYC ──────────────────────────────────────────────────
 
   // Detect language switch request
   const detectedLanguage = detectLanguageSwitch(userMessage, currentLanguage);
@@ -163,7 +189,6 @@ export async function processWithEnhancedAgent(
   await showTypingIndicator(phone);
 
   let response: string;
-  const currentUserState = userState?.state || 'UNKNOWN';
 
   // Bedrock Agent only has catalog-search/market tools — it CANNOT do STORE_DATA, SKIP_KYC, etc.
   // Use enhanced prompt (with full STORE_DATA logic) for all product-adding states.
@@ -218,6 +243,32 @@ export async function processWithEnhancedAgent(
   console.log('🤖 Enhanced agent response:', agentResponse);
 
   return agentResponse;
+}
+
+/**
+ * Pre-LLM skip-KYC intent detection.
+ * Detects when a user (in NEW or KYC_PENDING state) says something containing
+ * a clear skip/guest/decline keyword — even when mixed with other words in audio.
+ * Returns true if SKIP_KYC should be executed immediately, bypassing the LLM.
+ */
+function detectSkipKycIntent(message: string, userState: string): boolean {
+  if (userState !== 'NEW' && userState !== 'KYC_PENDING') return false;
+
+  const m = message.toLowerCase();
+
+  // English / Romanized: skip, guest, later, don't want, not now
+  const romanized = /\b(skip|guest|baad\s*mein|baadme|abhi\s*nahi|nahi\s*chahiye|nahi\s*hai\s*pan|pan\s*nahi\s*hai|chhod[oa]|chod[oa]|mat\s*karo|nahi\s*karna|bina\s*(pan|kyc)|not\s*now|don[t']?\s*want|no\s*(pan|kyc)|start\s*without)\b/i;
+  if (romanized.test(m)) return true;
+
+  // Hindi Devanagari: छोड़, स्किप, बाद में, पैन नहीं, अभी नहीं, गेस्ट
+  const hindi = /छोड़|स्किप|बाद\s*में|अभी\s*नहीं|पैन\s*नहीं|PAN\s*नहीं|नहीं\s*है|गेस्ट|बिना\s*(पैन|PAN|KYC)/;
+  if (hindi.test(message)) return true;
+
+  // Marathi: स्किप, नंतर, नाही, सोड
+  const marathi = /स्किप|नंतर|सोड|नको|आत्ता\s*नाही/;
+  if (marathi.test(message)) return true;
+
+  return false;
 }
 
 /**
