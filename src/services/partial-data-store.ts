@@ -32,6 +32,14 @@ export interface PartialCatalogItem {
   source: 'voice' | 'text';
   createdAt: number;
   updatedAt: number;
+  // Cached LIVE market price — used when re-confirmation needs to resend but API is flaky
+  cachedMarketPrice?: {
+    priceInfo: string;
+    sourceName: string;
+    sourceUrl: string;
+    isLive: true;
+    cachedAt: number; // epoch ms
+  };
 }
 
 interface PartialCatalogDataRecord extends PartialCatalogItem {

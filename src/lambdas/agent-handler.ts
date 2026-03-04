@@ -272,7 +272,7 @@ async function processAgentEvent(event: any): Promise<any> {
 
     // For CONFIRMATION_PENDING state, detect price/quantity updates and handle them
     if (userState?.state === 'CONFIRMATION_PENDING' && partialData) {
-      const updateResult = await detectAndApplyUpdate(userMessage, phone, partialData, language);
+      const updateResult = await detectAndApplyUpdate(userMessage, phone, partialData, language, eventDetail.messageId);
       if (updateResult) {
         console.log('📝 Applied update in CONFIRMATION_PENDING:', updateResult);
         return { success: true, message: 'Update applied' };
@@ -390,7 +390,8 @@ async function detectAndApplyUpdate(
   message: string,
   phone: string,
   partialData: any,
-  language: string
+  language: string,
+  messageId?: string
 ): Promise<string | null> {
 
   // ── Price patterns ──────────────────────────────────────────────────────────
@@ -524,9 +525,9 @@ async function detectAndApplyUpdate(
     await lambdaClient.send(new InvokeCommand({
       FunctionName: confirmationFunctionName,
       InvocationType: 'Event', // async — don't wait, user already got the ack
-      Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+      Payload: JSON.stringify({ detail: { phone, action: 'generate', messageId } }),
     }));
-    console.log('✅ Confirmation handler re-invoked after update');
+    console.log('✅ Confirmation handler re-invoked after update (messageId:', messageId, ')');
   } catch (confErr) {
     console.error('⚠️ Confirmation handler re-invoke failed:', confErr);
   }

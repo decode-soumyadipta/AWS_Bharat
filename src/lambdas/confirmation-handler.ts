@@ -13,7 +13,7 @@ import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { eventBridgeClient, s3Client, PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
-import { PartialCatalogItem, getPartialData, deletePartialData } from '../services/partial-data-store';
+import { PartialCatalogItem, getPartialData, deletePartialData, mergePartialData } from '../services/partial-data-store';
 import { getUserState, updateUserState } from '../services/state-manager';
 import { formatCatalogDetails, translateMessage, getLanguagePreference, type SupportedLanguage } from '../services/language-manager';
 import { sendInteractiveMessage, sendTextMessage } from './whatsapp-message-sender';
@@ -157,8 +157,22 @@ export const handler = async (event: any): Promise<any> => {
     console.log('Dispatching to action handler:', action);
     
     switch (action) {
-      case 'generate':
+      case 'generate': {
+        // Show typing indicator immediately — especially important for async re-invocations
+        // (e.g. after price/qty update, ACK message clears typing, so we re-set it here)
+        const msgIdForTyping = eventDetail.messageId;
+        if (msgIdForTyping) {
+          try {
+            const { setLastMessageId, markMessageAsRead } = await import('./whatsapp-message-sender');
+            setLastMessageId(phone, msgIdForTyping);
+            await markMessageAsRead(msgIdForTyping, true);
+            console.log('✅ Typing indicator set at confirmation generate start');
+          } catch (typingErr) {
+            console.warn('Typing indicator in confirmation handler failed (non-fatal):', typingErr);
+          }
+        }
         return await generateConfirmation(phone, partialData, userState.language);
+      }
       
       case 'approve':
         return await processApproval(phone, partialData, userState.language);
@@ -237,8 +251,35 @@ export async function generateConfirmation(
         marketPrice = { found: true, priceInfo: fallback.priceInfo, sourceName: fallback.sourceName, sourceUrl: fallback.sourceUrl, isLive: false };
       }
     }
+    // If live price fetched successfully, cache it in DynamoDB so re-confirmation can reuse it
+    if (marketPrice && marketPrice.found && marketPrice.isLive) {
+      try {
+        await mergePartialData(phone, {
+          cachedMarketPrice: {
+            priceInfo: marketPrice.priceInfo,
+            sourceName: marketPrice.sourceName,
+            sourceUrl: marketPrice.sourceUrl,
+            isLive: true,
+            cachedAt: Date.now(),
+          },
+        } as any);
+        console.log('💾 Cached live market price in DynamoDB');
+      } catch (cacheErr) {
+        console.warn('Failed to cache market price (non-fatal):', cacheErr);
+      }
+    }
+
+    // If current fetch returned fallback, try to use the cached LIVE price (< 24h old)
+    if (marketPrice && marketPrice.found && !marketPrice.isLive && partialData.cachedMarketPrice) {
+      const cacheAge = Date.now() - (partialData.cachedMarketPrice.cachedAt || 0);
+      if (cacheAge < 24 * 60 * 60 * 1000) {
+        console.log('✅ Using cached LIVE market price (age:', Math.round(cacheAge / 60000), 'min)');
+        marketPrice = { ...marketPrice, ...partialData.cachedMarketPrice };
+      }
+    }
+
     if (marketPrice && marketPrice.found) {
-      const liveTag = marketPrice.isLive ? '🟢 LIVE' : '📋';
+      const liveTag = marketPrice.isLive ? '🟢 LIVE' : '📊';
       if (lang === 'hi-IN') {
         marketPriceLine = `\n${liveTag} आज का बाज़ार भाव: ${marketPrice.priceInfo}\n🔗 ${marketPrice.sourceName}`;
         marketVoiceLine = `, आज बाज़ार भाव ${marketPrice.priceInfo}`;
