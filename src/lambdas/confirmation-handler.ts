@@ -158,6 +158,29 @@ export const handler = async (event: any): Promise<any> => {
     
     switch (action) {
       case 'generate': {
+        // Guard: if user state is already ACTIVE, the product was saved — do NOT re-show
+        // the confirmation card (this can happen due to race conditions or retries).
+        if (userState.state === 'ACTIVE') {
+          console.warn('⚠️ Skipping confirmation generate — state is already ACTIVE (product already saved)');
+          return { success: false, reason: 'already_active' };
+        }
+
+        // Guard: reject placeholder product names before showing the card.
+        const placeholders = ['product', 'item', 'goods', 'unknown', 'na', 'n/a', 'product name', 'any product'];
+        const nameCheck = (partialData.productName || '').toLowerCase().trim();
+        if (!partialData.productName || placeholders.includes(nameCheck) || nameCheck.length < 2) {
+          console.warn('⚠️ Skipping confirmation generate — placeholder/missing product name:', partialData.productName);
+          const lang = (userState.language?.split('-')[0] || 'hi') as 'hi' | 'mr' | 'en';
+          const askName: Record<string, string> = {
+            hi: 'आपके प्रोडक्ट का नाम क्या है? जैसे "टमाटर" या "आलू" — वॉइस में बताएं।',
+            mr: 'तुमच्या उत्पादाचे नाव काय आहे? जसे "टोमॅटो" — व्हॉइस मेसेजमध्ये सांगा.',
+            en: 'What is the product name? e.g. "tomatoes" — send a voice message.',
+          };
+          const { sendTextWithVoice } = await import('./whatsapp-message-sender');
+          await sendTextWithVoice(phone, askName[lang] || askName.hi, lang);
+          return { success: false, reason: 'placeholder_product_name' };
+        }
+
         // Show typing indicator immediately — especially important for async re-invocations
         // (e.g. after price/qty update, ACK message clears typing, so we re-set it here)
         const msgIdForTyping = eventDetail.messageId;

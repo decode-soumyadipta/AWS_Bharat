@@ -678,10 +678,17 @@ async function handleImageMessage(
   // Check if all required fields are present → trigger confirmation flow
   const updatedPartial = await getPartialData(phone);
   const hasMissingFields = updatedPartial?.missingFields && updatedPartial.missingFields.length > 0;
+
+  // Guard: reject placeholder/generic product names (same check as STORE_DATA handler)
+  const PLACEHOLDER_NAMES_IMG = ['product', 'item', 'goods', 'unknown', 'na', 'n/a', 'product name', 'any product'];
+  const imgProductNameLower = (updatedPartial?.productName || '').toLowerCase().trim();
+  const imgHasRealProductName = !!(updatedPartial?.productName) &&
+    !PLACEHOLDER_NAMES_IMG.includes(imgProductNameLower) &&
+    imgProductNameLower.length >= 2;
   
-  if (updatedPartial && !hasMissingFields) {
-    // All product data + image → trigger confirmation handler directly
-    console.log('✅ All fields + image present, triggering confirmation flow');
+  if (updatedPartial && !hasMissingFields && imgHasRealProductName) {
+    // All product data + image (with real product name) → trigger confirmation handler directly
+    console.log('✅ All fields + image present (real product name), triggering confirmation flow');
     await updateUserState(phone, 'CONFIRMATION_PENDING');
     
     try {
@@ -742,10 +749,10 @@ async function handleButtonClick(
   
   switch (buttonPayload) {
     case 'approve':
-      userMessage = 'I want to approve and create the catalog';
-      // Create catalog directly
+      // Create catalog and return immediately — no further AI processing needed
+      // (extra AI call after createCatalog was triggering spurious STORE_DATA/confirmation)
       await createCatalog(phone, language);
-      break;
+      return '__HANDLED__';
 
     case 'edit_quantity':
       userMessage = 'I want to edit the quantity';
@@ -1057,7 +1064,16 @@ async function executeAgentActions(
             const hasImage = !!(merged.originalImageUrl || merged.enhancedImageUrl);
             const currentState = (await getUserState(phone))?.state;
 
-            if (allFieldsPresent && hasImage) {
+            // Guard: reject placeholder/generic product names that AI fills as defaults.
+            // If productName is 'Product', 'item', 'unknown' etc. treat it as missing
+            // to avoid IMAGE_PENDING/CONFIRMATION_PENDING with garbage data.
+            const PLACEHOLDER_NAMES = ['product', 'item', 'goods', 'unknown', 'na', 'n/a', 'product name', 'any product'];
+            const productNameLower = (merged.productName || '').toLowerCase().trim();
+            const hasRealProductName = !!(merged.productName) &&
+              !PLACEHOLDER_NAMES.includes(productNameLower) &&
+              productNameLower.length >= 2;
+
+            if (allFieldsPresent && hasRealProductName && hasImage) {
               // All data + image → trigger confirmation
               console.log('✅ All fields + image complete, triggering confirmation');
               await updateUserState(phone, 'CONFIRMATION_PENDING');
@@ -1072,13 +1088,13 @@ async function executeAgentActions(
               } catch (e) {
                 console.error('⚠️ Confirmation invoke failed:', e);
               }
-            } else if (allFieldsPresent && !hasImage) {
+            } else if (allFieldsPresent && hasRealProductName && !hasImage) {
               // All text data present, need image → IMAGE_PENDING
               console.log('📸 All fields present, moving to IMAGE_PENDING');
               await updateUserState(phone, 'IMAGE_PENDING');
             } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE' || currentState === 'GUEST_ACTIVE') {
-              // Partial data, move to VOICE_RECEIVED so user can provide more info
-              console.log('📝 Partial data, moving to VOICE_RECEIVED');
+              // Partial data (or placeholder name), move to VOICE_RECEIVED so user can provide more info
+              console.log('📝 Partial data or placeholder name, moving to VOICE_RECEIVED');
               await updateUserState(phone, 'VOICE_RECEIVED');
             }
           }
