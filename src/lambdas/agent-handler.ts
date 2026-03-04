@@ -82,26 +82,52 @@ function normalizeHindiNumbers(text: string): string {
     'sadhe': 0.5, 'साढ़े': 0.5,  // used as prefix: "sadhe teen sau" = 350
   };
 
+  // Helper: build word-boundary regex that works for BOTH ASCII and Devanagari/Unicode
+  // \b only works for [a-zA-Z0-9_] — Devanagari chars are NOT \w, so \b fails for them.
+  // Use Unicode-aware lookbehind/lookahead for Devanagari, and \b for ASCII.
+  function wordBoundaryRegex(word: string, flags: string = 'gi'): RegExp {
+    const isDevanagari = /[\u0900-\u097F]/.test(word);
+    if (isDevanagari) {
+      // For Devanagari: match when preceded by start/space/digit and followed by end/space/digit
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?<=^|[\\s\\d])${escaped}(?=$|[\\s\\d])`, flags);
+    }
+    // ASCII: standard \b works fine
+    return new RegExp(`\\b${word}\\b`, flags);
+  }
+
   let result = text;
 
   // Handle compound patterns first (e.g., "do sau pachaas" → 250, "paanch hazaar" → 5000)
   // Pattern: <multiplier> sau/hazaar/lakh [additional]
-  const compoundPattern = /\b(ek|do|teen|char|panch|paanch|cheh|chhe|saat|aath|nau|das|bees|tees|chaalees|pachaas|एक|दो|तीन|चार|पाँच|छह|सात|आठ|नौ|दस|बीस|तीस|चालीस|पचास)\s+(sau|hazaar|hazar|hajaar|lakh|lac|crore|सौ|हज़ार|हजार|लाख|करोड़|karod)\b/gi;
-  
-  result = result.replace(compoundPattern, (match, multiplierWord, unitWord) => {
-    const multiplier = numberWords[multiplierWord.toLowerCase()] || numberWords[multiplierWord] || 1;
-    const unit = numberWords[unitWord.toLowerCase()] || numberWords[unitWord] || 1;
+  // ASCII version
+  const compoundPatternAscii = /\b(ek|do|teen|char|panch|paanch|cheh|chhe|saat|aath|nau|das|bees|tees|chaalees|pachaas)\s+(sau|hazaar|hazar|hajaar|lakh|lac|crore|karod)\b/gi;
+  result = result.replace(compoundPatternAscii, (match, multiplierWord, unitWord) => {
+    const multiplier = numberWords[multiplierWord.toLowerCase()] || 1;
+    const unit = numberWords[unitWord.toLowerCase()] || 1;
+    return String(multiplier * unit);
+  });
+
+  // Devanagari compound version — uses Unicode-aware boundaries
+  const devanagariMultipliers = 'एक|दो|तीन|चार|पाँच|छह|सात|आठ|नौ|दस|बीस|तीस|चालीस|पचास';
+  const devanagariUnits = 'सौ|हज़ार|हजार|लाख|करोड़';
+  const compoundPatternDev = new RegExp(
+    `(?<=^|[\\s\\d])(${devanagariMultipliers})\\s+(${devanagariUnits})(?=$|[\\s\\d])`, 'gi'
+  );
+  result = result.replace(compoundPatternDev, (match, multiplierWord, unitWord) => {
+    const multiplier = numberWords[multiplierWord] || 1;
+    const unit = numberWords[unitWord] || 1;
     return String(multiplier * unit);
   });
 
   // Handle standalone number words (replace remaining uncompounded ones)
-  // Sort by length descending so longer matches go first
+  // Sort by length descending so longer matches go first (e.g., "dedh sau" before "sau")
   const sortedWords = Object.entries(numberWords)
     .filter(([_, v]) => v >= 10) // Only replace substantial numbers standalone
     .sort((a, b) => b[0].length - a[0].length);
 
   for (const [word, num] of sortedWords) {
-    const regex = new RegExp(`\\b${word}\\b`, 'gi');
+    const regex = wordBoundaryRegex(word, 'gi');
     result = result.replace(regex, String(num));
   }
 
@@ -111,10 +137,19 @@ function normalizeHindiNumbers(text: string): string {
   result = result.replace(/\b1\.5\s+1000\b/g, '1500');
   result = result.replace(/\b2\.5\s+1000\b/g, '2500');
 
-  // Handle "X rupaye" or "X kilo" where X contains spaces between number words
-  // e.g., "100 50" → "150" when consecutive
+  // Handle Hindi compound number addition: "100 50" → "150" when before a unit word
+  // Only add when n2 < n1 (valid Hindi: "sau pachaas" = 150, but "100 100" is NOT 200)
   result = result.replace(/(\d+)\s+(\d+)(?=\s*(rupaye|rupee|kilo|kg|gram|रुपये|किलो|ग्राम|rupaiye))/gi, 
-    (match, n1, n2) => String(parseInt(n1) + parseInt(n2))
+    (match, n1, n2) => {
+      const num1 = parseInt(n1);
+      const num2 = parseInt(n2);
+      // Only add if n2 < n1 (Hindi additive: "sau pachaas" = 100 + 50)
+      // If n2 >= n1, they're separate numbers, not a compound
+      if (num2 < num1) {
+        return String(num1 + num2);
+      }
+      return match; // Keep as-is (separate numbers)
+    }
   );
 
   console.log(`🔢 Number normalization: "${text}" → "${result}"`);
