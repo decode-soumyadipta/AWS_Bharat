@@ -68,13 +68,12 @@ export const handler = async (
 
     console.log('Processing voice message:', { phone, messageId, mediaId });
 
-    // IMMEDIATELY mark as read and show typing indicator
-    const { markMessageAsRead, sendTypingIndicator } = await import('./whatsapp-message-sender');
-    await Promise.all([
-      markMessageAsRead(messageId),
-      sendTypingIndicator(phone)
-    ]);
-    console.log('Message marked as read and typing indicator sent');
+    // IMMEDIATELY mark as read + show typing indicator in ONE call
+    // Matches reference implementation exactly: markMessageAsRead(messageID, true)
+    const { markMessageAsRead, sendTypingIndicator, setLastMessageId } = await import('./whatsapp-message-sender');
+    setLastMessageId(phone, messageId); // cache so subsequent sendTypingIndicator(phone) calls work
+    await markMessageAsRead(messageId, true);
+    console.log('Message marked as read with typing indicator sent');
 
     // Check if user is in CONFIRMATION_PENDING state
     const currentState = await getUserState(phone);

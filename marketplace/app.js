@@ -69,6 +69,7 @@ function showLoginScreen() {
           <div class="form-group">
             <label>Phone Number</label>
             <input type="tel" id="buyerPhone" required placeholder="10-digit phone" pattern="[0-9]{10,15}" />
+            <p class="login-note">📋 No OTP or SMS will be sent — your phone number serves as your identity on our platform. We only use it to personalise your experience and link your orders.</p>
           </div>
           <button type="submit" class="btn-login">Continue to Marketplace</button>
         </form>
