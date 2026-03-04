@@ -340,16 +340,13 @@ export async function handler(
         type: inboundEvent.type,
       });
 
-      // ─── TYPING INDICATOR + READ RECEIPT: IMMEDIATELY after parsing, BEFORE DynamoDB ───
-      // Send both in parallel: typing indicator (dedicated endpoint) + mark as read
+      // ─── TYPING INDICATOR: IMMEDIATELY after parsing, BEFORE any DynamoDB calls ───
+      // Matches reference implementation exactly: markMessageAsRead(messageID, true)
+      // The typing_indicator: { type: 'text' } field shows the bubble for ~25 seconds
       try {
         setLastMessageId(inboundEvent.from, inboundEvent.messageId);
-        const [typingResult, readResult] = await Promise.all([
-          sendTypingIndicator(inboundEvent.from),
-          markMessageAsRead(inboundEvent.messageId),
-        ]);
-        console.log('✅ Typing indicator result:', JSON.stringify(typingResult));
-        console.log('✅ Mark-as-read result:', JSON.stringify(readResult));
+        const typingResult = await markMessageAsRead(inboundEvent.messageId, true);
+        console.log('✅ Typing indicator + mark-as-read result:', JSON.stringify(typingResult));
       } catch (typingErr) {
         console.warn('⚠️ Typing indicator failed (non-blocking):', typingErr);
       }
