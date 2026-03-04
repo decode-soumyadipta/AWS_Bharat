@@ -215,27 +215,47 @@ async function updateStock(productId: string, newQuantity: number, sellerPhone: 
     return { success: false, error: 'Invalid product ID or quantity' };
   }
 
-  // Update in main catalog
+  // First verify the product exists in the seller's catalog before touching marketplace
+  let productExists = false;
+
+  // Update in main catalog (only if product exists — no upsert for new products)
   try {
     await ddbClient.send(new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { PK: `SELLER#${sellerPhone}`, SK: `ITEM#${productId}` },
       UpdateExpression: 'SET quantity = :qty, updatedAt = :now',
+      ConditionExpression: 'attribute_exists(PK)',  // only update existing items
       ExpressionAttributeValues: {
         ':qty': newQuantity,
         ':now': Date.now(),
       },
     }));
+    productExists = true;
   } catch (err: any) {
-    console.warn('Main catalog stock update failed:', err.message);
+    if (err.name === 'ConditionalCheckFailedException') {
+      console.warn(`Product ${productId} not found in catalog for seller ${sellerPhone} — not a stock update`);
+    } else {
+      console.warn('Main catalog stock update failed:', err.message);
+    }
   }
 
-  // Also update in marketplace table
+  if (!productExists) {
+    // Product doesn't exist — this is a NEW product request, not a stock update
+    return {
+      success: false,
+      productId,
+      error: 'PRODUCT_NOT_FOUND',
+      summary: `Product "${productId}" not found in your catalog. To add a new product, please describe it with a name, price, quantity, and photo.`,
+    };
+  }
+
+  // Also update in marketplace table (only if product already exists there — no upsert)
   try {
     await ddbClient.send(new UpdateCommand({
       TableName: MARKETPLACE_TABLE,
       Key: { productId },
       UpdateExpression: 'SET quantity = :qty, updatedAt = :now, #s = :status',
+      ConditionExpression: 'attribute_exists(productId)',  // only update existing items, never create
       ExpressionAttributeNames: { '#s': 'status' },
       ExpressionAttributeValues: {
         ':qty': newQuantity,
@@ -244,7 +264,11 @@ async function updateStock(productId: string, newQuantity: number, sellerPhone: 
       },
     }));
   } catch (err: any) {
-    console.warn('Marketplace stock update failed:', err.message);
+    if (err.name === 'ConditionalCheckFailedException') {
+      console.warn('Product not in marketplace table yet — sync will happen via catalog.created event');
+    } else {
+      console.warn('Marketplace stock update failed:', err.message);
+    }
   }
 
   return {

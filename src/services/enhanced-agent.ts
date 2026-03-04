@@ -170,9 +170,17 @@ export async function processWithEnhancedAgent(
   // Only use Bedrock Agent for ACTIVE users who have products and need catalog queries.
   // Onboarding states need STORE_DATA/SKIP_KYC logic that only the enhanced prompt supports.
   const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'];
-  
-  if (skipBedrockAgentStates.includes(currentUserState)) {
-    console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
+
+  // For ACTIVE users, also skip Bedrock Agent if the user is trying to ADD a NEW product.
+  // Bedrock Agent would incorrectly call update_stock (existing product) instead of STORE_DATA (new product).
+  const isNewProductIntent = detectNewProductIntent(userMessage);
+
+  if (skipBedrockAgentStates.includes(currentUserState) || isNewProductIntent) {
+    if (isNewProductIntent && !skipBedrockAgentStates.includes(currentUserState)) {
+      console.log('🆕 New-product intent detected in ACTIVE state — using enhanced prompt (skip Bedrock Agent)');
+    } else {
+      console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
+    }
     response = await callAgentModel(agentPrompt);
   } else {
     // ACTIVE users — try Bedrock Agent for dynamic tool-use (catalog queries, analytics)
@@ -210,6 +218,29 @@ export async function processWithEnhancedAgent(
   console.log('🤖 Enhanced agent response:', agentResponse);
 
   return agentResponse;
+}
+
+/**
+ * Detect if user in ACTIVE state is trying to ADD a NEW product (not query existing ones).
+ * When true, skip Bedrock Agent (which only knows update_stock/catalog-search) and
+ * use enhanced prompt so STORE_DATA action is triggered for the proper catalog creation flow.
+ */
+function detectNewProductIntent(message: string): boolean {
+  const m = message.toLowerCase();
+
+  // Hindi script: "बेचना", "बेचूँगा", "जोड़ना", "नया उत्पाद", "नया सामान", etc.
+  const hindiNewProduct = /बेचना\s*चाहत|बेचूँगा|बेचेंगे|नया\s*(उत्पाद|सामान|प्रोडक्ट)|उत्पाद\s*जोड़|सामान\s*जोड़|नया\s*आइटम|लिस्ट\s*करना/;
+  if (hindiNewProduct.test(message)) return true;
+
+  // Romanized Hindi: "bechna chahta", "bechuga", "naya product", "add karna", "jodna"
+  const romanizedNewProduct = /\b(bech(na|uga|unga|enge|na\s*chahta?|na\s*chahti?)|naya?\s*(product|saman|aaitem|item|product)|add\s*karna?|jodna?|list\s*karna?|nayi?\s*cheez)\b/i;
+  if (romanizedNewProduct.test(m)) return true;
+
+  // English: "want to sell", "add a new", "new product", "list a product", "I want to sell"
+  const englishNewProduct = /\b(want\s+to\s+sell|i\s+want\s+to\s+add|add\s+a\s+new|new\s+product|list\s+(a|my|new)|i\s+will\s+sell|i\s+want\s+to\s+list)\b/i;
+  if (englishNewProduct.test(m)) return true;
+
+  return false;
 }
 
 /**
