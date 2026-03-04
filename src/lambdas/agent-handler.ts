@@ -357,6 +357,32 @@ async function processAgentEvent(event: any): Promise<any> {
 }
 
 /**
+ * Server-side category auto-detection from product name.
+ * Used as a safety net when LLM doesn't set category.
+ */
+function autoDetectCategory(productName: string): string {
+  if (!productName) return 'Grocery';
+  const p = productName.toLowerCase();
+
+  const vegetables = ['tomato','tamatar','potato','aloo','alu','onion','pyaaz','pyaz','cauliflower','gobi','lauki','tori','karela','baingan','matar','palak','methi','shimla','bhindi','mooli','gajar','kakdi','mirchi','adrak','lehsun','cabbage','patta','brinjal','spinach','ladyfinger','cucumber','radish','carrot','capsicum','pumpkin','kaddu','kathal','jackfruit','टमाटर','आलू','प्याज','गोभी','लौकी','करेला','बैंगन','मटर','पालक','मेथी','भिंडी','मूली','गाजर','मिर्ची','अदरक','लहसुन'];
+  const fruits = ['mango','aam','banana','kela','apple','seb','orange','santra','grapes','angur','papaya','guava','amrud','litchi','watermelon','tarbooz','muskmelon','kharbooz','pomegranate','anar','pear','nashpati','lemon','nimbu','coconut','nariyal','आम','केला','सेब','संतरा','अनार','नींबू','नारियल'];
+  const grains = ['wheat','gehu','gehun','rice','chawal','maize','makka','bajra','jowar','chana','dal','lentil','arhar','moong','urad','atta','maida','sooji','besan','barley','jau','oats','गेहूं','चावल','दाल','मक्का','बाजरा','ज्वार','आटा'];
+  const dairy = ['milk','doodh','curd','dahi','paneer','ghee','butter','makhan','lassi','cheese','khoa','mawa','rabri','दूध','दही','पनीर','घी','मक्खन'];
+  const spices = ['haldi','turmeric','jeera','cumin','dhaniya','coriander','mirch','garam','masala','kali','saunf','laung','elaichi','cardamom','clove','cinnamon','dalchini','kesar','saffron','हल्दी','जीरा','धनिया','मसाला','इलायची','लौंग'];
+  const eggs = ['egg','anda','chicken','murgi','mutton','fish','machli','goat','बकरी','मुर्गी','अंडा'];
+  const grocery = ['oil','tel','sugar','cheeni','salt','namak','dry fruit','kishmish','badam','kaju','cashew','almond','raisin','pickle','achar','honey','shahad','tea','chai','coffee'];
+
+  if (vegetables.some(v => p.includes(v))) return 'Vegetables';
+  if (fruits.some(f => p.includes(f))) return 'Fruits';
+  if (grains.some(g => p.includes(g))) return 'Grains';
+  if (dairy.some(d => p.includes(d))) return 'Dairy';
+  if (spices.some(s => p.includes(s))) return 'Spices';
+  if (eggs.some(e => p.includes(e))) return 'Eggs & Poultry';
+  if (grocery.some(g => p.includes(g))) return 'Grocery';
+  return 'Grocery'; // safe default
+}
+
+/**
  * Detect and apply price/quantity updates from user message during CONFIRMATION_PENDING
  * Returns true if an update was detected and applied, false otherwise
  */
@@ -366,73 +392,146 @@ async function detectAndApplyUpdate(
   partialData: any,
   language: string
 ): Promise<string | null> {
-  const lower = message.toLowerCase();
-  
-  // Price update patterns (romanized Hindi, Devanagari, English)
+
+  // ── Price patterns ──────────────────────────────────────────────────────────
   const pricePatterns = [
-    /(?:keemat|kimat|price|daam|dam|rate)\s*(\d+)/i,
-    /(\d+)\s*(?:rupees?|rs|₹|rupi?ye?|mein|me)\b/i,
-    /कीमत\s*(?:₹)?(\d+)/,
-    /(\d+)\s*(?:रुपये|में)\b/,
-    /किंमत\s*(?:₹)?(\d+)/,
+    /(?:keemat|kimat|price|daam|dam|rate)\s*(?:₹|rs\.?)?\s*(\d+)/i,
+    /(?:₹|rs\.?)\s*(\d+)/i,
+    /(\d+)\s*(?:rupees?|rupi?ye?)\b/i,
+    /कीमत\s*(?:₹)?\s*(\d+)/,
+    /(\d+)\s*रुपये?\b/,
+    /किंमत\s*(?:₹)?\s*(\d+)/,
+    /दाम\s*(?:₹)?\s*(\d+)/,
   ];
-  
-  // Quantity update patterns
+
+  // ── Quantity patterns (unit-bearing numbers are quantity; bare numbers need
+  //    disambiguation — if price is already set, bare number = quantity) ───────
   const quantityPatterns = [
-    /(?:matra|quantity|qty|kitna)\s*(\d+)/i,
-    /(\d+)\s*(?:kg|kilo|piece|pcs|dozen|liter|litre|packet|bag)\b/i,
-    /मात्रा\s*(\d+)/,
-    /(\d+)\s*(?:किलो|पीस|दर्जन|लीटर|पैकेट|बैग)\b/,
-    /प्रमाण\s*(\d+)/,
+    /(?:matra|quantity|qty|kitna|kitne)\s*(\d+)/i,
+    /(\d+)\s*(?:kg|kilo(?:gram)?|पीस|piece|pcs|dozen|दर्जन|liter|litre|packet|bag|bundle|गट्ठा)/i,
+    /(?:किलो|मात्रा|प्रमाण)\s*(\d+)/,
+    /(\d+)\s*(?:kgs?|kilos?)\b/i,
+    /(\d+)\s*(?:किलो|ग्राम|लीटर)\b/,
   ];
-  
-  // Check for price update
+
+  // ── Unit patterns (detect unit associated with a quantity number) ───────────
+  const unitMap: Record<string, string> = {
+    kg: 'kg', kilo: 'kg', kilogram: 'kg', किलो: 'kg', ग्राम: 'gram',
+    piece: 'piece', pcs: 'piece', पीस: 'piece',
+    dozen: 'dozen', दर्जन: 'dozen',
+    liter: 'liter', litre: 'liter', लीटर: 'liter',
+    packet: 'packet', पैकेट: 'packet',
+    bag: 'bag', बैग: 'bag',
+    bundle: 'bundle', गट्ठा: 'bundle',
+  };
+  function extractUnit(msg: string): string | null {
+    for (const [word, unit] of Object.entries(unitMap)) {
+      const re = new RegExp(`\\b${word}\\b`, 'i');
+      if (re.test(msg)) return unit;
+    }
+    return null;
+  }
+
+  let newPrice: number | null = null;
+  let newQty: number | null = null;
+  let newUnit: string | null = null;
+
+  // ── Try to extract price ────────────────────────────────────────────────────
   for (const pattern of pricePatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
-      const newPrice = parseInt(match[1]);
-      if (newPrice > 0 && newPrice < 100000) {
-        console.log(`💰 Price update detected: ₹${newPrice}`);
-        await mergePartialData(phone, { price: newPrice, source: 'text' });
-        
-        // Re-generate confirmation
-        const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
-        const { InvokeCommand } = await import('@aws-sdk/client-lambda');
-        const { lambdaClient } = await import('../config/aws-clients');
-        await lambdaClient.send(new InvokeCommand({
-          FunctionName: confirmationFunctionName,
-          Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
-        }));
-        
-        return `price updated to ₹${newPrice}`;
+      const candidate = parseInt(match[1]);
+      if (candidate > 0 && candidate < 1000000) {
+        newPrice = candidate;
+        break;
       }
     }
   }
-  
-  // Check for quantity update
+
+  // ── Try to extract quantity ─────────────────────────────────────────────────
   for (const pattern of quantityPatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
-      const newQty = parseInt(match[1]);
-      if (newQty > 0 && newQty < 100000) {
-        console.log(`📊 Quantity update detected: ${newQty}`);
-        await mergePartialData(phone, { quantity: newQty, source: 'text' });
-        
-        // Re-generate confirmation  
-        const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
-        const { InvokeCommand } = await import('@aws-sdk/client-lambda');
-        const { lambdaClient } = await import('../config/aws-clients');
-        await lambdaClient.send(new InvokeCommand({
-          FunctionName: confirmationFunctionName,
-          Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
-        }));
-        
-        return `quantity updated to ${newQty}`;
+      const candidate = parseInt(match[1]);
+      if (candidate > 0 && candidate < 100000) {
+        // Make sure this is not the SAME digit we already picked as price
+        if (newPrice === null || candidate !== newPrice) {
+          newQty = candidate;
+          newUnit = extractUnit(message);
+          break;
+        }
       }
     }
   }
-  
-  return null; // No update detected - let agent handle it
+
+  // ── Bare-number disambiguation: if only one number in message ───────────────
+  //    "80 rakh do" in CONFIRMATION_PENDING with price already set → quantity
+  //    "80 rakh do" with price NOT set → price
+  const bareNumberMatch = message.match(/^[^\d]*(\d+)[^\d]*$/);
+  if (bareNumberMatch && newPrice === null && newQty === null) {
+    const bare = parseInt(bareNumberMatch[1]);
+    if (bare > 0 && bare < 1000000) {
+      if (partialData?.price && !partialData?.quantity) {
+        // price is known → this bare number is the quantity
+        newQty = bare;
+        newUnit = extractUnit(message);
+      } else {
+        // treat as a price update
+        newPrice = bare;
+      }
+    }
+  }
+
+  // Nothing detected
+  if (newPrice === null && newQty === null) return null;
+
+  // ── Apply all detected updates in a single merge ────────────────────────────
+  const updates: Record<string, any> = { source: 'text' };
+  const summary: string[] = [];
+  if (newPrice !== null) { updates.price = newPrice; summary.push(`price=₹${newPrice}`); }
+  if (newQty !== null)   { updates.quantity = newQty; summary.push(`qty=${newQty}`); }
+  if (newUnit !== null)  { updates.unit = newUnit; }
+
+  console.log(`📝 Applying CONFIRMATION_PENDING updates:`, updates);
+  await mergePartialData(phone, updates);
+
+  // ── ACK message to user while confirmation regenerates ──────────────────────
+  const { sendEnhancedAgentMessage } = await import('../services/enhanced-agent');
+  const ackMessages: Record<string, string> = {
+    'hi-IN': newPrice !== null && newQty !== null
+      ? `ठीक है, कीमत ${newPrice} और मात्रा ${newQty} कर दिया। अभी नई confirmation भेज रहे हैं।`
+      : newPrice !== null
+        ? `ठीक है, कीमत ${newPrice} रुपये कर दिया। अभी नई confirmation भेज रहे हैं।`
+        : `ठीक है, मात्रा ${newQty} कर दिया। अभी नई confirmation भेज रहे हैं।`,
+    'mr-IN': newPrice !== null && newQty !== null
+      ? `ठीक आहे, किंमत ${newPrice} आणि प्रमाण ${newQty} केले. नवीन confirmation पाठवत आहे.`
+      : newPrice !== null
+        ? `ठीक आहे, किंमत ${newPrice} रुपये केली. नवीन confirmation पाठवत आहे.`
+        : `ठीक आहे, प्रमाण ${newQty} केले. नवीन confirmation पाठवत आहे.`,
+    'en-IN': newPrice !== null && newQty !== null
+      ? `Got it — updated price to ₹${newPrice} and quantity to ${newQty}. Sending a new confirmation now.`
+      : newPrice !== null
+        ? `Got it — updated price to ₹${newPrice}. Sending a new confirmation now.`
+        : `Got it — updated quantity to ${newQty}. Sending a new confirmation now.`,
+  };
+  await sendEnhancedAgentMessage(phone, ackMessages[language] || ackMessages['hi-IN'], language as any, 'voice');
+
+  // ── Re-invoke confirmation handler to resend photo + text card ───────────────
+  try {
+    const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
+    const { InvokeCommand } = await import('@aws-sdk/client-lambda');
+    const { lambdaClient } = await import('../config/aws-clients');
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName: confirmationFunctionName,
+      InvocationType: 'Event', // async — don't wait, user already got the ack
+      Payload: JSON.stringify({ detail: { phone, action: 'generate' } }),
+    }));
+    console.log('✅ Confirmation handler re-invoked after update');
+  } catch (confErr) {
+    console.error('⚠️ Confirmation handler re-invoke failed:', confErr);
+  }
+
+  return summary.join(', ');
 }
 /**
  * Handle voice message
@@ -934,6 +1033,12 @@ async function executeAgentActions(
 
         case 'STORE_DATA':
           if (action.data) {
+            // ── Auto-detect category server-side if not set or Unknown ────────
+            if (!action.data.category || action.data.category === 'Unknown') {
+              const productNameForCategory = action.data.productName || '';
+              action.data.category = autoDetectCategory(productNameForCategory);
+            }
+
             const merged = await mergePartialData(phone, action.data);
             console.log('📦 STORE_DATA merged:', {
               productName: merged.productName,
