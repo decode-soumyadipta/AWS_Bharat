@@ -83,14 +83,13 @@ export function formatMessage(
 }
 
 /**
- * Marks a WhatsApp message as read, optionally with typing indicator.
- * Matches WhatsApp Cloud API reference implementation:
- *   POST /{PHONE_NUMBER_ID}/messages
- *   { messaging_product: 'whatsapp', status: 'read', message_id: '...', typing_indicator: { type: 'text' } }
+ * Marks a WhatsApp message as read.
+ * POST /{PHONE_NUMBER_ID}/messages
+ * { messaging_product: 'whatsapp', status: 'read', message_id: '...' }
  */
 export async function markMessageAsRead(
   messageId: string,
-  showTypingIndicator: boolean = false
+  _showTypingIndicator: boolean = false
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   const config = getWhatsAppConfig();
   
@@ -107,10 +106,6 @@ export async function markMessageAsRead(
       status: 'read',
       message_id: messageId,
     };
-
-    if (showTypingIndicator) {
-      payload.typing_indicator = { type: 'text' };
-    }
 
     console.log('markMessageAsRead payload:', JSON.stringify(payload));
     console.log('markMessageAsRead URL:', url);
@@ -141,9 +136,9 @@ export async function markMessageAsRead(
 }
 
 /**
- * Sends WhatsApp typing indicator using the Cloud API.
- * Shows the real "typing..." bubble in WhatsApp for ~25 seconds or until a response is sent.
- * Uses the message_id from the received message + typing_indicator field per WhatsApp docs.
+ * Sends WhatsApp typing indicator using the dedicated Cloud API typing endpoint.
+ * POST /{PHONE_NUMBER_ID}/messages with type: "typing" — shows the real "typing..."
+ * bubble that persists for ~25 seconds or until a message is sent.
  */
 
 // Cache the last message ID per phone so typing works even without explicit messageId
@@ -163,16 +158,37 @@ export async function sendTypingIndicator(
     return { success: false, error: 'Configuration missing' };
   }
 
-  // Use provided messageId, cached one, or skip
-  const msgId = messageId || lastMessageIdByPhone[to];
-  if (!msgId) {
-    return { success: true }; // No message ID to mark — skip silently
-  }
-
-  // Delegate to markMessageAsRead with typing=true (same API, same pattern as reference implementation)
+  // Use the dedicated typing endpoint (WhatsApp Cloud API v18+)
+  // This shows the persistent "typing..." bubble in WhatsApp
   try {
-    const result = await markMessageAsRead(msgId, true);
-    return result;
+    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'typing',
+      typing: { type: 'text' },
+    };
+
+    console.log('sendTypingIndicator payload:', JSON.stringify(payload));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.accessToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseBody = await response.text();
+    console.log(`sendTypingIndicator response: ${response.status} — ${responseBody}`);
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
+    }
+
+    return { success: true };
   } catch (err) {
     console.warn('Typing indicator exception:', err);
     return { success: true }; // Never fail on typing indicator

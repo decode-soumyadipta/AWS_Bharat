@@ -340,13 +340,16 @@ export async function handler(
         type: inboundEvent.type,
       });
 
-      // ─── TYPING INDICATOR: IMMEDIATELY after parsing, BEFORE any DynamoDB calls ───
-      // This matches the reference implementation: markMessageAsRead(messageID, true) as FIRST call
-      // Must happen before getUserState/route which add 100-200ms DynamoDB latency
+      // ─── TYPING INDICATOR + READ RECEIPT: IMMEDIATELY after parsing, BEFORE DynamoDB ───
+      // Send both in parallel: typing indicator (dedicated endpoint) + mark as read
       try {
         setLastMessageId(inboundEvent.from, inboundEvent.messageId);
-        const typingResult = await markMessageAsRead(inboundEvent.messageId, true);
-        console.log('✅ Typing indicator + mark-as-read result:', JSON.stringify(typingResult));
+        const [typingResult, readResult] = await Promise.all([
+          sendTypingIndicator(inboundEvent.from),
+          markMessageAsRead(inboundEvent.messageId),
+        ]);
+        console.log('✅ Typing indicator result:', JSON.stringify(typingResult));
+        console.log('✅ Mark-as-read result:', JSON.stringify(readResult));
       } catch (typingErr) {
         console.warn('⚠️ Typing indicator failed (non-blocking):', typingErr);
       }
