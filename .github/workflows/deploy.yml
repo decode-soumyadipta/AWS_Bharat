@@ -3,47 +3,104 @@ name: Deploy Vyapar Vaani
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
   deployments: write
 
 env:
   AWS_REGION: us-east-1
+  NODE_VERSION: "20"
 
 jobs:
-  build-and-test:
-    name: Build & Test
+  # ──────────────────────────────────────────────
+  # Stage 1: Lint
+  # ──────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build
+      - name: ESLint
+        run: npm run lint
+
+  # ──────────────────────────────────────────────
+  # Stage 2: Build
+  # ──────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
         run: npx tsc
 
-      - name: Run tests
-        run: npx jest --passWithNoTests --forceExit --no-coverage 2>&1 || true
+      - name: Copy backend lambdas
+        run: cp -r backend/* dist/backend/ 2>/dev/null || true
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: build-output
           path: |
             dist/
             backend/
+            node_modules/
+            package.json
+            cdk.json
+            tsconfig.json
+          retention-days: 1
 
+  # ──────────────────────────────────────────────
+  # Stage 3: Test
+  # ──────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npx jest --passWithNoTests --forceExit --no-coverage 2>&1 || true
+
+  # ──────────────────────────────────────────────
+  # Stage 4: Deploy (only on push to main)
+  # ──────────────────────────────────────────────
   deploy:
     name: Deploy to AWS
-    needs: build-and-test
+    needs: [build, test]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -53,40 +110,42 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: build-output
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Build TypeScript
-        run: npx tsc
-
-      - name: Copy backend
-        run: cp -r backend/* dist/backend/ 2>/dev/null || true
 
       - name: CDK Deploy
         run: npx cdk deploy --all --require-approval never
         env:
           WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
-          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_API_ENDPOINT: ${{ secrets.WHATSAPP_API_ENDPOINT }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_API_ENDPOINT: ${{ vars.WHATSAPP_API_ENDPOINT }}
           META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
           WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
 
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
       - name: Deployment summary
         run: |
-          echo "## Deployment Complete 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Resource | URL |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-----|" >> $GITHUB_STEP_SUMMARY
