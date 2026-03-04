@@ -640,22 +640,25 @@ function showRefInput(orderId) {
 
 function showScreenshotUpload(orderId) {
   document.getElementById('paymentVerifyArea').innerHTML = `
-    <div class="verify-form">
-      <label class="file-upload-label">
-        <input type="file" id="ssFile" accept="image/*" onchange="previewSS(this)" />
+    <div class="verify-form" id="ssForm">
+      <p class="verify-hint">Upload your UPI payment confirmation screenshot</p>
+      <label class="file-upload-label" id="ssUploadLabel">
+        <input type="file" id="ssFile" accept="image/*" onchange="previewSS(this,'${orderId}')" />
         📷 Select Screenshot
       </label>
       <div id="ssPreview"></div>
       <button class="btn-primary" id="ssSubmitBtn" onclick="submitSS('${orderId}')" disabled>🤖 Verify with AI</button>
+      <div id="ssResult"></div>
     </div>`;
 }
 
-function previewSS(input) {
+function previewSS(input, orderId) {
   if (input.files && input.files[0]) {
     const reader = new FileReader();
     reader.onload = (e) => {
       document.getElementById('ssPreview').innerHTML = `<img src="${e.target.result}" class="screenshot-preview" />`;
       document.getElementById('ssSubmitBtn').disabled = false;
+      document.getElementById('ssResult').innerHTML = '';
     };
     reader.readAsDataURL(input.files[0]);
   }
@@ -665,39 +668,88 @@ async function submitRef(orderId) {
   const ref = document.getElementById('txnRef').value.trim();
   if (!ref) return showToast('Enter transaction ref', 'error');
   try {
-    showToast('Verifying...', 'info');
+    showToast('Submitting...', 'info');
     const r = await fetch(`${API_BASE_URL}/orders/${orderId}/verify-payment`, {
       method: 'POST', headers: API_HEADERS_JSON,
       body: JSON.stringify({ verificationType: 'manual_ref', transactionRef: ref }),
     });
     const res = await r.json();
-    if (res.success) { document.getElementById('checkoutModal').classList.remove('open'); showOrderConfirmation(orderId, 'UPI', ref); }
-    else showToast(res.error || 'Verification failed', 'error');
-  } catch { showToast('Verification failed', 'error'); }
+    if (res.success) {
+      document.getElementById('checkoutModal').classList.remove('open');
+      showOrderConfirmation(orderId, 'UPI', ref);
+    } else {
+      showToast(res.error || 'Submission failed', 'error');
+    }
+  } catch { showToast('Submission failed', 'error'); }
 }
 
 async function submitSS(orderId) {
   const file = document.getElementById('ssFile')?.files[0];
-  if (!file) return showToast('Select a screenshot', 'error');
+  if (!file) return showToast('Select a screenshot first', 'error');
+
+  const btn = document.getElementById('ssSubmitBtn');
+  const resultArea = document.getElementById('ssResult');
+  btn.disabled = true;
+  btn.textContent = '🔄 AI Analyzing…';
+  resultArea.innerHTML = `<div class="verify-analyzing"><span class="spinner"></span> Nova Pro is reading your screenshot…</div>`;
+
   try {
-    showToast('🤖 AI analyzing screenshot...', 'info');
-    const btn = document.getElementById('ssSubmitBtn');
-    btn.disabled = true; btn.textContent = '🔄 Analyzing...';
     const base64 = await fileToBase64(file);
     const r = await fetch(`${API_BASE_URL}/orders/${orderId}/verify-payment`, {
       method: 'POST', headers: API_HEADERS_JSON,
       body: JSON.stringify({ verificationType: 'screenshot', screenshotBase64: base64 }),
     });
     const res = await r.json();
-    if (res.success) {
-      showToast(res.paymentStatus === 'PAID' ? '✅ Payment verified!' : '📋 Submitted for review', res.paymentStatus === 'PAID' ? 'success' : 'info');
+
+    if (res.paymentStatus === 'PAID') {
+      // ── SUCCESS ─────────────────────────────────────────────────────────
+      resultArea.innerHTML = '';
       document.getElementById('checkoutModal').classList.remove('open');
-      showOrderConfirmation(orderId, 'UPI', res.verification?.transactionRef);
+      showOrderConfirmation(orderId, 'UPI', res.details?.transactionRef);
+      showToast('✅ Payment verified! Order confirmed.', 'success');
+
     } else {
-      showToast(res.error || 'AI verification failed', 'error');
-      btn.disabled = false; btn.textContent = '🤖 Verify with AI';
+      // ── FAILED / LOW CONFIDENCE ──────────────────────────────────────────
+      const d = res.details || {};
+      const rows = [];
+      if (d.extractedAmount != null) rows.push(`<tr><td>AI read amount</td><td><strong>₹${d.extractedAmount}</strong></td></tr>`);
+      if (d.extractedDate)           rows.push(`<tr><td>Date on screenshot</td><td><strong>${d.extractedDate}</strong></td></tr>`);
+      if (d.transactionRef)          rows.push(`<tr><td>UTR / Ref</td><td><strong>${d.transactionRef}</strong></td></tr>`);
+      if (d.transactionStatus)       rows.push(`<tr><td>Status</td><td><strong>${d.transactionStatus}</strong></td></tr>`);
+      if (d.confidence)              rows.push(`<tr><td>AI Confidence</td><td><strong>${d.confidence}</strong></td></tr>`);
+
+      const tableHtml = rows.length > 0
+        ? `<table class="verify-details-table">${rows.join('')}</table>`
+        : '';
+
+      const retryHtml = res.canRetry
+        ? `<button class="btn-secondary" onclick="reuploadScreenshot('${orderId}')">📷 Re-upload Screenshot</button>
+           <button class="btn-text" onclick="showRefInput('${orderId}')">✏️ Enter UTR manually instead</button>`
+        : `<button class="btn-text" onclick="skipVerification('${orderId}')">Skip — seller will verify</button>`;
+
+      resultArea.innerHTML = `
+        <div class="verify-failed">
+          <div class="verify-failed-icon">❌</div>
+          <div class="verify-failed-msg">${res.failureMessage || 'Verification failed. Please try again.'}</div>
+          ${tableHtml}
+          <div class="verify-retry-btns">${retryHtml}</div>
+        </div>`;
+
+      btn.style.display = 'none';
+      showToast(res.failureMessage || 'Screenshot verification failed', 'error');
     }
-  } catch { showToast('Screenshot verification failed', 'error'); }
+  } catch (err) {
+    resultArea.innerHTML = `<div class="verify-failed"><div class="verify-failed-msg">Network error. Please check your connection and try again.</div>
+      <button class="btn-secondary" onclick="reuploadScreenshot('${orderId}')">📷 Try Again</button></div>`;
+    btn.disabled = false;
+    btn.textContent = '🤖 Verify with AI';
+    showToast('Connection error', 'error');
+  }
+}
+
+function reuploadScreenshot(orderId) {
+  // Reset the screenshot upload form for a fresh attempt
+  showScreenshotUpload(orderId);
 }
 
 function fileToBase64(file) {
