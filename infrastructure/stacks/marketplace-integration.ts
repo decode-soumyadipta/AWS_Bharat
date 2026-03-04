@@ -269,11 +269,11 @@ export class MarketplaceIntegration extends Construct {
       name: 'marketplace-standard',
       description: 'Standard usage plan for marketplace API',
       throttle: {
-        rateLimit: 50,
-        burstLimit: 100,
+        rateLimit: 200,
+        burstLimit: 400,
       },
       quota: {
-        limit: 10000,
+        limit: 500000,
         period: apigateway.Period.DAY,
       },
     });

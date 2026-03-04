@@ -3,7 +3,7 @@
  * All-in-one SPA: Login, Products, Cart, Checkout, UPI, Orders Panel (real-time)
  */
 
-const API_BASE_URL = window.API_BASE_URL || 'https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/';
+const API_BASE_URL = (window.API_BASE_URL || 'https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod').replace(/\/$/, '');
 const API_KEY = 'xGe2KPsiRr2YBfmSLmPBd22NJTphvbLP6H0bdzdh';
 const API_HEADERS = { 'x-api-key': API_KEY };
 const API_HEADERS_JSON = { 'Content-Type': 'application/json', 'x-api-key': API_KEY };
@@ -249,17 +249,32 @@ function initComponents() {
   });
 
   loadProducts();
-  setInterval(loadProducts, 10000);
+  setInterval(loadProducts, 30000); // poll every 30s (was 10s — 10s burns the daily quota)
   renderOrdersPanel();
   startOrderPolling();
 }
 
 // ── PRODUCTS ──
+let _productBackoff = 0; // seconds to wait after a rate-limit hit
+let _productBackoffTimer = null;
+
 async function loadProducts() {
+  // If we're in backoff, skip this poll cycle
+  if (_productBackoff > 0) return;
+
   try {
     const r = await fetch(`${API_BASE_URL}/products`, { headers: API_HEADERS });
+
+    // Handle quota / rate-limit gracefully
+    if (r.status === 429 || r.status === 503) {
+      console.warn('Products API rate-limited (', r.status, ') — backing off');
+      _startProductBackoff();
+      return;
+    }
+
     const d = await r.json();
     if (d.success && d.products) {
+      _productBackoff = 0; // reset backoff on success
       const changed = productsChanged(d.products);
       if (changed || cachedProducts.length === 0) {
         cachedProducts = d.products;
@@ -281,6 +296,17 @@ async function loadProducts() {
       document.getElementById('productsGrid').innerHTML = '<div class="empty-state"><div class="empty-icon">😞</div><p>Failed to load products. Try again later.</p></div>';
     }
   }
+}
+
+function _startProductBackoff() {
+  // Exponential backoff: 60s → 120s → 240s → max 600s
+  _productBackoff = Math.min((_productBackoff || 60) * 2, 600);
+  clearTimeout(_productBackoffTimer);
+  console.log(`Products API: retrying in ${_productBackoff}s`);
+  _productBackoffTimer = setTimeout(() => {
+    _productBackoff = 0;
+    loadProducts();
+  }, _productBackoff * 1000);
 }
 
 function productsChanged(newP) {
