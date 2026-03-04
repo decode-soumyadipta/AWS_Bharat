@@ -109,37 +109,28 @@ async function sendInteractiveOrderMessage(sellerPhone, orderId, buyer, items, t
 }
 
 /**
- * Send auto-accepted UPI order notification (no buttons — payment already committed)
+ * Send auto-accepted UPI order notification — clean, minimal, no emoji flood
  */
 async function sendAutoAcceptedOrderMessage(sellerPhone, orderId, buyer, items, total, retries = 3) {
     const url = `${WHATSAPP_API_ENDPOINT}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
 
-    const itemLines = items.map((item, i) => {
+    const itemLines = items.map(item => {
         const lineTotal = (item.price * item.quantity).toFixed(2);
-        return `  ${i + 1}. ${item.name} — ${item.quantity} ${item.unit || 'pcs'} × ₹${item.price} = *₹${lineTotal}*`;
+        return `  ${item.name} — ${item.quantity} ${item.unit || 'pcs'} × ₹${item.price} = ₹${lineTotal}`;
     }).join('\n');
 
     const address = buyer.address;
     const fullAddress = [address.street, address.city, address.state, address.postalCode ? `PIN: ${address.postalCode}` : ''].filter(Boolean).join(', ');
 
     const messageBody = [
-        `🛒✅ *UPI ऑर्डर — ऑटो स्वीकार!*`,
-        `📋 Order ID: *${orderId}*`,
+        `✅ *UPI ऑर्डर — #${orderId.slice(-8)}*`,
         ``,
-        `💳 *UPI से भुगतान हो चुका है — ऑर्डर स्वतः स्वीकार!*`,
+        `ग्राहक: ${buyer.name}  |  ${buyer.phone}`,
+        `पता: ${fullAddress}`,
         ``,
-        `👤 *ग्राहक की जानकारी:*`,
-        `  नाम: ${buyer.name}`,
-        `  फ़ोन: ${buyer.phone}`,
-        `  पता: ${fullAddress}`,
-        ``,
-        `📦 *ऑर्डर आइटम:*`,
         itemLines,
         ``,
-        `💰 *कुल राशि: ₹${total.toFixed(2)}*`,
-        ``,
-        `📌 कृपया ऑर्डर पैक करें और डिलीवरी की तैयारी करें।`,
-        `UPI पेमेंट हो चुका है, accept/reject की ज़रूरत नहीं।`,
+        `*कुल: ₹${total.toFixed(2)}*  •  कृपया पैक करें`,
     ].join('\n');
 
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -261,57 +252,69 @@ async function decrementProductStock(items) {
 }
 
 /**
- * Send stock update notification to seller via WhatsApp (voice-friendly)
+ * Send stock update to seller as VOICE only (via EventBridge → whatsapp-sender Lambda with Polly)
  */
-async function sendStockUpdateNotification(sellerPhone, stockUpdates) {
+async function sendStockUpdateNotification(sellerPhone, stockUpdates, buyerName, total) {
     if (!stockUpdates || stockUpdates.length === 0) return;
+    if (!EVENT_BUS_NAME) {
+        console.warn('EVENT_BUS_NAME not set — skipping voice stock update');
+        return;
+    }
 
-    const url = `${WHATSAPP_API_ENDPOINT}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
-
-    const lines = stockUpdates.map(s => {
+    const stockLines = stockUpdates.map(s => {
         if (s.outOfStock || s.remainingQty <= 0) {
-            return `⚠️ *${s.name}*: स्टॉक खत्म! (${s.orderedQty} ${s.unit} बिक गए)`;
+            return `${s.name} का स्टॉक खत्म हो गया।`;
         }
-        return `📦 *${s.name}*: ${s.remainingQty} ${s.unit} बाकी (${s.orderedQty} ${s.unit} बिके)`;
-    });
+        return `${s.name}: ${s.remainingQty} ${s.unit} बाकी।`;
+    }).join(' ');
 
-    const msg = `📊 *स्टॉक अपडेट:*\n\n${lines.join('\n')}\n\n${
-        stockUpdates.some(s => s.remainingQty <= 0) 
-            ? '⚠️ कुछ उत्पादों का स्टॉक खत्म हो गया है। कृपया स्टॉक अपडेट करें।' 
-            : '✅ स्टॉक अपडेट हो गया।'
-    }`;
+    const hasOutOfStock = stockUpdates.some(s => s.remainingQty <= 0);
+    const voiceText = buyerName
+        ? `${buyerName} ने ₹${parseFloat(total).toFixed(0)} का UPI ऑर्डर दिया। स्टॉक अपडेट: ${stockLines}${hasOutOfStock ? ' कुछ उत्पाद खत्म हो गए, कृपया स्टॉक भरें।' : ''}`
+        : `स्टॉक अपडेट: ${stockLines}${hasOutOfStock ? ' कुछ उत्पाद खत्म हो गए, कृपया स्टॉक भरें।' : ''}`;
 
     try {
-        await axios.post(url, {
-            messaging_product: 'whatsapp', to: sellerPhone, type: 'text',
-            text: { body: msg },
-        }, {
-            headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-        });
-        console.log('Stock update notification sent to seller', sellerPhone);
+        await eventBridgeClient.send(new PutEventsCommand({
+            Entries: [{
+                EventBusName: EVENT_BUS_NAME,
+                Source: 'vyapar.vaani.internal',
+                DetailType: 'whatsapp.message.send',
+                Detail: JSON.stringify({
+                    to: sellerPhone,
+                    type: 'voice',
+                    content: { text: voiceText },
+                    language: 'hi',
+                }),
+            }],
+        }));
+        console.log('Voice stock update dispatched for seller', sellerPhone);
     } catch (error) {
-        console.warn('Stock notification failed (non-critical):', error.message);
+        console.warn('Voice stock notification failed (non-critical):', error.message);
     }
 }
 
 /**
- * Send follow-up voice notification to seller
+ * Send follow-up COD order alert to seller (text only, no voice — UPI already gets voice via stock update)
  */
-async function sendVoiceNotification(sellerPhone, orderId, buyerName, total, paymentMethod) {
-    const url = `${WHATSAPP_API_ENDPOINT}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
-    const voiceText = paymentMethod === 'UPI'
-        ? `🔔 *${buyerName}* ने ₹${total.toFixed(2)} का UPI ऑर्डर दिया है। ✅ पेमेंट हो चुका — ऑर्डर ऑटो-स्वीकार! कृपया पैक करें।`
-        : `🔔 *${buyerName}* ने ₹${total.toFixed(2)} का COD ऑर्डर दिया है। कृपया ऊपर दिए बटन से स्वीकार/अस्वीकार करें।`;
-
+async function sendCodOrderAlert(sellerPhone, buyerName, total) {
+    if (!EVENT_BUS_NAME) return;
+    const voiceText = `${buyerName} ने ₹${parseFloat(total).toFixed(0)} का COD ऑर्डर दिया है। कृपया स्वीकार या अस्वीकार करें।`;
     try {
-        await axios.post(url, {
-            messaging_product: 'whatsapp', to: sellerPhone, type: 'text',
-            text: { body: voiceText },
-        }, {
-            headers: { Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-        });
+        await eventBridgeClient.send(new PutEventsCommand({
+            Entries: [{
+                EventBusName: EVENT_BUS_NAME,
+                Source: 'vyapar.vaani.internal',
+                DetailType: 'whatsapp.message.send',
+                Detail: JSON.stringify({
+                    to: sellerPhone,
+                    type: 'voice',
+                    content: { text: voiceText },
+                    language: 'hi',
+                }),
+            }],
+        }));
     } catch (error) {
-        console.warn('Voice notification failed (non-critical):', error.message);
+        console.warn('COD order alert failed (non-critical):', error.message);
     }
 }
 
@@ -564,11 +567,9 @@ exports.handler = async (event) => {
                         await sendBuyerConfirmation(orderData.buyer.phone, sellerOrderId, sellerTotal, paymentMethod);
                     }
 
-                    // Decrement stock for UPI auto-confirmed orders
+                    // Decrement stock for UPI auto-confirmed orders, notify via voice
                     const stockUpdates = await decrementProductStock(sellerData.items);
-                    if (stockUpdates.length > 0) {
-                        await sendStockUpdateNotification(sellerPhone, stockUpdates);
-                    }
+                    await sendStockUpdateNotification(sellerPhone, stockUpdates, orderData.buyer.name, sellerTotal);
                 } else {
                     // COD: Show accept/reject buttons, seller decides
                     await persistOrder(sellerOrderId, sellerPhone, sellerOrderData, paymentMethod);
@@ -584,8 +585,10 @@ exports.handler = async (event) => {
                     }
                 }
 
-                // Follow-up notification
-                await sendVoiceNotification(sellerPhone, sellerOrderId, orderData.buyer.name, sellerTotal, paymentMethod);
+                // COD: send voice alert (UPI already gets one via sendStockUpdateNotification)
+                if (paymentMethod !== 'UPI') {
+                    await sendCodOrderAlert(sellerPhone, orderData.buyer.name, sellerTotal);
+                }
 
                 results.push({ seller: sellerData.seller.name, orderId: sellerOrderId, success: true });
             } catch (error) {

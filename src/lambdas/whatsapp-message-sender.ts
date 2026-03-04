@@ -549,6 +549,15 @@ export async function handler(event: any): Promise<any> {
         result = await sendAudioMessage(to, content.audioUrl, language);
         break;
 
+      case 'voice':
+        // voice type: generate Polly TTS and send as WhatsApp audio (no text bubble)
+        if (!content?.text) {
+          throw new Error('Text content is required for voice messages');
+        }
+        await sendVoiceOnly(to, content.text, language as 'hi' | 'mr' | 'en');
+        result = { success: true };
+        break;
+
       default:
         throw new Error(`Unsupported message type: ${type}`);
     }

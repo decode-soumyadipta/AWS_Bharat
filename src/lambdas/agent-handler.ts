@@ -221,19 +221,19 @@ async function processAgentEvent(event: any): Promise<any> {
     switch (messageType) {
       case 'voice':
       case 'audio':
-        await sendTypingIndicator(phone); // Refresh typing during transcription
+        await sendTypingIndicator(phone, eventDetail.messageId);
         userMessage = await handleVoiceMessage(eventDetail);
-        await sendTypingIndicator(phone); // Refresh typing after transcription
+        await sendTypingIndicator(phone, eventDetail.messageId);
         break;
 
       case 'image':
-        await sendTypingIndicator(phone);
+        await sendTypingIndicator(phone, eventDetail.messageId);
         userMessage = await handleImageMessage(eventDetail, phone, language);
         if (userMessage === '__CONFIRMATION_TRIGGERED__' || userMessage === '__HANDLED__') {
           console.log('📸 Image handled directly, skipping agent processing');
           return { success: true, message: 'Image processed directly' };
         }
-        await sendTypingIndicator(phone);
+        await sendTypingIndicator(phone, eventDetail.messageId);
         break;
 
       case 'button_reply':
@@ -282,7 +282,7 @@ async function processAgentEvent(event: any): Promise<any> {
     }
 
     // Keep typing indicator active while agent processes
-    await sendTypingIndicator(phone);
+    await sendTypingIndicator(phone, eventDetail.messageId);
 
     // Process with agent
     if (shouldProcessWithAgent) {
@@ -296,7 +296,7 @@ async function processAgentEvent(event: any): Promise<any> {
       console.log('🤖 Agent response:', agentResponse);
 
       // Refresh typing before sending response
-      await sendTypingIndicator(phone);
+      await sendTypingIndicator(phone, eventDetail.messageId);
 
       // Send agent message with correct response mode
       await sendEnhancedAgentMessage(
