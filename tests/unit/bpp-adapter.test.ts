@@ -5,6 +5,7 @@
  * ACK/NACK responses, and async callback mechanism.
  */
 
+import { test, describe, beforeEach, expect } from '@jest/globals';
 import { handler } from '../../src/lambdas/bpp-adapter';
 
 // Mock beckn-protocol-handler
