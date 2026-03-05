@@ -300,7 +300,8 @@ async function processAgentEvent(event: any): Promise<any> {
         phone,
         userMessage,
         messageType,
-        language
+        language,
+        eventDetail.messageId
       );
 
       console.log('🤖 Agent response:', agentResponse);
@@ -313,7 +314,8 @@ async function processAgentEvent(event: any): Promise<any> {
         phone, 
         agentResponse.message, 
         language, 
-        agentResponse.responseMode || 'voice'
+        agentResponse.responseMode || 'voice',
+        eventDetail.messageId
       );
 
       // Execute agent actions
@@ -818,7 +820,7 @@ async function handleButtonClick(
   }
 
   // Process button click through enhanced agent for consistent experience
-  const agentResponse = await processWithEnhancedAgent(phone, userMessage, 'text', language as any);
+  const agentResponse = await processWithEnhancedAgent(phone, userMessage, 'text', language as any, eventDetail.messageId);
   return agentResponse.message;
 }
 

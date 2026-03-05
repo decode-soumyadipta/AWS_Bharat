@@ -107,7 +107,7 @@ export const handler = async (
     console.log('Invoking voice-transcription Lambda...');
     
     // Show typing indicator during transcription
-    await sendTypingIndicator(phone);
+    await sendTypingIndicator(phone, messageId);
     
     const transcriptionResult = await invokeVoiceTranscription({
       audioUrl: downloadResult.s3Url,
@@ -467,14 +467,16 @@ export const handler = async (
             phone,
             contextMsg,
             'voice',
-            (detectedLanguage as any) || 'hi-IN'
+            (detectedLanguage as any) || 'hi-IN',
+            messageId
           );
           
           await sendEnhancedAgentMessage(
             phone,
             agentResponse.message,
             (detectedLanguage as any) || 'hi-IN',
-            'voice'  // Always voice for conversational flow
+            'voice',  // Always voice for conversational flow
+            messageId
           );
           
           console.log('Sent LLM-generated missing fields request:', agentResponse.message.substring(0, 100));
@@ -622,13 +624,14 @@ export const handler = async (
       const { processWithEnhancedAgent, sendEnhancedAgentMessage } = await import('../services/enhanced-agent');
       
       // Send typing indicator while agent processes
-      await sendTypingIndicator(phone);
+      await sendTypingIndicator(phone, messageId);
       
       const agentResponse = await processWithEnhancedAgent(
         phone,
         transcription,
         'voice',
-        (detectedLanguage as any) || 'hi-IN'
+        (detectedLanguage as any) || 'hi-IN',
+        messageId
       );
       
       console.log('Agent response for non-catalog intent:', agentResponse.message.substring(0, 100));
@@ -638,7 +641,8 @@ export const handler = async (
         phone,
         agentResponse.message,
         (detectedLanguage as any) || 'hi-IN',
-        agentResponse.responseMode || 'voice'
+        agentResponse.responseMode || 'voice',
+        messageId
       );
     } catch (agentError) {
       console.error('Agent fallback failed:', agentError);

@@ -46,6 +46,12 @@ const BEDROCK_AGENT_ALIAS_ID = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID
 const DDB_TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
 const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
 
+// ── Module-level messageId for typing indicator ─────────────────────────────
+// Lambda is single-threaded (Node.js), so a module-level variable is safe.
+// Set at the start of processWithEnhancedAgent / sendEnhancedAgentMessage,
+// consumed by showTypingIndicator so every typing call has a real messageId.
+let _currentMessageId: string | undefined;
+
 // Language codes
 type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
 
@@ -76,9 +82,13 @@ export async function processWithEnhancedAgent(
   phone: string,
   userMessage: string,
   messageType: 'text' | 'voice' | 'image',
-  currentLanguage: LanguageCode = 'hi-IN'
+  currentLanguage: LanguageCode = 'hi-IN',
+  messageId?: string
 ): Promise<EnhancedAgentResponse> {
-  console.log('🤖 Enhanced Agent processing:', { phone, messageType, currentLanguage });
+  console.log('🤖 Enhanced Agent processing:', { phone, messageType, currentLanguage, messageId: messageId ? '✓' : '✗' });
+
+  // Store messageId so every showTypingIndicator call can forward it
+  if (messageId) { _currentMessageId = messageId; }
 
   // Show typing indicator immediately
   await showTypingIndicator(phone);
@@ -1109,7 +1119,7 @@ async function searchMarketPrice(product: string, language: LanguageCode): Promi
  */
 async function showTypingIndicator(phone: string): Promise<void> {
   try {
-    await sendTypingIndicator(phone);
+    await sendTypingIndicator(phone, _currentMessageId);
   } catch (error) {
     console.error('Failed to send typing indicator:', error);
   }
@@ -1828,8 +1838,12 @@ export async function sendEnhancedAgentMessage(
   phone: string,
   message: string,
   language: LanguageCode,
-  mode: 'voice' | 'text' | 'both' = 'voice'
+  mode: 'voice' | 'text' | 'both' = 'voice',
+  messageId?: string
 ): Promise<void> {
+  // Store messageId for typing indicator
+  if (messageId) { _currentMessageId = messageId; }
+
   // Show typing for realistic delay
   await showTypingIndicator(phone);
 
