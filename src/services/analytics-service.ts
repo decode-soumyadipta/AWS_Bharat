@@ -159,36 +159,33 @@ export function formatTopSellingProducts(
 ): string {
   if (products.length === 0) {
     if (language === 'hi') {
-      return '😔 अभी तक कोई ऑर्डर नहीं आया है।';
+      return 'अभी तक कोई ऑर्डर नहीं आया है।';
     } else if (language === 'mr') {
-      return '😔 अजून कोणताही ऑर्डर आलेला नाही.';
+      return 'अजून कोणताही ऑर्डर आलेला नाही.';
     } else {
-      return '😔 No orders yet.';
+      return 'No orders yet.';
     }
   }
 
   let message = '';
 
   if (language === 'hi') {
-    message = '🏆 आपके सबसे अच्छे बिकने वाले उत्पाद:\n\n';
+    message = 'आपके सबसे अच्छे बिकने वाले उत्पाद: ';
     products.forEach((product, index) => {
-      message += `${index + 1}. ${product.productName}\n`;
-      message += `   📦 ${product.totalOrders} ऑर्डर | ₹${product.totalRevenue.toFixed(2)} कमाई\n`;
-      message += `   📊 ${product.totalQuantity} यूनिट बिके\n\n`;
+      message += `${product.productName} (${product.totalOrders} ऑर्डर, ${product.totalQuantity} यूनिट बिके, ${product.totalRevenue.toFixed(0)} रुपये कमाई, औसत ऑर्डर ${product.averageOrderValue.toFixed(0)} रुपये)`;
+      if (index < products.length - 1) message += '; ';
     });
   } else if (language === 'mr') {
-    message = '🏆 तुमची सर्वात चांगली विकली जाणारी उत्पादने:\n\n';
+    message = 'तुमची सर्वात चांगली विकली जाणारी उत्पादने: ';
     products.forEach((product, index) => {
-      message += `${index + 1}. ${product.productName}\n`;
-      message += `   📦 ${product.totalOrders} ऑर्डर | ₹${product.totalRevenue.toFixed(2)} कमाई\n`;
-      message += `   📊 ${product.totalQuantity} युनिट विकले\n\n`;
+      message += `${product.productName} (${product.totalOrders} ऑर्डर, ${product.totalQuantity} युनिट विकले, ${product.totalRevenue.toFixed(0)} रुपये कमाई, सरासरी ऑर्डर ${product.averageOrderValue.toFixed(0)} रुपये)`;
+      if (index < products.length - 1) message += '; ';
     });
   } else {
-    message = '🏆 Your top selling products:\n\n';
+    message = 'Your top selling products: ';
     products.forEach((product, index) => {
-      message += `${index + 1}. ${product.productName}\n`;
-      message += `   📦 ${product.totalOrders} orders | ₹${product.totalRevenue.toFixed(2)} revenue\n`;
-      message += `   📊 ${product.totalQuantity} units sold\n\n`;
+      message += `${product.productName} (${product.totalOrders} orders, ${product.totalQuantity} units sold, Rs ${product.totalRevenue.toFixed(0)} revenue, avg order Rs ${product.averageOrderValue.toFixed(0)})`;
+      if (index < products.length - 1) message += '; ';
     });
   }
 

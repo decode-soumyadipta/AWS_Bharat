@@ -165,7 +165,34 @@ export async function processWithEnhancedAgent(
   
   if (analyticsQuery) {
     console.log('📊 Analytics query detected:', analyticsQuery);
+    await showTypingIndicator(phone);
     analyticsInfo = await getAnalyticsInfo(phone, analyticsQuery, currentLanguage);
+
+    // For strategy/recommendation questions, also fetch current market prices for seller's products
+    // so the model can cross-reference sales data with market rates
+    if (!marketInfo && analyticsQuery.type === 'top_selling') {
+      try {
+        const { getSellerByPhone } = await import('./dynamodb-repository');
+        const seller = await getSellerByPhone(phone);
+        if (seller?.cropsGrown?.length) {
+          const priceLines: string[] = [];
+          for (const crop of seller.cropsGrown.slice(0, 4)) {
+            try {
+              const livePrice = await fetchLiveMarketPrice(crop);
+              if (livePrice.found) {
+                priceLines.push(`${crop}: ${livePrice.priceInfo}`);
+              }
+            } catch { /* skip */ }
+          }
+          if (priceLines.length > 0) {
+            marketInfo = `आज के बाज़ार भाव (seller के products): ${priceLines.join('; ')}`;
+            console.log('📊 Auto-fetched market prices for analytics context:', marketInfo);
+          }
+        }
+      } catch (e) {
+        console.warn('Could not auto-fetch market prices for analytics:', e);
+      }
+    }
   }
 
   // ── INLINE TOOL EXECUTION — works for ALL states including GUEST_ACTIVE ──
@@ -606,7 +633,7 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
   const romanizedWeek = /\b(hafta|hafte|week|pichh?le?\s*(hafta|hafte|week)|last\s*week|saptah)\b/i;
   const romanizedMonth = /\b(mahina|mahine|month|pichh?le?\s*(mahina|mahine|month)|last\s*month)\b/i;
   const romanizedSoldPatterns = /\b(bik[ae]|bech[ae]|sol[de]|kitna|kitne|kitni|bikri|sell|sales|revenue|kamai|earning|order|hisab)\b/i;
-  const romanizedTopSelling = /\b(sabse\s*(zyada|jyada|acch[ha])|top\s*sell|best\s*sell|konsa\s*(acch[ha]|zyada|sabse)|kya\s*(acch[ha]|zyada).*bik|popular)\b/i;
+  const romanizedTopSelling = /\b(sabse\s*(zyada|jyada|acch[ha])|top\s*sell|best\s*sell|konsa\s*(acch[ha]|zyada|sabse)|kya\s*(acch[ha]|zyada).*bik|popular|faayda|fayda|profit|recommend|suggest|kya\s*jod[uo]n|kya\s*bech[uo]n|maximize|zyada\s*kamai|jyada\s*kamai|strategy|business\s*advice|acch[ha]\s*product|best\s*product)\b/i;
   
   // Hindi script patterns
   const hindiYesterday = /कल|बीता\s*कल|पिछला\s*दिन|परसों/;
@@ -614,17 +641,20 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
   const hindiWeek = /हफ्त[ाे]|सप्ताह|पिछल[ेा]\s*हफ्त[ाे]/;
   const hindiMonth = /महीन[ाे]|पिछल[ेा]\s*महीन[ाे]/;
   const hindiSoldPatterns = /बिक[ाी]|बेच[ाी]|कितन[ाीे]|बिक्री|ऑर्डर|कमाई|हिसाब/;
-  const hindiTopSelling = /सबसे\s*(ज़्यादा|ज्यादा|अच्छ[ाी])|कौन\s*सा.*(अच्छ|ज़्यादा|बिक)|क्या.*बिक|टॉप\s*सेलिंग|बेस्ट\s*सेलिंग/;
+  const hindiTopSelling = /सबसे\s*(ज़्यादा|ज्यादा|अच्छ[ाी])|कौन\s*सा.*(अच्छ|ज़्यादा|बिक|फायद|जोड़)|क्या.*बिक|टॉप\s*सेलिंग|बेस्ट\s*सेलिंग|फायद[ाे]|मुनाफ|ज़्यादा\s*कमाई|कौन.*जोड़|क्या\s*जोड़|कौन.*बेच|सबसे.*फायद/;
 
   // Marathi patterns
   const marathiYesterday = /काल|कालच[ाीे]/;
   const marathiToday = /आज|आजच[ाीे]/;
   const marathiSold = /विक[ले]|किती|विक्री|ऑर्डर|कमाई/;
-  const marathiTopSelling = /सर्वात\s*जास्त|चांगल[ेाी].*विक|टॉप/;
+  const marathiTopSelling = /सर्वात\s*जास्त|चांगल[ेाी].*विक|टॉप|फायदा|नफा/;
+
+  // Also detect strategy/recommendation questions (English)
+  const englishStrategy = /\b(what\s*should\s*i\s*(sell|add|stock)|which\s*product|most\s*profit|max(imize|imum)?\s*profit|recommend|suggest|best\s*to\s*sell|should\s*i\s*add)\b/i;
 
   // Check if message is asking about sales/analytics
   const isSalesQuery = romanizedSoldPatterns.test(lower) || hindiSoldPatterns.test(message) || marathiSold.test(message);
-  const isTopSellingQuery = romanizedTopSelling.test(lower) || hindiTopSelling.test(message) || marathiTopSelling.test(message);
+  const isTopSellingQuery = romanizedTopSelling.test(lower) || hindiTopSelling.test(message) || marathiTopSelling.test(message) || englishStrategy.test(lower);
 
   // Extract product name if mentioned (e.g., "kal tamatar kitna bika")
   let product: string | undefined;
@@ -1299,6 +1329,13 @@ CRITICAL RULES for this state (follow exactly, no exceptions):
 - User needs to send a product photo next
 - If user asks something else, answer and gently remind to send a product photo
 - DO NOT say "product added" or "bahut badhiya" — product is NOT added yet, we need the photo first`;
+    } else if (userState?.state === 'VOICE_RECEIVED') {
+      prompt += `\n\nSTATE: VOICE_RECEIVED — Product data is being collected (see above).
+CRITICAL CONTEXT-SWITCHING RULE:
+- If the user's NEW message is providing a MISSING FIELD (price, qty, unit) → use STORE_DATA to save it
+- If the user's NEW message is an UNRELATED question (analytics, weather, market price, general query, help, etc.) → ANSWER THAT QUESTION FULLY AND CORRECTLY first. Do NOT force it into the product flow. Mention the pending product briefly at the end: "वैसे आपका [product] अभी add हो रहा है, [missing field] बताइए तो आगे बढ़ें"
+- NEVER ignore the user's actual question just because partial data exists
+- NEVER confuse an analytics/strategy question with a product data field`;
     }
   }
 
@@ -1314,6 +1351,17 @@ CRITICAL RULES for this state (follow exactly, no exceptions):
   // Add analytics info if available
   if (analyticsInfo) {
     prompt += `\n\nAnalytics data:\n${analyticsInfo}`;
+    prompt += `\n\nANALYTICAL REASONING RULES (when user asks strategy/profit/recommendation questions):
+When the user asks questions like "kya jodun", "kya bechun", "sabse zyada faayda kisme", "what should I sell", "maximize profit", "kaunsa product achha rahega" etc. — YOU MUST:
+1. ANALYZE the sales data above: which products sold most, which earned most revenue, what is the average order value per product.
+2. CROSS-REFERENCE with market prices (if available above): high-demand items where your seller's price is competitive will sell more.
+3. REASON about seasonality: mention if certain crops are in-season and prices are favorable.
+4. GIVE SPECIFIC RECOMMENDATIONS with numbers: "Aapka tamatar sabse zyada bika — 2 order, 60 rupaye kamai. Market mein aaj tamatar 15 se 80 rupaye per kilo pe hai. Agar aap tamatar ka stock badhayein toh zyada kamai ho sakti hai."
+5. SUGGEST NEW PRODUCTS based on what's selling well in their region/category — e.g., if vegetables are selling, suggest seasonal vegetables.
+6. COMPARE profit margins: if a product earns more per unit, recommend stocking more of it.
+7. BE HONEST: if data is limited (few orders), say so and give best-effort advice.
+8. For these analytical questions, give a DETAILED response (5-8 sentences) — this is NOT a "max 2-3 sentences" scenario. The user is asking for real business advice.
+9. NEVER hallucinate numbers. ONLY use data that appears above. If no analytics/market data exists, say honestly you need more sales history to give recommendations.`;
   }
 
   // Add inline tool results — these were pre-executed before the LLM call
@@ -1404,7 +1452,7 @@ NEVER DO THESE:
 STRICT RULES:
 1. Give a DIRECT, COMPLETE answer immediately — never stall.
 2. If market info is provided above, use it directly to answer with actual numbers.
-3. Keep response SHORT — max 2-3 sentences. This will become a voice message spoken aloud.
+3. Response length: For simple actions (product add, price check, greetings) keep it SHORT — 2-3 sentences. For complex questions (analytics, strategy, profit advice, recommendations, explanations) give a DETAILED answer — 5-8 sentences with real data and reasoning. Match response depth to question complexity.
 4. If user is adding a product and market price data exists above, mention the current market price naturally.
 5. If anything is missing for a product catalog, ask ONE clear question about the FIRST missing field.
 6. Be warm but concise — like a knowledgeable friend talking on the phone.
@@ -1457,7 +1505,14 @@ STORE_DATA RULES (MOST IMPORTANT — READ CAREFULLY):
   * User says "10 kilo" when price is set → STORE_DATA {"quantity":10,"unit":"kg"} (ready for photo)
   * NEVER call ASK_QUESTION for a number — it's always price or quantity depending on context
 - PRODUCT NAME RULE: The item/product the user mentions IS the productName. NEVER re-ask for the name when user already said what they want to sell.
-- COMPOUND INPUT: When user provides product + price + quantity in ONE message, extract ALL fields at once. "tamatar 50 rupaye kilo, 10 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":10,"unit":"kg","category":"Vegetables"}
+- COMPOUND INPUT: When user provides product + price + quantity in ONE message, extract ALL fields at once.
+  Examples of compound inputs to parse correctly:
+  * "tamatar 50 rupaye kilo, 10 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":10,"unit":"kg","category":"Vegetables"}
+  * "main 2 kg aam bechna chahta hoon" → DATA: {"productName":"आम","quantity":2,"unit":"kg","category":"Fruits"} — note: 2 kg is quantity, not price. Ask for price next.
+  * "मैं 2 kg आम बेचना चाहता हूँ" → DATA: {"productName":"आम","quantity":2,"unit":"kg","category":"Fruits"} — same in Devanagari
+  * "pyaz 30 rupaye, 20 kilo" → DATA: {"productName":"Onion","price":30,"quantity":20,"unit":"kg","category":"Vegetables"}
+  * "50 rupaye kilo tamatar 5 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":5,"unit":"kg","category":"Vegetables"}
+  KEY: When both a number+unit (e.g., "2 kg") AND a product name exist, the number+unit is QUANTITY. Price comes separately unless explicitly stated with "rupaye/rupees/rs".
 - NEVER use ASK_QUESTION when user has given ANY product information — ALWAYS use STORE_DATA
 - ALWAYS include ALL fields you can extract in a single STORE_DATA call, including auto-detected category
 - When the "Missing fields" list above shows some fields, ONLY ask about the MISSING ones, never re-ask fields already stored
