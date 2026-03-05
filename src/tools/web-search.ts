@@ -149,14 +149,14 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       console.log(`🌐 Querying data.gov.in for ${commodity} on ${dateQuery}`);
 
       let response: Response | null = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 2; attempt++) {
         response = await fetch(url, {
           headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(5000),
         });
         if (response.status === 429) {
-          const backoff = (attempt + 1) * 2000; // 2s, 4s, 6s
-          console.warn(`data.gov.in rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/3)`);
+          const backoff = (attempt + 1) * 1000; // 1s, 2s
+          console.warn(`data.gov.in rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/2)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
         }
@@ -226,14 +226,14 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
     const fallbackUrl = `${DATA_GOV_API_URL}?api-key=${DATA_GOV_API_KEY}&format=json&limit=3&filters[commodity]=${encodeURIComponent(commodity)}&sort[arrival_date]=desc`;
     
     let fallbackResponse: Response | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       fallbackResponse = await fetch(fallbackUrl, {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5000),
       });
       if (fallbackResponse.status === 429) {
-        const backoff = (attempt + 1) * 2000;
-        console.warn(`data.gov.in fallback rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/3)`);
+        const backoff = (attempt + 1) * 1000;
+        console.warn(`data.gov.in fallback rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/2)`);
         await new Promise(r => setTimeout(r, backoff));
         continue;
       }
