@@ -93,6 +93,14 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
+    // GSI5: Active Sellers Lookup (for background agent to query all active sellers)
+    this.dataTable.addGlobalSecondaryIndex({
+      indexName: 'GSI5',
+      partitionKey: { name: 'GSI5PK', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'GSI5SK', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
     // Enable TTL for automatic cleanup of abandoned flows and temporary data
     // TTL attribute should be set on items that need automatic expiration
     // (e.g., user state records, partial catalog data)
@@ -195,6 +203,7 @@ export class VyaparVaaniStack extends cdk.Stack {
       'order-manager',
       'inventory-sync',
       'bpp-adapter',
+      'background-agent',
     ];
 
     logGroups.forEach((name) => {
@@ -1422,6 +1431,44 @@ export class VyaparVaaniStack extends cdk.Stack {
       value: `${this.httpApi.url}beckn/{action}`,
       description: 'BPP Adapter Beckn Protocol endpoint (POST /beckn/{action})',
       exportName: 'VyaparVaaniBPPAdapterUrl',
+    });
+
+    // ========================================
+    // Background Agent — Scheduled Proactive Intelligence
+    // Runs every 6 hours to send weather, price, and crop alerts
+    // ========================================
+    const backgroundAgentLambda = new lambda.Function(this, 'BackgroundAgentLambda', {
+      functionName: 'vyapar-vaani-background-agent',
+      description: 'Proactive seller intelligence: weather, market prices, crop advisories',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'lambdas/background-agent.handler',
+      code: lambda.Code.fromAsset('dist/src'),
+      timeout: cdk.Duration.minutes(5), // May process many sellers
+      memorySize: 512,
+      role: lambdaExecutionRole,
+      environment: {
+        TABLE_NAME: this.dataTable.tableName,
+        EVENT_BUS_NAME: this.eventBus.eventBusName,
+        KMS_KEY_ID: this.encryptionKey.keyId,
+        PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
+      },
+      logRetention: logs.RetentionDays.ONE_MONTH,
+    });
+
+    // Schedule: Run every 6 hours (IST: 6am, 12pm, 6pm, 12am)
+    new events.Rule(this, 'BackgroundAgentSchedule', {
+      ruleName: 'vyapar-vaani-background-agent-schedule',
+      description: 'Triggers background agent every 6 hours for proactive seller alerts',
+      schedule: events.Schedule.rate(cdk.Duration.hours(6)),
+      targets: [new targets.LambdaFunction(backgroundAgentLambda, {
+        deadLetterQueue: eventBridgeDlq,
+      })],
+    });
+
+    new cdk.CfnOutput(this, 'BackgroundAgentLambdaArn', {
+      value: backgroundAgentLambda.functionArn,
+      description: 'Background Agent Lambda ARN',
+      exportName: 'VyaparVaaniBackgroundAgentArn',
     });
   }
 }

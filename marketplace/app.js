@@ -26,22 +26,26 @@ function saveSession(user) {
 }
 function clearSession() { localStorage.removeItem('buyer_session'); currentUser = null; }
 
-// ── Order Storage (localStorage) ──
+// ── Order Storage (localStorage) — scoped by buyer phone ──
+function getOrdersKey() {
+  const phone = currentUser?.phone || 'anonymous';
+  return `buyer_orders_${phone}`;
+}
 function getStoredOrders() {
-  try { return JSON.parse(localStorage.getItem('buyer_orders') || '[]'); }
+  try { return JSON.parse(localStorage.getItem(getOrdersKey()) || '[]'); }
   catch { return []; }
 }
 function storeOrder(order) {
   const orders = getStoredOrders();
   orders.unshift(order);
   if (orders.length > 50) orders.length = 50;
-  localStorage.setItem('buyer_orders', JSON.stringify(orders));
+  localStorage.setItem(getOrdersKey(), JSON.stringify(orders));
 }
 function updateStoredOrder(orderId, updates) {
   const orders = getStoredOrders();
   const idx = orders.findIndex(o => o.orderId === orderId);
   if (idx >= 0) Object.assign(orders[idx], updates);
-  localStorage.setItem('buyer_orders', JSON.stringify(orders));
+  localStorage.setItem(getOrdersKey(), JSON.stringify(orders));
 }
 
 // ── Init ──

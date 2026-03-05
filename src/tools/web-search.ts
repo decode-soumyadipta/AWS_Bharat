@@ -162,22 +162,34 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       const records = data.records || [];
 
       if (records.length > 0) {
-        // Pick the first match (sorted by relevance)
-        const record = records[0];
-        const minPrice = parseFloat(record.min_price) || 0;
-        const maxPrice = parseFloat(record.max_price) || 0;
-        const modalPrice = parseFloat(record.modal_price) || 0;
-        const market = record.market || 'Unknown';
-        const state = record.state || 'India';
-        const arrivalDate = record.arrival_date || dateQuery;
-        const unit = 'quintal'; // data.gov.in prices are per quintal (100kg)
+        // Aggregate across ALL returned mandi records for accurate min/max
+        let globalMin = Infinity;
+        let globalMax = 0;
+        let modalSum = 0;
+        let modalCount = 0;
+        let bestMarket = records[0].market || 'Unknown';
+        let bestState = records[0].state || 'India';
+        const arrivalDate = records[0].arrival_date || dateQuery;
 
-        // Convert quintal → kg for user-friendly display
-        const minPerKg = Math.round(minPrice / 100);
-        const maxPerKg = Math.round(maxPrice / 100);
-        const modalPerKg = Math.round(modalPrice / 100);
+        for (const rec of records) {
+          const rMin = parseFloat(rec.min_price) || 0;
+          const rMax = parseFloat(rec.max_price) || 0;
+          const rModal = parseFloat(rec.modal_price) || 0;
+          if (rMin > 0 && rMin < globalMin) globalMin = rMin;
+          if (rMax > globalMax) { globalMax = rMax; bestMarket = rec.market || bestMarket; bestState = rec.state || bestState; }
+          if (rModal > 0) { modalSum += rModal; modalCount++; }
+        }
+        if (globalMin === Infinity) globalMin = globalMax;
 
-        const priceInfo = `₹${minPerKg}-₹${maxPerKg}/kg (मंडी भाव ₹${modalPerKg}/kg) — ${market}, ${state} (${arrivalDate})`;
+        // Convert quintal → kg: floor for min, ceil for max to avoid ₹X-₹X
+        const minPerKg = Math.floor(globalMin / 100);
+        const maxPerKg = Math.ceil(globalMax / 100);
+        const modalPerKg = Math.round((modalCount > 0 ? modalSum / modalCount : (globalMin + globalMax) / 2) / 100);
+
+        const market = bestMarket;
+        const state = bestState;
+        const priceDisplay = minPerKg === maxPerKg ? `₹${minPerKg}/kg` : `₹${minPerKg}-₹${maxPerKg}/kg`;
+        const priceInfo = `${priceDisplay} (मंडी भाव ₹${modalPerKg}/kg) — ${market}, ${state} (${arrivalDate})`;
         const sourceUrl = `${AGMARKNET_URL}/SearchCmmMkt.aspx?Ession_id=1&commodity=${encodeURIComponent(commodity)}&state=--Select--&district=--Select--&market=--Select--&DateFrom=${dateQuery}&DateTo=${dateQuery}&trend=0&collegession_id=1&commoditygroup=--Select--`;
 
         console.log(`✅ Live price found: ${priceInfo}`);
@@ -213,15 +225,33 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       const records = fallbackData.records || [];
 
       if (records.length > 0) {
-        const record = records[0];
-        const minPerKg = Math.round((parseFloat(record.min_price) || 0) / 100);
-        const maxPerKg = Math.round((parseFloat(record.max_price) || 0) / 100);
-        const modalPerKg = Math.round((parseFloat(record.modal_price) || 0) / 100);
-        const market = record.market || 'Unknown';
-        const state = record.state || 'India';
-        const arrivalDate = record.arrival_date || 'recent';
+        // Aggregate across all returned mandi records
+        let globalMin = Infinity;
+        let globalMax = 0;
+        let modalSum = 0;
+        let modalCount = 0;
+        let bestMarket = records[0].market || 'Unknown';
+        let bestState = records[0].state || 'India';
+        const arrivalDate = records[0].arrival_date || 'recent';
 
-        const priceInfo = `₹${minPerKg}-₹${maxPerKg}/kg (मंडी भाव ₹${modalPerKg}/kg) — ${market}, ${state} (${arrivalDate})`;
+        for (const rec of records) {
+          const rMin = parseFloat(rec.min_price) || 0;
+          const rMax = parseFloat(rec.max_price) || 0;
+          const rModal = parseFloat(rec.modal_price) || 0;
+          if (rMin > 0 && rMin < globalMin) globalMin = rMin;
+          if (rMax > globalMax) { globalMax = rMax; bestMarket = rec.market || bestMarket; bestState = rec.state || bestState; }
+          if (rModal > 0) { modalSum += rModal; modalCount++; }
+        }
+        if (globalMin === Infinity) globalMin = globalMax;
+
+        const minPerKg = Math.floor(globalMin / 100);
+        const maxPerKg = Math.ceil(globalMax / 100);
+        const modalPerKg = Math.round((modalCount > 0 ? modalSum / modalCount : (globalMin + globalMax) / 2) / 100);
+        const market = bestMarket;
+        const state = bestState;
+
+        const priceDisplay = minPerKg === maxPerKg ? `₹${minPerKg}/kg` : `₹${minPerKg}-₹${maxPerKg}/kg`;
+        const priceInfo = `${priceDisplay} (मंडी भाव ₹${modalPerKg}/kg) — ${market}, ${state} (${arrivalDate})`;
 
         console.log(`✅ Recent price found (not today): ${priceInfo}`);
 

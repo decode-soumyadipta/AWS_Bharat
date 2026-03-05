@@ -1168,12 +1168,20 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
     }
   }
 
-  // Add user patterns
+  // Add user patterns and personalization context
   if (conversationContext && conversationContext.patterns.totalInteractions > 0) {
     const { patterns, preferences } = conversationContext;
-    prompt += `\n\nUser history: ${patterns.totalInteractions} chats, ${patterns.successfulCatalogs} successful orders`;
+    prompt += `\n\nUser personalization context:`;
+    prompt += `\n- Total conversations: ${patterns.totalInteractions}, Successful products added: ${patterns.successfulCatalogs}`;
     if (preferences.preferredCategories?.length) {
-      prompt += `, prefers: ${preferences.preferredCategories.join(', ')}`;
+      prompt += `\n- Preferred product categories: ${preferences.preferredCategories.join(', ')}`;
+    }
+    if (patterns.totalInteractions > 10) {
+      prompt += `\n- This is a returning seller who knows the system well. Keep responses efficient and skip basic explanations.`;
+    } else if (patterns.totalInteractions > 3) {
+      prompt += `\n- This seller has some experience. Be helpful but don't over-explain basics.`;
+    } else {
+      prompt += `\n- This is a relatively new seller. Be extra patient and guide step-by-step.`;
     }
   }
 
@@ -1388,6 +1396,17 @@ MEMORY AND CONTINUITY RULES:
 - If user is confused or went off-topic → recall ALL context above and steer back naturally: "Abhi hum [current task] kar rahe the. [What is missing]. Bataaiye kya karein?"
 - If user repeats a question you already answered → recall and re-answer without frustration: "Haan ji, jaise maine bataya..."
 - Reference past interactions naturally from the conversation history above. Show you remember.
+
+DEEP PERSONALIZATION RULES (very important for building trust):
+- When the user asks about a product they previously added or discussed, reference it: "Haan, aapne pichle hafte [product] add kiya tha [price] pe. Ab uska kya update hai?"
+- If user asked about market price recently, connect it: "Aapne thodi der pehle [product] ka bhav pucha tha. Market mein abhi [range] chal raha hai. Kya aap iske hisaab se apna price set karna chahenge?"
+- Use the user's preferred categories from history: if they mostly sell vegetables, proactively mention vegetable prices. If fruits, mention fruit season info.
+- When user returns after a gap, acknowledge it warmly: "Bahut din baad aaye! Aapke [N] products marketplace pe hain. Kuch naya add karna hai?"
+- Reference the seller's total product count and successful catalogs naturally: "Aapke [N] products bahut accha perform kar rahe hain" or "Aapka pehla product add karte hain aaj"
+- If conversation history shows the user was struggling with something (e.g., photo upload, price setting), remember and guide proactively: "Pichli baar photo mein thodi dikkat aayi thi. Is baar achchi roshni mein photo lena"
+- Connect related topics from past conversations: if user asked about onion price AND has onions in catalog, say "Aapke catalog mein pyaz hai aur aaj market mein pyaz ka bhav [X] hai. Kya update karna chahenge?"
+- Mirror the user's communication style from history: if they use short messages, keep responses short. If they are chatty, be more conversational.
+- Track and remember the user's typical interaction time and product patterns to make conversations feel familiar and personal.
 
 ANTI-HALLUCINATION RULES:
 - NEVER make up market prices, order counts, analytics, or any data. If the data is NOT provided in the context above, say honestly: "Abhi mere paas ye data nahi hai."

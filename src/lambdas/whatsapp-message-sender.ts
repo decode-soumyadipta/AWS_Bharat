@@ -725,8 +725,9 @@ async function generateAndSendVoice(
 ): Promise<boolean> {
   try {
     const { PollyClient, SynthesizeSpeechCommand } = await import('@aws-sdk/client-polly');
-    const { PutObjectCommand, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const { PutObjectCommand, GetObjectCommand, HeadObjectCommand } = await import('@aws-sdk/client-s3');
     const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    const { createHash } = await import('crypto');
     
     const pollyClient = new PollyClient({ region: process.env.AWS_REGION || 'us-east-1' });
     const voiceId = language === 'mr' ? 'Aditi' : language === 'hi' ? 'Kajal' : 'Joanna';
@@ -739,17 +740,41 @@ async function generateAndSendVoice(
       return false;
     }
     
-    const command = new SynthesizeSpeechCommand({
-      Text: cleanedText,
-      OutputFormat: 'mp3',
-      VoiceId: voiceId,
-      Engine: 'neural',
-      LanguageCode: languageCode,
-      TextType: 'ssml',
-    });
+    // Content-hash caching: SHA-256 of (text + voiceId + language) → reuse S3 object
+    const cacheDigest = createHash('sha256').update(`${cleanedText}|${voiceId}|${languageCode}`).digest('hex').substring(0, 32);
+    const { s3Client } = await import('../config/aws-clients');
+    const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+    if (!bucketName) {
+      console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
+      return false;
+    }
     
-    const response = await pollyClient.send(command);
-    if (response.AudioStream) {
+    const cacheKey = `voice-responses/cache-${cacheDigest}.mp3`;
+    
+    // Check if this exact audio already exists in S3
+    let audioExists = false;
+    try {
+      await s3Client.send(new HeadObjectCommand({ Bucket: bucketName, Key: cacheKey }));
+      audioExists = true;
+      console.log(`🔊 TTS cache hit: ${cacheKey}`);
+    } catch {
+      // Object doesn't exist — need to synthesize
+      audioExists = false;
+    }
+    
+    if (!audioExists) {
+      const command = new SynthesizeSpeechCommand({
+        Text: cleanedText,
+        OutputFormat: 'mp3',
+        VoiceId: voiceId,
+        Engine: 'neural',
+        LanguageCode: languageCode,
+        TextType: 'ssml',
+      });
+      
+      const response = await pollyClient.send(command);
+      if (!response.AudioStream) return false;
+      
       const chunks: Uint8Array[] = [];
       const stream = response.AudioStream as AsyncIterable<Uint8Array>;
       for await (const chunk of stream) {
@@ -757,34 +782,26 @@ async function generateAndSendVoice(
       }
       const audioBuffer = Buffer.concat(chunks);
       
-      // Upload to S3
-      const { s3Client } = await import('../config/aws-clients');
-      const bucketName = process.env.PRODUCTS_BUCKET_NAME;
-      if (!bucketName) {
-        console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
-        return false;
-      }
-      
-      const key = `voice-responses/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
+      // Upload to S3 with cache key
       await s3Client.send(new PutObjectCommand({
         Bucket: bucketName,
-        Key: key,
+        Key: cacheKey,
         Body: audioBuffer,
         ContentType: 'audio/mpeg',
       }));
-      
-      // Generate presigned URL
-      const getObjectCommand = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: key,
-      });
-      const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
-      
-      // Send voice message
-      await sendAudioMessage(to, voiceUrl, language);
-      return true;
+      console.log(`🔊 TTS cache miss — synthesized and stored: ${cacheKey}`);
     }
-    return false;
+    
+    // Generate presigned URL (always needed — URLs expire)
+    const getObjectCommand = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: cacheKey,
+    });
+    const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
+    
+    // Send voice message
+    await sendAudioMessage(to, voiceUrl, language);
+    return true;
   } catch (voiceError) {
     console.warn('Failed to generate/send voice:', voiceError);
     return false;
