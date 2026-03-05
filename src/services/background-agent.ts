@@ -1,7 +1,7 @@
 /**
  * Background Agent Service — Proactive Seller Intelligence
  * 
- * Runs on a schedule (every 6 hours via EventBridge) to:
+ * Runs on a schedule (daily at 7 PM IST via EventBridge) to:
  * 1. Fetch weather forecasts for seller locations (Open-Meteo API — free, no key)
  * 2. Fetch live market prices for sellers' crops (data.gov.in API)
  * 3. Generate personalized alerts via Bedrock Nova Lite
@@ -206,13 +206,13 @@ async function generateAlertMessage(
   priceUpdates: Array<{ crop: string; priceInfo: string }>,
 ): Promise<string | null> {
   // Only generate if there's something meaningful to tell
-  const hasWeatherAlert = weather && weather.alerts.length > 0;
+  const hasWeatherData = weather !== null;
   const hasPriceUpdate = priceUpdates.length > 0;
 
-  if (!hasWeatherAlert && !hasPriceUpdate) return null;
+  if (!hasWeatherData && !hasPriceUpdate) return null;
 
-  const langMap = { hi: 'Hinglish (Hindi written in Roman script)', mr: 'Marathi', en: 'English' };
-  const langName = langMap[seller.language] || 'Hinglish';
+  const langMap = { hi: 'शुद्ध हिंदी (Devanagari script)', mr: 'मराठी (Devanagari script)', en: 'English' };
+  const langName = langMap[seller.language] || 'शुद्ध हिंदी (Devanagari script)';
 
   let contextBlock = `Seller name: ${seller.name}\nLanguage: ${langName}\n`;
   
@@ -223,10 +223,15 @@ async function generateAlertMessage(
     contextBlock += `Location: ${seller.location.district || ''} ${seller.location.state || ''}\n`;
   }
 
-  if (weather && hasWeatherAlert) {
+  if (weather && hasWeatherData) {
     contextBlock += `\nWeather (${weather.location}):\n`;
     contextBlock += `Current: ${weather.description}, ${Math.round(weather.temperature)}°C, Humidity ${weather.humidity}%\n`;
-    contextBlock += `Alerts:\n${weather.alerts.map(a => `- ${a}`).join('\n')}\n`;
+    contextBlock += `Max: ${Math.round(weather.maxTemp)}°C, Min: ${Math.round(weather.minTemp)}°C\n`;
+    if (weather.alerts.length > 0) {
+      contextBlock += `Alerts:\n${weather.alerts.map(a => `- ${a}`).join('\n')}\n`;
+    } else {
+      contextBlock += `No severe weather alerts.\n`;
+    }
   }
 
   if (hasPriceUpdate) {
@@ -236,28 +241,32 @@ async function generateAlertMessage(
     });
   }
 
-  const prompt = `You are Vyapar Vaani, a friendly AI assistant for rural Indian sellers.
-Generate a SHORT proactive WhatsApp voice message (max 4 sentences) for this seller in ${langName}.
+  const prompt = `You are Vyapar Vaani, a caring AI assistant for rural Indian sellers.
+Generate a COMPREHENSIVE evening daily update WhatsApp voice message for this seller.
+
+IMPORTANT: Write ENTIRELY in ${langName}. 
+${seller.language === 'hi' ? '- हर शब्द देवनागरी हिंदी में लिखो। कोई English या Roman Hindi नहीं।' : seller.language === 'mr' ? '- प्रत्येक शब्द मराठी देवनागरी मध्ये लिहा. English किंवा Roman नाही.' : '- Write in simple English.'}
 
 ${contextBlock}
 
 Rules:
-- Write like you are SPEAKING on a phone call. Natural, warm, conversational.
-- Address the seller by name.
-- Mention the most important weather alert first if applicable.
-- If crop prices have changed significantly, mention it.
-- Give ONE actionable tip related to their crops/weather.
-- NO emoji, NO formatting, NO bullet points, NO colons. Just natural spoken sentences.
-- Say numbers in words: "pachees degree" not "25°C", "pachaas rupaye" not "₹50"
-- Keep it under 4 sentences. This will be read aloud.
+- Write like a caring village elder giving evening updates on a phone call. Warm, unhurried, detailed.
+- Address the seller by name with respect (जी).
+- Structure: शुभ संध्या greeting → मौसम/weather → हर फसल का भाव/each crop price → खेती सलाह/farming tip → शुभकामना/sign-off.
+- Cover ALL information provided above. Do not skip any crop price or weather detail.
+- Give 2-3 actionable farming tips based on weather and crops.
+- ${seller.language === 'hi' ? 'संख्या हिंदी में बोलो: "पच्चीस डिग्री" not "25°C", "पचास रुपये" not "₹50", "बीस मिलीमीटर" not "20mm"' : seller.language === 'mr' ? 'संख्या मराठी मध्ये: "पंचवीस अंश" not "25°C"' : 'Say numbers in words.'}
+- NO emoji, NO formatting, NO bullet points, NO colons, NO asterisks. Just natural spoken sentences.
+- Write 8-12 sentences. This is a comprehensive daily voice briefing, not a short alert.
+- End with an encouraging sign-off.
 
-Generate the message:`;
+Generate the complete message:`;
 
   try {
     const response = await bedrockClient.send(new ConverseCommand({
       modelId: 'amazon.nova-lite-v1:0',
       messages: [{ role: 'user', content: [{ text: prompt }] }],
-      inferenceConfig: { maxTokens: 300, temperature: 0.7 },
+      inferenceConfig: { maxTokens: 800, temperature: 0.7 },
     }));
 
     const text = response.output?.message?.content?.[0]?.text?.trim();
@@ -265,11 +274,11 @@ Generate the message:`;
   } catch (error) {
     console.warn('Bedrock alert generation failed:', error);
     // Fallback: construct a simple alert without AI
-    if (hasWeatherAlert && weather) {
+    if (hasWeatherData && weather) {
       const alert = weather.alerts[0];
       const greetings: Record<string, string> = {
-        hi: `${seller.name} ji, aaj ka mausam update`,
-        mr: `${seller.name} ji, aajcha hawaaman update`,
+        hi: `${seller.name} जी, आज का मौसम अपडेट`,
+        mr: `${seller.name} जी, आजचा हवामान अपडेट`,
         en: `${seller.name}, today's weather update`,
       };
       return `${greetings[seller.language]}. ${alert}`;
@@ -335,7 +344,7 @@ export interface BackgroundAgentResult {
 
 /**
  * Main entry point: process all active sellers and send proactive alerts.
- * Called by the scheduled Lambda every 6 hours.
+ * Called by the scheduled Lambda daily at 7 PM IST, or on-demand via enhanced agent.
  */
 export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
   const result: BackgroundAgentResult = {
@@ -398,8 +407,8 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
 
       if (message) {
         const alertType: SellerAlert['alertType'] = 
-          (weather?.alerts?.length && priceUpdates.length) ? 'combined' :
-          weather?.alerts?.length ? 'weather' : 'price';
+          (weather && priceUpdates.length) ? 'combined' :
+          weather ? 'weather' : 'price';
 
         await sendAlert({
           phone: seller.phone,
@@ -425,4 +434,119 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
 
   console.log(`🤖 Background Agent complete: ${result.sellersProcessed} sellers, ${result.alertsSent} alerts sent`);
   return result;
+}
+
+/**
+ * On-demand daily update for a single seller.
+ * Called by enhanced agent when user asks "mausam batao", "update do", "aaj ka bhav" etc.
+ * Returns the generated Hindi alert text (or null if nothing to report).
+ */
+export async function generateOnDemandUpdate(
+  phone: string,
+  sellerName: string,
+  language: 'hi' | 'mr' | 'en',
+  location?: SellerLocation,
+  cropsGrown?: string[],
+): Promise<string | null> {
+  console.log(`📢 On-demand update requested for ${sellerName} (${phone})`);
+
+  const seller: ActiveSeller = {
+    phone,
+    name: sellerName,
+    language,
+    location,
+    cropsGrown,
+    sellerId: '',
+  };
+
+  // Fetch weather
+  let weather: WeatherForecast | null = null;
+  if (location) {
+    weather = await fetchWeather(location);
+  }
+
+  // Fetch prices
+  const priceUpdates: Array<{ crop: string; priceInfo: string }> = [];
+  if (cropsGrown?.length) {
+    for (const crop of cropsGrown.slice(0, 5)) { // More crops for on-demand
+      try {
+        const priceResult = await fetchLiveMarketPrice(crop);
+        if (priceResult.found) {
+          priceUpdates.push({ crop, priceInfo: priceResult.priceInfo });
+        }
+      } catch {
+        // Skip individual crop price failures
+      }
+    }
+  }
+
+  // Always generate even without alerts — user explicitly asked
+  // Override: if no weather and no prices, give a simple "no updates" message
+  if (!weather && priceUpdates.length === 0) {
+    const noUpdate: Record<string, string> = {
+      hi: `${sellerName} जी, अभी कोई नई अपडेट उपलब्ध नहीं है। मौसम और बाज़ार की जानकारी जल्द ही आएगी।`,
+      mr: `${sellerName} जी, सध्या कोणतीही नवीन माहिती उपलब्ध नाही. हवामान आणि बाजारभाव लवकरच येतील.`,
+      en: `${sellerName}, no new updates available right now. Weather and market info will be available soon.`,
+    };
+    return noUpdate[language] || noUpdate['hi'];
+  }
+
+  // Force-generate even if no weather alerts (user asked explicitly)
+  const hasWeatherData = weather !== null;
+  const hasPriceData = priceUpdates.length > 0;
+
+  // Build context manually to bypass the "only generate if alerts" check
+  const langMap = { hi: 'शुद्ध हिंदी (Devanagari script)', mr: 'मराठी (Devanagari script)', en: 'English' };
+  const langName = langMap[language] || 'शुद्ध हिंदी (Devanagari script)';
+
+  let contextBlock = `Seller name: ${seller.name}\nLanguage: ${langName}\n`;
+  if (cropsGrown?.length) contextBlock += `Crops/Products: ${cropsGrown.join(', ')}\n`;
+  if (location) contextBlock += `Location: ${location.district || ''} ${location.state || ''}\n`;
+
+  if (hasWeatherData && weather) {
+    contextBlock += `\nWeather (${weather.location}):\n`;
+    contextBlock += `Current: ${weather.description}, ${Math.round(weather.temperature)}°C, Humidity ${weather.humidity}%\n`;
+    if (weather.alerts.length > 0) {
+      contextBlock += `Alerts:\n${weather.alerts.map(a => `- ${a}`).join('\n')}\n`;
+    } else {
+      contextBlock += `No severe weather alerts today.\n`;
+    }
+  }
+
+  if (hasPriceData) {
+    contextBlock += `\nMarket Prices:\n`;
+    priceUpdates.forEach(p => { contextBlock += `- ${p.crop}: ${p.priceInfo}\n`; });
+  }
+
+  const prompt = `You are Vyapar Vaani, a caring AI assistant for rural Indian sellers.
+The seller has ASKED for their daily update. Generate a COMPREHENSIVE voice message in ${langName}.
+
+IMPORTANT: Write ENTIRELY in ${langName}. 
+${language === 'hi' ? '- हर शब्द देवनागरी हिंदी में लिखो। कोई English या Roman Hindi नहीं।' : language === 'mr' ? '- प्रत्येक शब्द मराठी देवनागरी मध्ये लिहा. English किंवा Roman नाही.' : '- Write in simple English.'}
+
+${contextBlock}
+
+Rules:
+- Write like a caring village elder speaking on phone. Warm, unhurried, detailed.
+- Address the seller by name with respect (जी).
+- Cover ALL weather and price information provided above. Do not skip anything.
+- Give 2-3 actionable farming tips based on weather and crops.
+- ${language === 'hi' ? 'संख्या हिंदी में बोलो: "पच्चीस डिग्री" not "25°C", "पचास रुपये" not "₹50"' : language === 'mr' ? 'संख्या मराठी मध्ये: "पंचवीस अंश" not "25°C"' : 'Say numbers in words.'}
+- NO emoji, NO formatting, NO bullet points, NO colons, NO asterisks.
+- Write 8-12 sentences. Comprehensive daily briefing.
+- End with an encouraging sign-off.
+
+Generate the complete message:`;
+
+  try {
+    const response = await bedrockClient.send(new ConverseCommand({
+      modelId: 'amazon.nova-lite-v1:0',
+      messages: [{ role: 'user', content: [{ text: prompt }] }],
+      inferenceConfig: { maxTokens: 800, temperature: 0.7 },
+    }));
+    return response.output?.message?.content?.[0]?.text?.trim() || null;
+  } catch (error) {
+    console.warn('On-demand alert generation failed:', error);
+    return null;
+  }
 }

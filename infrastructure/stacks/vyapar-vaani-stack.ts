@@ -1455,11 +1455,11 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Schedule: Run every 6 hours (IST: 6am, 12pm, 6pm, 12am)
+    // Schedule: Run once daily at 7:00 PM IST (13:30 UTC) — evening summary
     new events.Rule(this, 'BackgroundAgentSchedule', {
       ruleName: 'vyapar-vaani-background-agent-schedule',
-      description: 'Triggers background agent every 6 hours for proactive seller alerts',
-      schedule: events.Schedule.rate(cdk.Duration.hours(6)),
+      description: 'Triggers background agent daily at 7 PM IST for evening seller summary',
+      schedule: events.Schedule.cron({ hour: '13', minute: '30' }),
       targets: [new targets.LambdaFunction(backgroundAgentLambda, {
         deadLetterQueue: eventBridgeDlq,
       })],

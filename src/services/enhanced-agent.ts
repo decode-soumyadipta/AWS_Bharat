@@ -27,6 +27,7 @@ import { getPartialData, PartialCatalogItem } from './partial-data-store';
 import { getUserState } from './state-manager';
 import { sendTextMessage, sendTypingIndicator, sendTextWithVoice, sendVoiceOnly } from '../lambdas/whatsapp-message-sender';
 import { remote_web_search, getLocalMarketPrice, fetchLiveMarketPrice } from '../tools/web-search';
+import { generateOnDemandUpdate } from './background-agent';
 import { 
   getTopSellingProducts, 
   getSalesSummary, 
@@ -201,16 +202,55 @@ export async function processWithEnhancedAgent(
   // ── END INLINE TOOL EXECUTION ─────────────────────────────────────────────
 
   // Fetch seller profile for UPI status
-  let sellerInfo: { upiId?: string; name?: string } = {};
+  let sellerInfo: { upiId?: string; name?: string; location?: any; cropsGrown?: string[]; language?: string } = {};
   try {
     const { getSellerByPhone } = await import('./dynamodb-repository');
     const seller = await getSellerByPhone(phone);
     if (seller) {
-      sellerInfo = { upiId: seller.upiId, name: seller.name };
+      sellerInfo = { upiId: seller.upiId, name: seller.name, location: seller.location, cropsGrown: seller.cropsGrown, language: seller.language };
     }
   } catch (e) {
     console.warn('Could not fetch seller info for prompt:', e);
   }
+
+  // ── ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────────
+  // Detect "mausam batao", "update do", "aaj ka bhav" etc. and generate comprehensive update
+  if (detectDailyUpdateQuery(userMessage) && currentUserState === 'ACTIVE') {
+    console.log('📢 On-demand daily update query detected');
+    await showTypingIndicator(phone);
+
+    const lang = (currentLanguage.split('-')[0] as 'hi' | 'mr' | 'en') || 'hi';
+    const updateMessage = await generateOnDemandUpdate(
+      phone,
+      sellerInfo.name || 'Seller',
+      lang,
+      sellerInfo.location,
+      sellerInfo.cropsGrown,
+    );
+
+    if (updateMessage) {
+      await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: updateMessage, messageType: 'text' });
+
+      // Store as system alert so future conversations reference it
+      try {
+        await addConversationMessage(phone, {
+          timestamp: Date.now(),
+          role: 'system',
+          content: updateMessage,
+          metadata: { event: 'background_alert', alertType: 'on_demand', source: 'on-demand-update' },
+        });
+      } catch (e) { /* ignore */ }
+
+      return {
+        message: updateMessage,
+        actions: [],
+        responseMode: 'voice',
+        confidence: 1.0,
+        reasoning: 'On-demand daily update generated via background agent pipeline',
+      };
+    }
+  }
+  // ── END ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────
 
   // Get conversation summary for richer context
   let conversationSummary = '';
@@ -360,6 +400,33 @@ function detectNewProductIntent(message: string): boolean {
   // English: "want to sell", "add a new", "new product", "list a product", "I want to sell"
   const englishNewProduct = /\b(want\s+to\s+sell|i\s+want\s+to\s+add|add\s+a\s+new|new\s+product|list\s+(a|my|new)|i\s+will\s+sell|i\s+want\s+to\s+list)\b/i;
   if (englishNewProduct.test(m)) return true;
+
+  return false;
+}
+
+/**
+ * Detect daily update / weather / price update intent — "mausam batao", "update do", "aaj ka bhav",
+ * "daily update", "saara update do", "kya chal raha hai", etc.
+ * Returns true if user is asking for an on-demand comprehensive update.
+ */
+function detectDailyUpdateQuery(message: string): boolean {
+  const m = message.toLowerCase();
+
+  // Romanized Hindi: "mausam batao", "update do", "aaj ka update", "saara update", "kya chal raha"
+  const romanized = /\b(mausam\s*(batao|bata|do|kya|kaisa)|update\s*(do|de|batao|chahiye)|aaj\s*ka\s*(update|bhav|mausam|haal)|saara?\s*update|daily\s*update|kya\s*chal\s*raha|haal\s*kya\s*hai|sabhi?\s*update|weather\s*(batao|bata|update|report|kaisa)|price\s*(update|batao|bata|check|kya)|crop\s*(update|advisory|bhav)|sab\s*batao|bhav\s*batao|bhav\s*(kya|kaisa|kitna)|mandee?\s*(bhav|rate|price|update)|faslon?\s*ka\s*(bhav|rate|haal)|pura\s*update)\b/i;
+  if (romanized.test(m)) return true;
+
+  // Hindi Devanagari: "मौसम बताओ", "अपडेट दो", "आज का भाव", "सब बताओ", "मंडी भाव"
+  const hindi = /मौसम\s*(बताओ|बता|दो|कैसा|क्या)|अपडेट\s*(दो|दे|बताओ|चाहिए)|आज\s*का\s*(अपडेट|भाव|मौसम|हाल)|सारा?\s*अपडेट|डेली\s*अपडेट|क्या\s*चल\s*रहा|सब\s*(बताओ|अपडेट)|भाव\s*(बताओ|क्या|कैसा|कितना)|मंडी\s*(भाव|रेट|दर)|फसल\s*का\s*(भाव|रेट|हाल)|पूरा\s*अपडेट|बाज़ार\s*(भाव|रेट|दर)|मार्केट\s*(रेट|भाव)/;
+  if (hindi.test(message)) return true;
+
+  // English: "weather update", "daily update", "market prices", "give me update", "what's the weather"
+  const english = /\b(weather\s*update|daily\s*update|market\s*price|give\s*me\s*(update|report)|what.?s?\s*the\s*weather|today.?s?\s*update|price\s*update|all\s*update|crop\s*price|evening\s*update|morning\s*update)\b/i;
+  if (english.test(m)) return true;
+
+  // Marathi: "हवामान", "अपडेट", "बाजारभाव"
+  const marathi = /हवामान\s*(सांगा|बघा|काय)|अपडेट\s*(द्या|सांगा)|बाजारभाव|आजचा\s*(भाव|अपडेट)/;
+  if (marathi.test(message)) return true;
 
   return false;
 }
