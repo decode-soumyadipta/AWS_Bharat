@@ -1239,15 +1239,24 @@ async function createCatalog(phone: string, language: string): Promise<void> {
   await deletePartialData(phone);
   await trackSuccessfulCatalog(phone);
 
-  // Mark seller profile as ACTIVE (triggers GSI5 population for background agent)
+  // Mark seller profile as ACTIVE + auto-populate cropsGrown for background agent
   try {
     const seller = await getSellerByPhone(phone);
     if (seller) {
-      await updateSellerProfile(seller.sellerId, { onboardingState: 'ACTIVE' });
-      console.log('✅ Seller profile marked ACTIVE with GSI5');
+      const profileUpdates: Record<string, any> = { onboardingState: 'ACTIVE' };
+      // Add product name to cropsGrown array (deduplicated)
+      if (partialData?.productName) {
+        const existingCrops = seller.cropsGrown || [];
+        const newCrop = partialData.productName.toLowerCase().trim();
+        if (!existingCrops.some((c: string) => c.toLowerCase() === newCrop)) {
+          profileUpdates.cropsGrown = [...existingCrops, partialData.productName.trim()];
+        }
+      }
+      await updateSellerProfile(seller.sellerId, profileUpdates);
+      console.log('✅ Seller profile marked ACTIVE with GSI5 + cropsGrown updated');
     }
   } catch (e) {
-    console.warn('Non-critical: failed to update seller onboardingState', e);
+    console.warn('Non-critical: failed to update seller profile', e);
   }
 
   // Send success message via agent

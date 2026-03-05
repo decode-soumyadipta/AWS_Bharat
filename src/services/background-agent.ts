@@ -16,6 +16,7 @@ import { docClient, eventBridgeClient, bedrockClient } from '../config/aws-clien
 import { ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import type { SellerProfile, SellerLocation } from '../models/seller';
 import { fetchLiveMarketPrice } from '../tools/web-search';
+import { addConversationMessage } from './conversation-memory';
 
 const TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
 const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME || 'vyapar-vaani-events';
@@ -301,6 +302,22 @@ async function sendAlert(alert: SellerAlert): Promise<void> {
       }],
     }));
     console.log(`📤 Alert sent to ${alert.name} (${alert.phone}): ${alert.alertType}`);
+
+    // Store alert in conversation memory so agent can reference it later
+    try {
+      await addConversationMessage(alert.phone, {
+        timestamp: Date.now(),
+        role: 'system',
+        content: alert.message,
+        metadata: {
+          event: 'background_alert',
+          alertType: alert.alertType,
+          source: 'background-agent',
+        },
+      });
+    } catch (memErr) {
+      console.warn('Failed to store alert in conversation memory:', memErr);
+    }
   } catch (error) {
     console.error(`Failed to send alert to ${alert.phone}:`, error);
   }

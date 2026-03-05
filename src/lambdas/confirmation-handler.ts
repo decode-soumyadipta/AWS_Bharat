@@ -738,16 +738,24 @@ export async function processApproval(
     await updateUserState(phone, 'ACTIVE');
     console.log('Updated user state to ACTIVE');
 
-    // Mark seller profile as ACTIVE (triggers GSI5 population for background agent)
+    // Mark seller profile as ACTIVE + auto-populate cropsGrown for background agent
     try {
       const { getSellerByPhone, updateSellerProfile } = await import('../services/dynamodb-repository');
       const seller = await getSellerByPhone(phone);
       if (seller) {
-        await updateSellerProfile(seller.sellerId, { onboardingState: 'ACTIVE' });
-        console.log('Seller profile marked ACTIVE with GSI5');
+        const profileUpdates: Record<string, any> = { onboardingState: 'ACTIVE' };
+        if (partialData?.productName) {
+          const existingCrops = seller.cropsGrown || [];
+          const newCrop = partialData.productName.toLowerCase().trim();
+          if (!existingCrops.some((c: string) => c.toLowerCase() === newCrop)) {
+            profileUpdates.cropsGrown = [...existingCrops, partialData.productName.trim()];
+          }
+        }
+        await updateSellerProfile(seller.sellerId, profileUpdates);
+        console.log('Seller profile marked ACTIVE with GSI5 + cropsGrown');
       }
     } catch (e) {
-      console.warn('Non-critical: failed to update seller onboardingState', e);
+      console.warn('Non-critical: failed to update seller profile', e);
     }
 
     // Delete partial data

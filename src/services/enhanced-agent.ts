@@ -20,6 +20,7 @@ import {
   addConversationMessage,
   updateUserPreferences,
   getConversationSummary,
+  getConversationHistory,
   UserConversationContext
 } from './conversation-memory';
 import { getPartialData, PartialCatalogItem } from './partial-data-store';
@@ -219,6 +220,23 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch conversation summary:', e);
   }
 
+  // Extract recent background agent alerts from conversation history
+  let recentAlerts = '';
+  try {
+    const history = await getConversationHistory(phone, 50);
+    const alerts = history.filter(m => m.role === 'system' && m.metadata?.event === 'background_alert');
+    if (alerts.length > 0) {
+      const latest = alerts.slice(0, 3); // Last 3 alerts
+      recentAlerts = latest.map(a => {
+        const ago = Math.floor((Date.now() - a.timestamp) / (1000 * 60 * 60));
+        const timeLabel = ago < 1 ? 'just now' : ago < 24 ? `${ago}h ago` : `${Math.floor(ago / 24)}d ago`;
+        return `[${timeLabel}] (${a.metadata?.alertType || 'info'}) ${a.content}`;
+      }).join('\n');
+    }
+  } catch (e) {
+    console.warn('Could not fetch recent alerts:', e);
+  }
+
   // Build enhanced agent prompt
   const agentPrompt = buildEnhancedPrompt(
     userMessage,
@@ -233,7 +251,8 @@ export async function processWithEnhancedAgent(
     stockUpdateResult,
     orderInfo,
     catalogInfo,
-    conversationSummary
+    conversationSummary,
+    recentAlerts
   );
 
   // Keep typing active while model thinks
@@ -988,7 +1007,8 @@ function buildEnhancedPrompt(
   stockUpdateResult: string = '',
   orderInfo: string = '',
   catalogInfo: string = '',
-  conversationSummary: string = ''
+  conversationSummary: string = '',
+  recentAlerts: string = ''
 ): string {
   const langName = {
     'hi-IN': 'Hindi',
@@ -1248,6 +1268,13 @@ IMPORTANT: Catalog data above was fetched from the database. Present it clearly 
   // Conversation summary for richer context
   if (conversationSummary) {
     prompt += `\n\nSeller history summary: ${conversationSummary}`;
+  }
+
+  // Recent proactive alerts from background agent (weather, prices, advisories)
+  if (recentAlerts) {
+    prompt += `\n\nRecent proactive alerts sent to this seller by our background system:
+${recentAlerts}
+If the seller asks about weather, prices, alerts, or "what was that message?" — reference this data. You sent these alerts proactively. Own them as your own updates.`;
   }
 
   // Proactive price recommendation — when seller is setting price and market data exists
