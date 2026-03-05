@@ -242,7 +242,7 @@ export async function processWithEnhancedAgent(
 
   // ── ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────────
   // Detect "mausam batao", "update do", "aaj ka bhav" etc. and generate comprehensive update
-  if (detectDailyUpdateQuery(userMessage) && currentUserState === 'ACTIVE') {
+  if (detectDailyUpdateQuery(userMessage) && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
     console.log('📢 On-demand daily update query detected');
     await showTypingIndicator(phone);
 
@@ -713,23 +713,46 @@ async function getAnalyticsInfo(
 ): Promise<string> {
   try {
     const userState = await getUserState(phone);
-    if (!userState?.sellerId) {
+    let sellerId = userState?.sellerId;
+
+    // Fallback: if no sellerId in state, try fetching from seller profile
+    if (!sellerId) {
+      try {
+        const { getSellerByPhone } = await import('./dynamodb-repository');
+        const seller = await getSellerByPhone(phone);
+        if (seller?.sellerId) {
+          sellerId = seller.sellerId;
+          console.log('📊 Analytics: sellerId recovered from seller profile:', sellerId);
+        }
+      } catch (e) {
+        console.warn('Could not fetch sellerId fallback:', e);
+      }
+    }
+
+    if (!sellerId) {
       return language === 'hi-IN'
-        ? 'आपका सेलर अकाउंट अभी सेटअप नहीं हुआ है।'
+        ? 'अभी आपकी कोई बिक्री नहीं हुई है। पहले प्रोडक्ट जोड़ें, फिर जब ऑर्डर आएंगे तो बिक्री की जानकारी यहाँ दिखेगी।'
         : language === 'mr-IN'
-        ? 'तुमचे सेलर खाते अजून सेटअप झाले नाही.'
-        : 'Your seller account is not set up yet.';
+        ? 'अजून तुमची कोणतीही विक्री झाली नाही. आधी उत्पादन जोडा, मग ऑर्डर आल्यावर विक्री माहिती दिसेल.'
+        : 'No sales data yet. Add products first, and sales info will appear here once orders come in.';
     }
 
     const lang = language.split('-')[0] as 'hi' | 'en' | 'mr';
 
     if (query.type === 'top_selling') {
-      const topProducts = await getTopSellingProducts(userState.sellerId, 5, undefined, phone);
+      const topProducts = await getTopSellingProducts(sellerId, 5, undefined, phone);
+      if (!topProducts || topProducts.length === 0) {
+        return lang === 'hi'
+          ? 'अभी तक कोई बिक्री नहीं हुई है। जब ऑर्डर आएंगे तो यहाँ सबसे ज्यादा बिकने वाले प्रोडक्ट दिखेंगे।'
+          : lang === 'mr'
+          ? 'अजून कोणतीही विक्री झाली नाही. ऑर्डर आल्यावर सर्वाधिक विकली जाणारी उत्पादने दिसतील.'
+          : 'No sales yet. Top selling products will appear here once orders come in.';
+      }
       return formatTopSellingProducts(topProducts, lang);
     }
 
     if (query.type === 'sales_summary') {
-      const summary = await getSalesSummary(userState.sellerId, undefined, phone);
+      const summary = await getSalesSummary(sellerId, undefined, phone);
       if (lang === 'hi') {
         return `बिक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई। टॉप: ${summary.topProduct || 'कोई नहीं'}`;
       } else if (lang === 'mr') {
@@ -739,11 +762,15 @@ async function getAnalyticsInfo(
     }
 
     // Date-range queries: yesterday, today, last_week, last_month  
-    const analytics = await getDateRangeAnalytics(userState.sellerId, query.type, phone);
+    const analytics = await getDateRangeAnalytics(sellerId, query.type, phone);
     return formatDateRangeAnalytics(analytics, lang);
   } catch (error) {
     console.error('Analytics query failed:', error);
-    return '';
+    return language === 'hi-IN'
+      ? 'बिक्री की जानकारी लाने में दिक्कत आई। कृपया थोड़ी देर बाद पूछें।'
+      : language === 'mr-IN'
+      ? 'विक्री माहिती मिळवण्यात अडचण आली. कृपया थोड्या वेळाने विचारा.'
+      : 'Had trouble fetching sales info. Please try again shortly.';
   }
 }
 

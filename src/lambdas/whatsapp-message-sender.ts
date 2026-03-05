@@ -160,7 +160,8 @@ export async function sendTypingIndicator(
   // Use provided messageId, cached one, or skip
   const msgId = messageId || lastMessageIdByPhone[to];
   if (!msgId) {
-    return { success: true }; // No message ID — skip silently
+    console.warn('⚠️ No messageId for typing indicator, phone:', to, '— skipping typing indicator');
+    return { success: false, error: 'No messageId available' };
   }
 
   // Delegate to markMessageAsRead with typing=true (exact reference implementation)
@@ -169,7 +170,7 @@ export async function sendTypingIndicator(
     return result;
   } catch (err) {
     console.warn('Typing indicator exception:', err);
-    return { success: true }; // Never fail on typing indicator
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown typing error' };
   }
 }
 

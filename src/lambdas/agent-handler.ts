@@ -272,8 +272,18 @@ async function processAgentEvent(event: any): Promise<any> {
       return { success: true };
     }
 
-    // For CONFIRMATION_PENDING state, detect price/quantity updates and handle them
+    // For CONFIRMATION_PENDING state:
+    // 1) Detect verbal confirmation ("haan", "ok", "theek hai") → approve immediately
+    // 2) Detect price/quantity updates → apply and resend confirmation
     if (userState?.state === 'CONFIRMATION_PENDING' && partialData) {
+      // ── VERBAL CONFIRMATION SHORTCUT ─────────────────────────────────────
+      // If user says yes/haan/theek hai, approve directly without LLM
+      if (detectVerbalConfirmation(userMessage)) {
+        console.log('⚡ Verbal confirmation detected — directly approving catalog');
+        await createCatalog(phone, language);
+        return { success: true, message: 'Verbal confirmation → catalog created' };
+      }
+
       const updateResult = await detectAndApplyUpdate(userMessage, phone, partialData, language, eventDetail.messageId);
       if (updateResult) {
         console.log('📝 Applied update in CONFIRMATION_PENDING:', updateResult);
@@ -362,6 +372,38 @@ async function processAgentEvent(event: any): Promise<any> {
       error: error.message,
     };
   }
+}
+
+/**
+ * Detect verbal confirmation intent during CONFIRMATION_PENDING.
+ * Matches affirmative words in Hindi (romanized + Devanagari), Marathi, and English.
+ * Short-circuits the LLM call — directly approves the catalog.
+ */
+export function detectVerbalConfirmation(message: string): boolean {
+  const m = message.toLowerCase().trim();
+
+  // Very short messages (1-4 words) — check affirmative patterns
+  const wordCount = m.split(/\s+/).length;
+
+  // Romanized Hindi / English affirmatives (case-insensitive)
+  const romanized = /\b(haan|ha|haa|han|ji\s*haan|yes|yeah|yep|yup|ok|okay|okie|theek\s*hai|thik\s*hai|sahi\s*hai|sahi|theek|thik|approve|approved|confirm|confirmed|done|bilkul|kar\s*do|kar\s*de|kar\s*dena|ban\s*jaye|chalega|chal|chalo|pakka|acha|accha|achha|achchha|ready|agreed|sab\s*theek|sab\s*thik|correct|right|laga\s*do|ho\s*gaya|ho\s*jayega|manzoor|rakh\s*do|chaaluuuu|chalu|daal\s*do|dal\s*do)\b/i;
+  if (romanized.test(m)) return true;
+
+  // Hindi Devanagari affirmatives
+  const hindi = /हाँ|हां|हा\b|जी\s*हाँ|जी\s*हां|ठीक\s*है|ठीक|सही\s*है|सही|हो\b|कर\s*दो|कर\s*दे|बन\s*जाये|बिल्कुल|पक्का|अच्छा|कन्फर्म|सब\s*ठीक|मंजूर|लगा\s*दो|रख\s*दो|डाल\s*दो|चालू|तैयार|हो\s*गया/;
+  if (hindi.test(message)) return true;
+
+  // Marathi affirmatives
+  const marathi = /हो\b|होय|चालेल|ठीक\s*आहे|बरोबर|मंजूर|करा|करा\s*ना|ठीक|योग्य/;
+  if (marathi.test(message)) return true;
+
+  // For very short messages (1-2 words), also catch "ji", "hmm", "ho" alone
+  if (wordCount <= 2) {
+    const shortAffirm = /^(ji|jee|hmm|hm|ho|हो|जी|हम्म)$/i;
+    if (shortAffirm.test(m)) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -476,8 +518,11 @@ async function detectAndApplyUpdate(
   // ── Bare-number disambiguation: if only one number in message ───────────────
   //    "80 rakh do" in CONFIRMATION_PENDING with price already set → quantity
   //    "80 rakh do" with price NOT set → price
+  //    GUARD: skip if message looks like a UPI ID (contains @) to prevent
+  //    extracting digits from e.g. "seller7@upi" as price=7
+  const looksLikeUpi = /\w+@\w+/.test(message);
   const bareNumberMatch = message.match(/^[^\d]*(\d+)[^\d]*$/);
-  if (bareNumberMatch && newPrice === null && newQty === null) {
+  if (bareNumberMatch && newPrice === null && newQty === null && !looksLikeUpi) {
     const bare = parseInt(bareNumberMatch[1]);
     if (bare > 0 && bare < 1000000) {
       if (partialData?.price && !partialData?.quantity) {

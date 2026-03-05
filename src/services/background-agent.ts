@@ -450,43 +450,66 @@ export async function generateOnDemandUpdate(
 ): Promise<string | null> {
   console.log(`📢 On-demand update requested for ${sellerName} (${phone})`);
 
+  // ── FALLBACK: If no location provided, create a default-India location ─────
+  // This lets fetchWeather always have coordinates (STATE_COORDINATES['default'])
+  let effectiveLocation = location;
+  if (!effectiveLocation) {
+    console.log('📍 No location set — using default India centre for weather');
+    effectiveLocation = { state: 'default' } as SellerLocation;
+  }
+
+  // ── FALLBACK: If no cropsGrown, try fetching seller's catalog product names ─
+  let effectiveCrops = cropsGrown;
+  if (!effectiveCrops || effectiveCrops.length === 0) {
+    try {
+      const { getCatalogItemsBySeller } = await import('./dynamodb-repository');
+      const catalogItems = await getCatalogItemsBySeller(phone);
+      if (catalogItems && catalogItems.length > 0) {
+        effectiveCrops = catalogItems.map((item: any) => item.productName || item.name).filter(Boolean).slice(0, 5);
+        console.log('🌾 Fallback cropsGrown from catalog:', effectiveCrops);
+      }
+    } catch (e) {
+      console.warn('Could not fetch catalog items for crop fallback:', e);
+    }
+    // If still empty, use common Indian crops
+    if (!effectiveCrops || effectiveCrops.length === 0) {
+      effectiveCrops = ['tomato', 'onion', 'potato'];
+      console.log('🌾 Using default common crops:', effectiveCrops);
+    }
+  }
+
   const seller: ActiveSeller = {
     phone,
     name: sellerName,
     language,
-    location,
-    cropsGrown,
+    location: effectiveLocation,
+    cropsGrown: effectiveCrops,
     sellerId: '',
   };
 
-  // Fetch weather
+  // Fetch weather — always attempted now thanks to fallback location
   let weather: WeatherForecast | null = null;
-  if (location) {
-    weather = await fetchWeather(location);
-  }
+  weather = await fetchWeather(effectiveLocation);
 
-  // Fetch prices
+  // Fetch prices — always attempted now thanks to fallback crops
   const priceUpdates: Array<{ crop: string; priceInfo: string }> = [];
-  if (cropsGrown?.length) {
-    for (const crop of cropsGrown.slice(0, 5)) { // More crops for on-demand
-      try {
-        const priceResult = await fetchLiveMarketPrice(crop);
-        if (priceResult.found) {
-          priceUpdates.push({ crop, priceInfo: priceResult.priceInfo });
-        }
-      } catch {
-        // Skip individual crop price failures
+  for (const crop of effectiveCrops.slice(0, 5)) {
+    try {
+      const priceResult = await fetchLiveMarketPrice(crop);
+      if (priceResult.found) {
+        priceUpdates.push({ crop, priceInfo: priceResult.priceInfo });
       }
+    } catch {
+      // Skip individual crop price failures
     }
   }
 
-  // Always generate even without alerts — user explicitly asked
-  // Override: if no weather and no prices, give a simple "no updates" message
+  // If STILL no data despite fallbacks, return helpful guidance
   if (!weather && priceUpdates.length === 0) {
     const noUpdate: Record<string, string> = {
-      hi: `${sellerName} जी, अभी कोई नई अपडेट उपलब्ध नहीं है। मौसम और बाज़ार की जानकारी जल्द ही आएगी।`,
-      mr: `${sellerName} जी, सध्या कोणतीही नवीन माहिती उपलब्ध नाही. हवामान आणि बाजारभाव लवकरच येतील.`,
-      en: `${sellerName}, no new updates available right now. Weather and market info will be available soon.`,
+      hi: `${sellerName} जी, अभी मौसम और बाज़ार की जानकारी मिलने में दिक्कत आ रही है। कृपया थोड़ी देर बाद पूछें। अगर आप अपना गाँव या शहर बता दें तो बेहतर जानकारी दे सकता हूँ।`,
+      mr: `${sellerName} जी, सध्या हवामान आणि बाजारभाव मिळवण्यात अडचण येत आहे. कृपया थोड्या वेळाने विचारा. तुमचे गाव किंवा शहर सांगा म्हणजे चांगली माहिती देता येईल.`,
+      en: `${sellerName}, having trouble getting weather and market info right now. Please try again shortly. Tell me your village or city for better updates.`,
     };
     return noUpdate[language] || noUpdate['hi'];
   }
