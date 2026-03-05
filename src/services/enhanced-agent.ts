@@ -13,10 +13,13 @@
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
+import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { 
   getConversationContext, 
   addConversationMessage,
   updateUserPreferences,
+  getConversationSummary,
   UserConversationContext
 } from './conversation-memory';
 import { getPartialData, PartialCatalogItem } from './partial-data-store';
@@ -33,10 +36,13 @@ import {
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const agentRuntimeClient = new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const ddbDocClient = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' }));
 const NOVA_PRO_MODEL_ID = 'amazon.nova-pro-v1:0';
 const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0'; // Fallback model
 const BEDROCK_AGENT_ID = process.env.BEDROCK_AGENT_ID || '';
 const BEDROCK_AGENT_ALIAS_ID = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
+const DDB_TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
+const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
 
 // Language codes
 type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
@@ -160,6 +166,39 @@ export async function processWithEnhancedAgent(
     analyticsInfo = await getAnalyticsInfo(phone, analyticsQuery, currentLanguage);
   }
 
+  // ── INLINE TOOL EXECUTION — works for ALL states including GUEST_ACTIVE ──
+  let stockUpdateResult = '';
+  let orderInfo = '';
+  let catalogInfo = '';
+
+  // Stock update detection & execution
+  const stockIntent = detectStockUpdateIntent(userMessage);
+  if (stockIntent) {
+    console.log('📦 Stock update intent detected:', stockIntent);
+    await showTypingIndicator(phone);
+    stockUpdateResult = await executeStockUpdate(phone, stockIntent.productName, stockIntent.quantity, stockIntent.unit);
+    console.log('📦 Stock update result:', stockUpdateResult);
+  }
+
+  // Order query detection & execution
+  const orderQuery = detectOrderQuery(userMessage);
+  if (orderQuery) {
+    console.log('📋 Order query detected:', orderQuery);
+    await showTypingIndicator(phone);
+    orderInfo = await executeOrderLookup(phone, orderQuery.orderId);
+    console.log('📋 Order lookup result:', orderInfo);
+  }
+
+  // Catalog query detection & execution
+  const catalogQuery = detectCatalogQuery(userMessage);
+  if (catalogQuery !== null) {
+    console.log('🗂️ Catalog query detected:', catalogQuery);
+    await showTypingIndicator(phone);
+    catalogInfo = await executeCatalogLookup(phone, catalogQuery.query);
+    console.log('🗂️ Catalog lookup result:', catalogInfo);
+  }
+  // ── END INLINE TOOL EXECUTION ─────────────────────────────────────────────
+
   // Fetch seller profile for UPI status
   let sellerInfo: { upiId?: string; name?: string } = {};
   try {
@@ -172,6 +211,14 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch seller info for prompt:', e);
   }
 
+  // Get conversation summary for richer context
+  let conversationSummary = '';
+  try {
+    conversationSummary = await getConversationSummary(phone);
+  } catch (e) {
+    console.warn('Could not fetch conversation summary:', e);
+  }
+
   // Build enhanced agent prompt
   const agentPrompt = buildEnhancedPrompt(
     userMessage,
@@ -182,7 +229,11 @@ export async function processWithEnhancedAgent(
     currentLanguage,
     marketInfo,
     analyticsInfo,
-    sellerInfo
+    sellerInfo,
+    stockUpdateResult,
+    orderInfo,
+    catalogInfo,
+    conversationSummary
   );
 
   // Keep typing active while model thinks
@@ -292,6 +343,137 @@ function detectNewProductIntent(message: string): boolean {
   if (englishNewProduct.test(m)) return true;
 
   return false;
+}
+
+/**
+ * Detect stock update intent — "mera tamatar ka stock 50 kilo karo", "stock update 30 kg", etc.
+ * Returns { productName, quantity, unit } or null.
+ */
+function detectStockUpdateIntent(message: string): { productName: string; quantity: number; unit?: string } | null {
+  const m = message.toLowerCase();
+
+  // Must mention stock-related keyword
+  const stockKeyword = /\b(stock|stok|स्टॉक|inventory)\b/i;
+  const stockAction = /\b(update|change|set|badh[ao]|kam\s*kar|kar\s*do|karo|badlo|rakh|रख|बदल|कर\s*दो|बढ़ा|कम\s*कर|अपडेट)\b/i;
+  
+  if (!stockKeyword.test(message) && !stockKeyword.test(m)) return null;
+  if (!stockAction.test(message) && !stockAction.test(m)) return null;
+
+  // Extract quantity + unit
+  const qtyPatterns = [
+    // "50 kg", "50 kilo", "50 piece", "50 dozen", "50 liter"
+    /(\d+)\s*(kg|kilo|किलो|piece|pcs|पीस|dozen|दर्जन|liter|लीटर|packet|पैकेट|quintal|क्विंटल)/i,
+    // Just a number when stock context is clear
+    /\b(\d+)\b/,
+  ];
+
+  let quantity: number | null = null;
+  let unit: string | undefined;
+
+  for (const pattern of qtyPatterns) {
+    const match = message.match(pattern) || m.match(pattern);
+    if (match) {
+      quantity = parseInt(match[1]);
+      if (match[2]) {
+        const u = match[2].toLowerCase();
+        if (/kg|kilo|किलो/.test(u)) unit = 'kg';
+        else if (/piece|pcs|पीस/.test(u)) unit = 'piece';
+        else if (/dozen|दर्जन/.test(u)) unit = 'dozen';
+        else if (/liter|लीटर/.test(u)) unit = 'liter';
+        else if (/packet|पैकेट/.test(u)) unit = 'packet';
+        else if (/quintal|क्विंटल/.test(u)) unit = 'quintal';
+      }
+      break;
+    }
+  }
+
+  if (quantity === null || quantity < 0) return null;
+
+  // Extract product name — look for patterns like "X ka stock", "stock X", etc.
+  const namePatterns = [
+    // "tamatar ka stock" / "आलू का स्टॉक"
+    /([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का|की|के)\s*(?:stock|stok|स्टॉक)/i,
+    // "stock mein tamatar" / "stock of tomato"
+    /(?:stock|stok|स्टॉक)\s*(?:mein|me|of|में)?\s*([\w\u0900-\u097F\u0980-\u09FF]+)/i,
+    // "mera X stock update"
+    /(?:mera|meri|mere|मेरा|मेरी|मेरे)\s+([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का)?\s*(?:stock|stok|स्टॉक)/i,
+  ];
+
+  let productName: string | null = null;
+  const noiseWords = new Set(['ka', 'ki', 'ke', 'ko', 'mein', 'me', 'mera', 'meri', 'mere', 'karo', 'kardo', 'do', 'hai', 'update', 'change', 'set', 'stock', 'stok', 'inventory', 'का', 'की', 'के', 'में', 'मेरा', 'स्टॉक', 'करो', 'कर']);
+
+  for (const pattern of namePatterns) {
+    const match = message.match(pattern) || m.match(pattern);
+    if (match && match[1] && !noiseWords.has(match[1].toLowerCase())) {
+      productName = match[1];
+      break;
+    }
+  }
+
+  if (!productName) return null;
+
+  return { productName, quantity, unit };
+}
+
+/**
+ * Detect order query intent — "order #ABC123 ka status", "mera order dikhao"
+ * Returns { orderId, type } or null.
+ */
+function detectOrderQuery(message: string): { orderId?: string; type: 'specific' | 'recent' } | null {
+  const m = message.toLowerCase();
+
+  // Check for order-related keywords
+  const orderKeyword = /\b(order|ऑर्डर|ord)\b/i;
+  if (!orderKeyword.test(message) && !orderKeyword.test(m)) return null;
+
+  // Try to extract specific order ID
+  const orderIdPatterns = [
+    /(?:order|ऑर्डर|ord)[\s#\-]*([A-Za-z0-9\-]{6,})/i,
+    /#([A-Za-z0-9\-]{6,})/,
+    /\b(ORD[\-_]?\w{4,})\b/i,
+  ];
+
+  for (const pattern of orderIdPatterns) {
+    const match = message.match(pattern);
+    if (match && match[1]) {
+      return { orderId: match[1], type: 'specific' };
+    }
+  }
+
+  // General order query: "mera order", "order status", "order dikhao"
+  const generalOrderQuery = /\b(order\s*(status|dikhao|batao|kahan|kaha|details|info)|mera\s*order|mere\s*order|show\s*order|ऑर्डर\s*(दिखाओ|बताओ|कहाँ|स्टेटस))\b/i;
+  if (generalOrderQuery.test(message) || generalOrderQuery.test(m)) {
+    return { type: 'recent' };
+  }
+
+  return null;
+}
+
+/**
+ * Detect catalog query intent — "mere products dikhao", "catalog mein kya hai", "kitne products hain"
+ * Returns { query } or null.
+ */
+function detectCatalogQuery(message: string): { query?: string } | null {
+  const m = message.toLowerCase();
+
+  const catalogPatterns = /\b(mere?\s*(product|saman|catalog|item|cheez)|my\s*(product|catalog|item)|catalog\s*(dikhao|batao|mein|me|show)|product\s*(list|dikhao|batao|show)|kitne?\s*(product|saman|item)|सामान\s*दिखाओ|प्रोडक्ट\s*(दिखाओ|बताओ|लिस्ट)|कैटलॉग|कितने\s*(प्रोडक्ट|सामान)|show\s*catalog|list\s*products?|what.*my.*products?|what.*in.*catalog)\b/i;
+
+  if (!catalogPatterns.test(message) && !catalogPatterns.test(m)) return null;
+
+  // Try to extract a specific product search within catalog
+  const searchPatterns = [
+    /(?:catalog|products?)\s*(?:mein|me|in)\s+([\w\u0900-\u097F]+)/i,
+    /(?:mere?|my)\s+([\w\u0900-\u097F]+)\s+(?:product|saman|item)/i,
+  ];
+
+  for (const pattern of searchPatterns) {
+    const match = message.match(pattern);
+    if (match && match[1] && !['kitne', 'kitna', 'sab', 'all', 'कितने', 'सब'].includes(match[1].toLowerCase())) {
+      return { query: match[1] };
+    }
+  }
+
+  return {};
 }
 
 /**
@@ -514,6 +696,226 @@ function detectPriceQuery(message: string, language: LanguageCode): string | nul
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INLINE TOOL EXECUTION — Available for ALL user states (including GUEST_ACTIVE)
+// These bypass Bedrock Agent and directly query DynamoDB for tool functionality.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Execute stock update: resolve product name → productId via fuzzy match, then update quantity.
+ */
+async function executeStockUpdate(
+  phone: string,
+  productName: string,
+  quantity: number,
+  unit?: string
+): Promise<string> {
+  try {
+    // 1. Fetch seller catalog
+    const catalogResult = await ddbDocClient.send(new QueryCommand({
+      TableName: DDB_TABLE_NAME,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `SELLER#${phone}`,
+        ':sk': 'ITEM#',
+      },
+    }));
+
+    const items = catalogResult.Items || [];
+    if (items.length === 0) {
+      return 'STOCK_UPDATE_RESULT: No products found in your catalog. Add products first before updating stock.';
+    }
+
+    // 2. Fuzzy match product name
+    const searchName = productName.toLowerCase();
+    let bestMatch: any = null;
+    let bestScore = 0;
+
+    for (const item of items) {
+      const itemName = (item.becknItem?.descriptor?.name || item.productName || '').toLowerCase();
+      const itemCategory = (item.category || '').toLowerCase();
+      
+      // Exact match
+      if (itemName === searchName) { bestMatch = item; bestScore = 100; break; }
+      // Contains match
+      if (itemName.includes(searchName) || searchName.includes(itemName)) {
+        const score = 80;
+        if (score > bestScore) { bestMatch = item; bestScore = score; }
+      }
+      // Category match
+      if (itemCategory.includes(searchName)) {
+        const score = 50;
+        if (score > bestScore) { bestMatch = item; bestScore = score; }
+      }
+    }
+
+    if (!bestMatch || bestScore < 50) {
+      const productList = items.map((i: any) => i.becknItem?.descriptor?.name || i.productName || 'Unknown').join(', ');
+      return `STOCK_UPDATE_RESULT: Product "${productName}" not found in catalog. Your products: ${productList}. Please specify which product to update.`;
+    }
+
+    const productId = bestMatch.itemId || bestMatch.SK?.replace('ITEM#', '');
+    const matchedName = bestMatch.becknItem?.descriptor?.name || bestMatch.productName || productName;
+    const oldQuantity = bestMatch.quantity || bestMatch.becknItem?.quantity?.available?.count || 0;
+
+    // 3. Update in main catalog
+    await ddbDocClient.send(new UpdateCommand({
+      TableName: DDB_TABLE_NAME,
+      Key: { PK: `SELLER#${phone}`, SK: `ITEM#${productId}` },
+      UpdateExpression: 'SET quantity = :qty, updatedAt = :now',
+      ConditionExpression: 'attribute_exists(PK)',
+      ExpressionAttributeValues: {
+        ':qty': quantity,
+        ':now': Date.now(),
+      },
+    }));
+
+    // 4. Update marketplace table
+    try {
+      await ddbDocClient.send(new UpdateCommand({
+        TableName: MARKETPLACE_TABLE,
+        Key: { productId },
+        UpdateExpression: 'SET quantity = :qty, updatedAt = :now, #s = :status',
+        ConditionExpression: 'attribute_exists(productId)',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExpressionAttributeValues: {
+          ':qty': quantity,
+          ':now': new Date().toISOString(),
+          ':status': quantity > 0 ? 'ACTIVE' : 'OUT_OF_STOCK',
+        },
+      }));
+    } catch (e: any) {
+      if (e.name !== 'ConditionalCheckFailedException') {
+        console.warn('Marketplace stock update failed:', e.message);
+      }
+    }
+
+    const unitLabel = unit || bestMatch.unit || 'units';
+
+    // Track stock update in conversation memory
+    try {
+      await addConversationMessage(phone, {
+        timestamp: Date.now(),
+        role: 'system',
+        content: `Stock updated: ${matchedName} → ${quantity} ${unitLabel}`,
+        messageType: 'text',
+        metadata: {
+          event: 'stock_updated',
+          productName: matchedName,
+          quantity,
+          unit: unitLabel,
+        },
+      });
+    } catch (memErr) {
+      console.warn('Failed to track stock update in memory:', memErr);
+    }
+
+    return `STOCK_UPDATE_RESULT: SUCCESS. ${matchedName} stock updated from ${oldQuantity} to ${quantity} ${unitLabel}. ${quantity > 0 ? 'Product is ACTIVE on marketplace.' : 'Product marked OUT_OF_STOCK.'}`;
+  } catch (error: any) {
+    console.error('Stock update failed:', error);
+    return `STOCK_UPDATE_RESULT: Failed to update stock — ${error.message}`;
+  }
+}
+
+/**
+ * Execute order lookup: fetch order by ID or recent orders for seller.
+ */
+async function executeOrderLookup(
+  phone: string,
+  orderId?: string
+): Promise<string> {
+  try {
+    if (orderId) {
+      // Specific order lookup
+      const result = await ddbDocClient.send(new GetCommand({
+        TableName: DDB_TABLE_NAME,
+        Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
+      }));
+
+      if (!result.Item) {
+        return `ORDER_INFO: Order "${orderId}" not found. Please check the order ID and try again.`;
+      }
+
+      const order = result.Item;
+      const items = (order.items || []).map((i: any) => `${i.name} (${i.quantity} ${i.unit || 'units'} @ ${i.price})`).join(', ');
+      return `ORDER_INFO: Order ${orderId} | Status: ${order.status} | Items: ${items} | Amount: ${order.payment?.amount || 0} | Payment: ${order.payment?.method || 'N/A'} (${order.payment?.status || 'pending'}) | Buyer: ${order.buyer?.name || 'N/A'} | Created: ${order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-IN') : 'N/A'}`;
+    }
+
+    // Recent orders for this seller (via GSI2)
+    const ordersResult = await ddbDocClient.send(new QueryCommand({
+      TableName: DDB_TABLE_NAME,
+      IndexName: 'GSI2',
+      KeyConditionExpression: 'GSI2PK = :seller',
+      ExpressionAttributeValues: {
+        ':seller': `SELLER#${phone}`,
+      },
+      Limit: 5,
+      ScanIndexForward: false,
+    }));
+
+    const orders = ordersResult.Items || [];
+    if (orders.length === 0) {
+      return 'ORDER_INFO: No orders found yet. Once buyers order from your marketplace page, orders will show up here.';
+    }
+
+    const orderSummaries = orders.map((o: any) => {
+      const id = o.PK?.replace('ORDER#', '') || o.orderId || 'N/A';
+      return `${id}: ${o.status} | ${o.payment?.amount || 0} | ${o.payment?.method || 'N/A'}`;
+    }).join(' | ');
+
+    return `ORDER_INFO: Your last ${orders.length} orders: ${orderSummaries}`;
+  } catch (error: any) {
+    console.error('Order lookup failed:', error);
+    return `ORDER_INFO: Could not fetch order info — ${error.message}`;
+  }
+}
+
+/**
+ * Execute catalog lookup: fetch seller's products from DynamoDB.
+ */
+async function executeCatalogLookup(
+  phone: string,
+  query?: string
+): Promise<string> {
+  try {
+    const result = await ddbDocClient.send(new QueryCommand({
+      TableName: DDB_TABLE_NAME,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `SELLER#${phone}`,
+        ':sk': 'ITEM#',
+      },
+    }));
+
+    let items = (result.Items || []).map((item: any) => ({
+      name: item.becknItem?.descriptor?.name || item.productName || 'Unknown',
+      price: item.becknItem?.price?.value || item.price || 0,
+      unit: item.unit || 'unit',
+      quantity: item.quantity || item.becknItem?.quantity?.available?.count || 0,
+      category: item.category || 'other',
+      status: item.status || 'active',
+    }));
+
+    // Apply search filter
+    if (query) {
+      const q = query.toLowerCase();
+      items = items.filter((i: any) => i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q));
+    }
+
+    if (items.length === 0) {
+      return query
+        ? `CATALOG_INFO: No products matching "${query}" found in your catalog.`
+        : 'CATALOG_INFO: Your catalog is empty. Start by adding a product — just tell me what you want to sell.';
+    }
+
+    const productList = items.map((i: any) => `${i.name}: ${i.price}/${i.unit}, stock ${i.quantity} ${i.unit} (${i.status})`).join(' | ');
+    return `CATALOG_INFO: ${items.length} products in catalog: ${productList}`;
+  } catch (error: any) {
+    console.error('Catalog lookup failed:', error);
+    return `CATALOG_INFO: Could not fetch catalog — ${error.message}`;
+  }
+}
+
 /**
  * Search market price using local knowledge + web search with source attribution
  */
@@ -582,7 +984,11 @@ function buildEnhancedPrompt(
   language: LanguageCode,
   marketInfo: string,
   analyticsInfo: string,
-  sellerInfo: { upiId?: string; name?: string } = {}
+  sellerInfo: { upiId?: string; name?: string } = {},
+  stockUpdateResult: string = '',
+  orderInfo: string = '',
+  catalogInfo: string = '',
+  conversationSummary: string = ''
 ): string {
   const langName = {
     'hi-IN': 'Hindi',
@@ -750,7 +1156,7 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
 
   // Add conversation history (filter out PAN/KYC related messages to prevent LLM from re-initiating)
   if (conversationContext && conversationContext.messages.length > 0) {
-    const recentMessages = conversationContext.messages.slice(-10);
+    const recentMessages = conversationContext.messages.slice(-20);
     const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
     const filteredMessages = recentMessages.filter(msg => !panFilterRegex.test(msg.content));
     if (filteredMessages.length > 0) {
@@ -813,6 +1219,38 @@ CRITICAL RULES for this state (follow exactly, no exceptions):
   // Add analytics info if available
   if (analyticsInfo) {
     prompt += `\n\nAnalytics data:\n${analyticsInfo}`;
+  }
+
+  // Add inline tool results — these were pre-executed before the LLM call
+  if (stockUpdateResult) {
+    prompt += `\n\n${stockUpdateResult}
+IMPORTANT: The stock has ALREADY been updated. Do NOT try to do STORE_DATA or any action. Just confirm the result to the user in a friendly way. ACTION: NONE.`;
+  }
+
+  if (orderInfo) {
+    prompt += `\n\n${orderInfo}
+IMPORTANT: Order data above was fetched from the database. Present it clearly to the user. ACTION: NONE.`;
+  }
+
+  if (catalogInfo) {
+    prompt += `\n\n${catalogInfo}
+IMPORTANT: Catalog data above was fetched from the database. Present it clearly to the user. ACTION: NONE.`;
+  }
+
+  // Conversation summary for richer context
+  if (conversationSummary) {
+    prompt += `\n\nSeller history summary: ${conversationSummary}`;
+  }
+
+  // Proactive price recommendation — when seller is setting price and market data exists
+  if (partialData?.price && marketInfo) {
+    prompt += `\n\nPROACTIVE PRICE CHECK:
+Seller's current price for ${partialData.productName || 'this product'}: ${partialData.price} per ${partialData.unit || 'unit'}
+Market data: ${marketInfo}
+IF the seller's price is significantly below market average (more than 30 percent lower), gently recommend a higher price. Say something like: "Aapka bhav market se kam lag raha hai. Market mein ye [price range] pe bik raha hai. Kya aap price badhana chahenge?"
+IF significantly above market, give a gentle heads-up.
+IF reasonably close, acknowledge it positively.
+Keep this brief, do not overwhelm. RESPONSE_MODE should be "voice" for price recommendations.`;
   }
 
   // Add current message

@@ -150,7 +150,7 @@ export interface UserConversationContext {
  */
 export async function getConversationContext(
   phone: string,
-  messageCount: number = 10
+  messageCount: number = 20
 ): Promise<UserConversationContext | null> {
   const history = await getConversationHistory(phone, messageCount);
 
@@ -319,4 +319,59 @@ export async function trackSuccessfulCatalog(phone: string): Promise<void> {
       event: 'catalog_added',
     },
   });
+}
+
+/**
+ * Get a concise conversation summary for richer LLM context.
+ * Summarizes total interactions, product additions, categories, price patterns,
+ * and recent activity without including raw messages.
+ */
+export async function getConversationSummary(phone: string): Promise<string> {
+  try {
+    const history = await getConversationHistory(phone, 50);
+    if (history.length === 0) return '';
+
+    const totalMessages = history.length;
+    const catalogAdded = history.filter(m => m.role === 'system' && m.metadata?.event === 'catalog_added').length;
+    const stockUpdates = history.filter(m => m.role === 'system' && m.metadata?.event === 'stock_updated').length;
+
+    // Extract categories and prices from metadata
+    const categories = new Set<string>();
+    const prices: number[] = [];
+    const productNames = new Set<string>();
+
+    history.forEach(msg => {
+      if (msg.metadata?.category) categories.add(msg.metadata.category);
+      if (msg.metadata?.price && typeof msg.metadata.price === 'number') prices.push(msg.metadata.price);
+      if (msg.metadata?.productName) productNames.add(msg.metadata.productName);
+    });
+
+    // Calculate time since first interaction
+    const oldestMsg = history[history.length - 1];
+    const newestMsg = history[0];
+    const daysSinceFirst = oldestMsg?.timestamp
+      ? Math.floor((Date.now() - oldestMsg.timestamp) / (1000 * 60 * 60 * 24))
+      : 0;
+    const lastActiveAgo = newestMsg?.timestamp
+      ? Math.floor((Date.now() - newestMsg.timestamp) / (1000 * 60))
+      : 0;
+
+    let summary = `${totalMessages} messages over ${daysSinceFirst} days`;
+    if (catalogAdded > 0) summary += `, ${catalogAdded} products added`;
+    if (stockUpdates > 0) summary += `, ${stockUpdates} stock updates`;
+    if (categories.size > 0) summary += `, categories: ${Array.from(categories).join(', ')}`;
+    if (productNames.size > 0) summary += `, products: ${Array.from(productNames).slice(0, 5).join(', ')}`;
+    if (prices.length > 0) {
+      const avgPrice = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+      summary += `, avg price: ${avgPrice}`;
+    }
+    if (lastActiveAgo < 5) summary += ', currently active';
+    else if (lastActiveAgo < 60) summary += `, last active ${lastActiveAgo} min ago`;
+    else if (lastActiveAgo < 1440) summary += `, last active ${Math.floor(lastActiveAgo / 60)} hours ago`;
+
+    return summary;
+  } catch (error) {
+    console.warn('Failed to generate conversation summary:', error);
+    return '';
+  }
 }

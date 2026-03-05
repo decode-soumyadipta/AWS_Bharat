@@ -324,6 +324,12 @@ async function processAgentEvent(event: any): Promise<any> {
       const phone = event.detail?.phone || event.phone;
       const language = event.detail?.language || event.language || 'hi-IN';
       if (phone) {
+        // Show typing indicator before error message for natural UX
+        try { 
+          const { sendTypingIndicator: sendTyp } = await import('./whatsapp-message-sender');
+          await sendTyp(phone, (event.detail || event)?.messageId); 
+        } catch (_) {}
+
         let errorMessage = '';
         const errMsg = error.message || '';
         
@@ -1058,6 +1064,27 @@ async function executeAgentActions(
               missingFields: merged.missingFields,
               hasImage: !!(merged.originalImageUrl || merged.enhancedImageUrl),
             });
+
+            // Track in conversation memory with rich metadata for pattern extraction
+            try {
+              const { addConversationMessage } = await import('../services/conversation-memory');
+              await addConversationMessage(phone, {
+                timestamp: Date.now(),
+                role: 'system',
+                content: `Product data stored: ${merged.productName || 'unknown'}`,
+                messageType: 'text',
+                metadata: {
+                  event: 'store_data',
+                  productName: merged.productName,
+                  price: merged.price,
+                  quantity: merged.quantity,
+                  unit: merged.unit,
+                  category: merged.category || action.data.category,
+                },
+              });
+            } catch (memErr) {
+              console.warn('Failed to track STORE_DATA in conversation memory:', memErr);
+            }
 
             // Drive the state machine based on data completeness
             const allFieldsPresent = !merged.missingFields || merged.missingFields.length === 0;
