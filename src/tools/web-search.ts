@@ -148,13 +148,23 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
 
       console.log(`🌐 Querying data.gov.in for ${commodity} on ${dateQuery}`);
 
-      const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      });
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        response = await fetch(url, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (response.status === 429) {
+          const backoff = (attempt + 1) * 2000; // 2s, 4s, 6s
+          console.warn(`data.gov.in rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/3)`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        break;
+      }
 
-      if (!response.ok) {
-        console.warn(`data.gov.in returned ${response.status}`);
+      if (!response || !response.ok) {
+        console.warn(`data.gov.in returned ${response?.status || 'no response'}`);
         continue;
       }
 
@@ -215,12 +225,22 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
     // No records for today/yesterday — try without date filter (latest available)
     const fallbackUrl = `${DATA_GOV_API_URL}?api-key=${DATA_GOV_API_KEY}&format=json&limit=3&filters[commodity]=${encodeURIComponent(commodity)}&sort[arrival_date]=desc`;
     
-    const fallbackResponse = await fetch(fallbackUrl, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
+    let fallbackResponse: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      fallbackResponse = await fetch(fallbackUrl, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (fallbackResponse.status === 429) {
+        const backoff = (attempt + 1) * 2000;
+        console.warn(`data.gov.in fallback rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/3)`);
+        await new Promise(r => setTimeout(r, backoff));
+        continue;
+      }
+      break;
+    }
 
-    if (fallbackResponse.ok) {
+    if (fallbackResponse && fallbackResponse.ok) {
       const fallbackData: any = await fallbackResponse.json();
       const records = fallbackData.records || [];
 

@@ -738,6 +738,18 @@ export async function processApproval(
     await updateUserState(phone, 'ACTIVE');
     console.log('Updated user state to ACTIVE');
 
+    // Mark seller profile as ACTIVE (triggers GSI5 population for background agent)
+    try {
+      const { getSellerByPhone, updateSellerProfile } = await import('../services/dynamodb-repository');
+      const seller = await getSellerByPhone(phone);
+      if (seller) {
+        await updateSellerProfile(seller.sellerId, { onboardingState: 'ACTIVE' });
+        console.log('Seller profile marked ACTIVE with GSI5');
+      }
+    } catch (e) {
+      console.warn('Non-critical: failed to update seller onboardingState', e);
+    }
+
     // Delete partial data
     await deletePartialData(phone);
     console.log('Deleted partial data');

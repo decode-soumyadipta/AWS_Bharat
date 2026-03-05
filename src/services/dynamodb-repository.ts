@@ -145,6 +145,15 @@ export async function updateSellerProfile(
     }
   });
 
+  // Auto-populate GSI5 (ACTIVE_SELLERS) when onboardingState is set to ACTIVE
+  if (updates.onboardingState === 'ACTIVE') {
+    updateExpressions.push('#gsi5pk = :gsi5pk', '#gsi5sk = :gsi5sk');
+    expressionAttributeNames['#gsi5pk'] = 'GSI5PK';
+    expressionAttributeNames['#gsi5sk'] = 'GSI5SK';
+    expressionAttributeValues[':gsi5pk'] = 'ACTIVE_SELLERS';
+    expressionAttributeValues[':gsi5sk'] = sellerId;
+  }
+
   // Always update the updatedAt timestamp
   updateExpressions.push('#updatedAt = :updatedAt');
   expressionAttributeNames['#updatedAt'] = 'updatedAt';

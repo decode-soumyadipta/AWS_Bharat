@@ -289,8 +289,8 @@ async function sendAlert(alert: SellerAlert): Promise<void> {
         EventBusName: EVENT_BUS_NAME,
         Detail: JSON.stringify({
           to: alert.phone,
-          message: alert.message,
           type: 'voice',
+          content: { text: alert.message },
           language: alert.language,
           metadata: {
             source: 'background-agent',

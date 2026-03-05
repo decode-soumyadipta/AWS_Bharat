@@ -1239,6 +1239,17 @@ async function createCatalog(phone: string, language: string): Promise<void> {
   await deletePartialData(phone);
   await trackSuccessfulCatalog(phone);
 
+  // Mark seller profile as ACTIVE (triggers GSI5 population for background agent)
+  try {
+    const seller = await getSellerByPhone(phone);
+    if (seller) {
+      await updateSellerProfile(seller.sellerId, { onboardingState: 'ACTIVE' });
+      console.log('✅ Seller profile marked ACTIVE with GSI5');
+    }
+  } catch (e) {
+    console.warn('Non-critical: failed to update seller onboardingState', e);
+  }
+
   // Send success message via agent
   const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
   const successMsg = lang === 'hi'
