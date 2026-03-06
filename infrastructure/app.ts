@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import * as dotenv from 'dotenv';
+dotenv.config();
 import * as cdk from 'aws-cdk-lib';
 import { VyaparVaaniStack } from './stacks/vyapar-vaani-stack';
 
