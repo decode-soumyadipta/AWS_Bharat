@@ -130,7 +130,7 @@ sequenceDiagram
 |---|---|---|---|
 | 1 | **Lambda** | All compute — webhook, AI agents, voice, image, KYC, orders | 23 functions |
 | 2 | **Bedrock** | LLM (Nova Pro + Lite) + Titan image generation | 4 model IDs |
-| 3 | **DynamoDB** | Sellers, products, orders, sessions, state | 2 tables, 5 GSIs |
+| 3 | **DynamoDB** | Sellers, products, orders, sessions, state | 2 tables, 7 GSIs |
 | 4 | **S3** | Product images, voice files, PDF reports, KYC docs, SPA | 3 buckets |
 | 5 | **Transcribe** | Voice → text with auto language detection | Per-message jobs |
 | 6 | **Polly** | Text → speech in 3 voices (Kajal · Aditi · Joanna) | Neural engine |
