@@ -10,9 +10,9 @@
 🟡 Seller Send WhatsApp Voice Message 🗣️ hi! | Defaults Hindi. Want English? Say- "Talk English!"
 ~~~
 ---
-**500M Indian Rural Sellers can't navigate through complex apps.**
+**100M Indian Rural Sellers can't navigate through complex apps.**
 
-*Vyapar Vaani is Zero UI — no forms, no apps, no menus. Just WhatsApp — the app 800M Indians already know. Speak in any Indian language (Now supports Hindi, English & Marathi), and let AI handle product listings, pricing, product photography, and orders.*
+*Vyapar Vaani is Zero UI — no forms, no apps, no menus. Just WhatsApp — the app 500M Indians already know. Speak in any Indian language (Now supports Hindi, English & Marathi), and let AI handle product listings, pricing, product photography, and orders.*
 
 </br>
 
@@ -33,7 +33,7 @@
 
 Rural merchants aren't offline because they lack smartphones or internet — they're offline because **every e-commerce platform demands digital literacy they don't have**: app installs, form filling, menu navigation, and onboarding flows designed for urban, educated users.
 
-This friction exists in Hindi just as much as English. Translating an interface doesn't eliminate it. **The interaction model itself is broken for 500M+ Indians at the last mile.**
+This friction exists in Hindi just as much as English. Translating an interface doesn't eliminate it. **The interaction model itself is broken for 100M+ Indians at the last mile.**
 
 ## Solution
 
