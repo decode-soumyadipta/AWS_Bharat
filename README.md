@@ -7,7 +7,7 @@
 ### ( Seller:&nbsp; <img width="20" height="20" alt="image" src="https://github.com/user-attachments/assets/f621f10e-8e13-43d3-b70b-087ab07e595e" /> &nbsp;+91-8902418321 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Buyer Marketplace Website:&nbsp; [**Live Marketplace →**](https://d29x1w2stzqkag.cloudfront.net) )
 
 ~~~
-🟡 Sellers Send WhatsApp Voice Message 🗣️ hi!  |  Defaults to Hindi — want English? Just say →  "Talk in English!"
+🟡 Seller Send WhatsApp Voice Message 🗣️ hi! | Defaults Hindi. Want English? Say- "Talk English!"
 ~~~
 ---
 **500M Indian Rural Sellers can't navigate through complex apps.**
