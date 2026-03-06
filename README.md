@@ -1,19 +1,21 @@
 <div align="center">
 
+<img src="marketplace/logo.png" alt="Vyapar Vaani" width="180"/>
+
 # Vyapar Vaani
 
-**Voice-First WhatsApp Commerce for Rural India**
+**500M Indian Rural Sellers can't navigate through complex apps.**
 
-Sellers speak. AI sells. Buyers shop.
+*Vyapar Vaani is Zero UI — no forms, no apps, no menus. Just WhatsApp — the app 800M Indians already know — speak in Hindi, Marathi, or your local language, and AI handles product listings, pricing, product photography, and orders. The rest is commerce.*
 
-[![AWS](https://img.shields.io/badge/AWS-13%20Services-FF9900?logo=amazon-web-services&logoColor=white)](https://aws.amazon.com)
-[![Bedrock](https://img.shields.io/badge/Bedrock-Nova%20Pro%20%2B%20Lite%20%2B%20Titan-232F3E?logo=amazon-web-services)](https://aws.amazon.com/bedrock/)
+[![AWS](https://img.shields.io/badge/AWS-13%20Services-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com)
+[![Bedrock](https://img.shields.io/badge/Bedrock-Nova%20Pro%20%2B%20Lite%20%2B%20Titan-232F3E?logo=amazonaws&logoColor=white)](https://aws.amazon.com/bedrock/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-18.5K%20LOC-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-909%20cases-4CAF50)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-909%20passed-4CAF50?logo=vitest&logoColor=white)](tests/)
 [![ONDC](https://img.shields.io/badge/ONDC-Beckn%20Protocol-0055A4)](https://ondc.org/)
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-Cloud%20API%20v22.0-25D366?logo=whatsapp&logoColor=white)](https://business.whatsapp.com/)
+[![WhatsApp](https://img.shields.io/badge/WhatsApp_Cloud_API-v22.0-25D366?logo=whatsapp&logoColor=white)](https://business.whatsapp.com/)
 
-[**Live Marketplace**](https://d29x1w2stzqkag.cloudfront.net) · [**API**](https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/) · [**Webhook**](https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook)
+[**Live Marketplace →**](https://d29x1w2stzqkag.cloudfront.net) &nbsp;·&nbsp; [**REST API →**](https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/) &nbsp;·&nbsp; [**Webhook →**](https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook)
 
 </div>
 
@@ -21,346 +23,265 @@ Sellers speak. AI sells. Buyers shop.
 
 ## Problem
 
-800M+ Indians use WhatsApp daily, but rural merchants cannot sell online. Conventional e-commerce demands typing, app installs, and English proficiency — things that don't work at India's last mile. The gap: **no zero-literacy commerce path exists on the platform they already use**.
+Rural merchants aren't offline because they lack smartphones or internet — they're offline because **every e-commerce platform demands digital literacy they don't have**: app installs, form filling, menu navigation, and onboarding flows designed for urban, educated users.
+
+This friction exists in Hindi just as much as English. Translating an interface doesn't eliminate it. **The interaction model itself is broken for 500M+ Indians at the last mile.**
 
 ## Solution
 
-A seller speaks a voice message in Hindi/Marathi/English on WhatsApp. AI transcribes, extracts product data, enhances the photo, sets a market-competitive price, and publishes to a live buyer marketplace — all within a single conversation. No app. No typing. No training.
+Vyapar Vaani removes the interface entirely. A seller speaks a voice message on WhatsApp — the one app they already know. AI handles everything else: transcription, product extraction, photo enhancement, market pricing, and live listing. **No forms. No menus. No steps to learn. Zero digital literacy required.**
 
 ---
 
-## Why AI Is Required
+## Why AI Is Non-Negotiable
 
-Every step of the seller journey has a barrier that only AI can remove:
+> Remove AI and this product cannot function. A non-AI version would require sellers to type product names, prices, and descriptions in English — the exact barrier being solved.
 
 | Barrier | Without AI | With AI (AWS Service) |
-|---------|-----------|----------------------|
+|---|---|---|
 | **Language** — seller speaks Hindi/Marathi | Must type in English | **Transcribe** auto-detects language, converts speech to text |
-| **Literacy** — cannot type product details | Cannot list products | **Bedrock Nova Pro** extracts name, price, quantity, unit from natural speech |
-| **Photography** — cluttered backgrounds | Unprofessional images deter buyers | **Titan Image Generator v2** removes background, creates clean product photos |
-| **Pricing** — no market awareness | Overprices or underprices | **Bedrock Nova Lite** + live mandi data recommends optimal price |
-| **Orders** — cannot read order notifications | Misses or mishandles orders | **Polly** reads order details aloud in seller's language |
-| **Business insight** — no analytics capability | Operates blind | **Bedrock Nova Lite** generates PDF reports with AI recommendations |
+| **Literacy** — cannot type product details | Cannot list products | **Nova Pro** extracts name, price, quantity, unit from natural speech |
+| **Photography** — cluttered backgrounds | Unprofessional images | **Titan Image v2** removes background, creates clean product photos |
+| **Pricing** — no market awareness | Over/underprices | **Nova Lite** + live mandi data recommends optimal price |
+| **Orders** — cannot read notifications | Misses orders | **Polly** reads order details aloud in seller's language |
 | **KYC** — cannot fill forms | Blocked from selling | **Textract** extracts PAN/Aadhaar fields from a photo |
-| **Payments** — screenshot-based UPI verification | Manual, error-prone | **Bedrock Nova Pro** verifies UPI payment screenshots with AI |
+| **Payments** — screenshot verification | Manual, error-prone | **Nova Pro** verifies UPI payment screenshots |
+| **Business insight** — no analytics | Operates blind | **Nova Lite** generates PDF reports with AI recommendations |
 
-> **Without AI, this product cannot exist.** A non-AI version would require the seller to type product names, prices, and descriptions in English — the exact barrier we are solving.
+In a typical session (listing one product), AI is invoked **7 times**: Transcribe → Nova Pro (intent) → Nova Pro (entities) → Nova Lite (description) → Titan (image) → Nova Lite (price) → Polly (voice confirmation).
 
 ---
 
 ## Architecture
 
-```
-+---------------------------------------------------------------------------+
-|                        SELLER (WhatsApp)                                  |
-|                  Voice / Image / Text / Buttons                           |
-+-------------------------------+-------------------------------------------+
-                                | WhatsApp Cloud API v22.0
-                                v
-+----------------------------------------------------------------------+
-|  API Gateway (HTTP)          |  API Gateway (REST)                    |
-|  POST /whatsapp/webhook      |  GET  /products                        |
-|  POST /beckn/{action}        |  POST /orders                          |
-|                              |  POST /orders/{id}/verify-payment      |
-+--------------+---------------+------------------+---------------------+
-               |                                  |
-               v                                  v
-+-------------------------+            +-------------------------+
-|  EventBridge Bus        |            |  Marketplace API        |
-|  17 rules + DLQ         |            |  4 Lambda functions     |
-|  1 scheduled rule       |            |                         |
-|  (7 PM IST daily)       |            |  CloudFront CDN         |
-+--------+----------------+            |  S3 Static SPA          |
-         | routes to                   +------------+------------+
-         v                                          |
-+----------------------------------------------------------------------+
-|                        23 Lambda Functions                            |
-|  +--------------+ +---------------+ +---------------+ +------------+ |
-|  | Agent        | | Voice         | | Image         | | KYC        | |
-|  | Handler      | | Transcribe    | | Enhancement   | | Pipeline   | |
-|  | Enhanced     | | Polly TTS     | | Titan v2      | | Textract   | |
-|  | Agent        | | 3 languages   | | BG removal    | | Step Fn    | |
-|  +--------------+ +---------------+ +---------------+ +------------+ |
-|  +--------------+ +---------------+ +---------------+ +------------+ |
-|  | Intent       | | Catalog       | | BPP Adapter   | | Background | |
-|  | Classify     | | Builder +     | | 8 Beckn       | | Agent      | |
-|  | Nova Pro     | | Broadcast     | | actions       | | Weather +  | |
-|  | 10 intents   | | EventBridge   | | ONDC ready    | | Mkt Data   | |
-|  +--------------+ +---------------+ +---------------+ +------------+ |
-+------------------------------+---------------------------------------+
-                               |
-                               v
-+----------------------------------------------------------------------+
-|  DynamoDB (2 tables)  |  S3 (3 buckets)  |  KMS encryption          |
-|  vyapar-vaani-data    |  Products/voice   |  Customer-managed key    |
-|  5 GSIs, streams      |  KYC documents    |  Auto-rotation           |
-|  marketplace-products |  Marketplace SPA  |                          |
-+----------------------------------------------------------------------+
-```
+```mermaid
+flowchart TD
+    Seller([📱 Seller on WhatsApp\nVoice / Image / Text / Buttons])
+    Buyer([🛒 Buyer\nMarketplace Browser])
 
----
+    Seller -->|WhatsApp Cloud API v22.0| APIGW_WH[API Gateway\nPOST /whatsapp/webhook]
+    Buyer -->|HTTPS| APIGW_MKT[API Gateway REST\nGET /products · POST /orders]
 
-## AWS Services — 13 Services, 23 Lambdas
+    APIGW_WH --> EB[EventBridge Bus\n17 rules · 1 scheduled · 30-day archive]
+    APIGW_MKT --> MktLambda[Marketplace Lambdas × 4]
 
-| # | Service | What It Does | Quantity |
-|---|---------|-------------|----------|
-| 1 | **Lambda** | All compute — webhook, AI agents, voice, image, KYC, orders, marketplace | 23 functions |
-| 2 | **Bedrock** | LLM (Nova Pro + Lite) for intent, entities, conversations, reports; Titan for images | 4 model IDs |
-| 3 | **DynamoDB** | Primary data store — sellers, products, orders, state, sessions | 2 tables, 5 GSIs |
-| 4 | **S3** | Product images, voice files, PDF reports, KYC docs, marketplace SPA | 3 buckets |
-| 5 | **Transcribe** | Voice to text with auto language detection (Hindi, Marathi, English) | Per-message jobs |
-| 6 | **Polly** | Text to speech in 3 voices (Kajal, Aditi, Joanna) | Neural engine |
-| 7 | **Textract** | KYC document OCR — PAN card, Aadhaar extraction | AnalyzeDocument |
-| 8 | **EventBridge** | Event-driven routing — 17 rules, 1 scheduled, 30-day archive | 1 bus |
-| 9 | **Step Functions** | KYC processing pipeline — extract, validate, register | 1 state machine |
-| 10 | **API Gateway** | WhatsApp webhook (HTTP) + marketplace buyer API (REST) | 2 APIs, 7 endpoints |
-| 11 | **CloudFront** | Marketplace SPA CDN with S3 origin | 1 distribution |
-| 12 | **KMS** | Encryption at rest — DynamoDB + S3 | 1 key, auto-rotation |
-| 13 | **SQS** | Dead-letter queue for EventBridge failures | 1 DLQ, 14-day retention |
+    MktLambda --> CF[CloudFront CDN]
+    CF --> S3SPA[S3 — Static SPA]
 
----
+    EB -->|whatsapp.*| AgentHandler[agent-handler Lambda]
+    EB -->|catalog.created| CatalogSync[catalog-sync Lambda]
+    EB -->|schedule 7 PM IST| BgAgent[background-agent Lambda]
+    EB -->|failures| SQS[SQS Dead-Letter Queue]
 
-## AI Models — 4 Bedrock Models
+    AgentHandler --> Transcribe[AWS Transcribe\nhi-IN · mr-IN · en-IN]
+    AgentHandler --> NovaPro[Bedrock Nova Pro\nIntent · Entities · UPI verify]
+    AgentHandler --> NovaLite[Bedrock Nova Lite\nDescriptions · Price · Reports]
+    AgentHandler --> Titan[Titan Image v2\nBackground removal]
+    AgentHandler --> Polly[AWS Polly\nKajal · Aditi · Joanna]
 
-| Model | ID | Used For |
-|-------|-----|----------|
-| **Nova Pro** | `amazon.nova-pro-v1:0` | Intent classification (10 types), entity extraction, conversational AI, UPI payment screenshot verification |
-| **Nova Lite** | `us.amazon.nova-lite-v1:0` | Fallback LLM, AI product descriptions, price recommendations, daily alert generation |
-| **Nova Lite** | `amazon.nova-lite-v1:0` | PDF report AI recommendations + voice summary |
-| **Titan Image v2** | `amazon.titan-image-generator-v2:0` | Product photo background removal + white background inpainting |
+    AgentHandler --> DDB[(DynamoDB\n2 tables · 5 GSIs)]
+    AgentHandler --> S3[(S3\nImages · Voice · PDFs · KYC)]
+    AgentHandler --> KMS[KMS\nCustomer-managed key]
 
-### AI Processing Pipeline
+    CatalogSync --> DDB
+    BgAgent --> NovaPro
+    BgAgent --> ExternalAPI[🌐 Open-Meteo\ndata.gov.in mandi prices]
 
-```
-Voice Message (OGG)
-  |
-  +-- Transcribe --> Auto-detect language (hi-IN / mr-IN / en-IN)
-  |                  Output: text + confidence + detected language
-  |
-  +-- Nova Pro ----> Intent Classification (10 types)
-  |                  Entity Extraction (name, price, qty, unit, category)
-  |
-  +-- Nova Lite ---> AI Product Description (bilingual)
-  |                  Price Recommendation (vs. live mandi data)
-  |
-  +-- Titan v2 ---> Background Removal then Inpainting fallback
-  |                  Output: clean product photo on white background
-  |
-  +-- Polly ------> Response as voice (Hindi/Marathi/English)
-                     Text + audio sent simultaneously
+    KYCPhoto[📄 PAN / Aadhaar Photo] --> StepFn[Step Functions\nKYC Pipeline]
+    StepFn --> Textract[AWS Textract\nAnalyzeDocument]
+    StepFn --> DDB
 ```
 
 ---
 
 ## Seller Flow — Voice to Marketplace
 
-```
-SELLER: "Mera naam Raju hai, mujhe tamatar bechna hai, 30 rupay kilo"
-   |
-   v  WhatsApp Cloud API v22.0
-   |
-   v  Lambda: whatsapp-webhook
-   |     Routes via EventBridge
-   |
-   v  Lambda: agent-handler
-   |     +-- Transcribe: "mera naam raju hai mujhe tamatar bechna hai 30 rupay kilo"
-   |     +-- Nova Pro: intent=CREATE_CATALOG
-   |     |            entities={name:"tamatar", price:30, unit:"kg"}
-   |     +-- Fetch live mandi price: Tomato Rs.11-Rs.28/kg (data.gov.in)
-   |     +-- Store partial data in DynamoDB
-   |
-   v  SELLER: sends product photo
-   |     +-- Titan v2: background removal
-   |     +-- Nova Lite: generates bilingual description
-   |     +-- Stores enhanced image in S3
-   |
-   v  Lambda: confirmation-handler
-   |     +-- Builds confirmation card with live market price
-   |     +-- Polly TTS: reads confirmation in Hindi
-   |     +-- Interactive buttons: [Approve] [Edit] [View]
-   |
-   v  SELLER: taps "Approve" or says "haan theek hai"
-   |     +-- Catalog item created in DynamoDB
-   |     +-- EventBridge: catalog.created event
-   |     +-- Synced to marketplace-products table
-   |     +-- Live on buyer marketplace immediately
-   |
-   v  BUYER: browses https://d29x1w2stzqkag.cloudfront.net
-         +-- Adds to cart, checkout with UPI or COD
-         +-- Order notification sent to seller via WhatsApp
-         |     Polly reads order aloud in seller's language
-         +-- Seller taps [Accept] or [Reject]
+```mermaid
+sequenceDiagram
+    participant S as Seller (WhatsApp)
+    participant WH as Webhook Lambda
+    participant AI as AI Pipeline
+    participant DB as DynamoDB / S3
+    participant B as Buyer Marketplace
+
+    S->>WH: 🎤 "Mera tamatar 30 rupay kilo"
+    WH->>AI: Route via EventBridge
+    AI->>AI: Transcribe → language auto-detect (hi-IN)
+    AI->>AI: Nova Pro → intent=CREATE_CATALOG, entities={tamatar, ₹30, kg}
+    AI->>AI: Nova Lite → fetch live mandi price (₹11–₹28/kg)
+    AI->>DB: Store partial session state
+    WH-->>S: 🔊 Polly: "Photo bhejiye"
+
+    S->>WH: 📷 Product photo
+    AI->>AI: Titan Image v2 → background removal → white background
+    AI->>AI: Nova Lite → bilingual product description
+    AI->>DB: Save enhanced image to S3
+    WH-->>S: Confirmation card + market price + [Approve] [Edit] [View]
+
+    S->>WH: ✅ Taps "Approve"
+    AI->>DB: Create catalog item (DynamoDB + marketplace-products table)
+    DB-->>B: Product live on marketplace instantly
+
+    B->>WH: Place order (UPI / COD)
+    WH-->>S: 🔊 Polly reads order aloud in Hindi
+    S->>WH: Taps [Accept]
+    WH-->>B: Order confirmed + real-time tracking
 ```
 
 ---
 
-## Data Flow — Event-Driven Architecture
+## AWS Services
 
+| # | Service | Role | Scale |
+|---|---|---|---|
+| 1 | **Lambda** | All compute — webhook, AI agents, voice, image, KYC, orders | 23 functions |
+| 2 | **Bedrock** | LLM (Nova Pro + Lite) + Titan image generation | 4 model IDs |
+| 3 | **DynamoDB** | Sellers, products, orders, sessions, state | 2 tables, 5 GSIs |
+| 4 | **S3** | Product images, voice files, PDF reports, KYC docs, SPA | 3 buckets |
+| 5 | **Transcribe** | Voice → text with auto language detection | Per-message jobs |
+| 6 | **Polly** | Text → speech in 3 voices (Kajal · Aditi · Joanna) | Neural engine |
+| 7 | **Textract** | KYC document OCR — PAN / Aadhaar extraction | AnalyzeDocument |
+| 8 | **EventBridge** | Event-driven routing — 17 rules, 30-day archive | 1 bus |
+| 9 | **Step Functions** | KYC pipeline — extract → validate → register | 1 state machine |
+| 10 | **API Gateway** | WhatsApp webhook (HTTP) + Marketplace buyer API (REST) | 2 APIs, 7 endpoints |
+| 11 | **CloudFront** | Marketplace SPA CDN with S3 OAI | 1 distribution |
+| 12 | **KMS** | Encryption at rest — DynamoDB + S3, auto-rotation | 1 customer key |
+| 13 | **SQS** | Dead-letter queue for EventBridge failures | 14-day retention |
+
+---
+
+## AI Models
+
+| Model | ID | Used For |
+|---|---|---|
+| **Nova Pro** | `amazon.nova-pro-v1:0` | Intent classification (10 types), entity extraction, UPI payment screenshot verification |
+| **Nova Lite** | `us.amazon.nova-lite-v1:0` | Product descriptions, price recommendations, daily alert generation |
+| **Nova Lite** | `amazon.nova-lite-v1:0` | PDF report AI recommendations + voice summary |
+| **Titan Image v2** | `amazon.titan-image-generator-v2:0` | Product photo background removal + white background inpainting |
+
+---
+
+## ONDC Integration — Full Beckn Order Lifecycle
+
+| Phase | Action | What Happens |
+|---|---|---|
+| Discovery | `search` → `on_search` | ONDC-compliant catalog with `@ondc/org` extensions |
+| Selection | `select` → `on_select` | Quote with item availability check |
+| Initialization | `init` → `on_init` | Billing, fulfillment, payment terms |
+| Confirmation | `confirm` → `on_confirm` | Order created, seller notified via WhatsApp |
+| Tracking | `status` → `on_status` | Real-time order status from DynamoDB |
+| Modification | `update` → `on_update` | Address / quantity changes |
+| Cancellation | `cancel` → `on_cancel` | Cancellation with refund trigger |
+| Tracking | `track` → `on_track` | Delivery tracking info |
+
+---
+
+## Language Support
+
+| Language | Transcribe | Polly Voice | LLM Prompts |
+|---|---|---|---|
+| **Hindi** (hi-IN) | Auto-detect | Kajal Neural | ✅ |
+| **Marathi** (mr-IN) | Auto-detect | Aditi Neural | ✅ |
+| **English** (en-IN) | Auto-detect | Joanna Neural | ✅ |
+
+- Auto language detection via `IdentifyLanguage` — no manual selection needed
+- Runtime language switching mid-conversation ("English mein baat karo")
+- 35+ commodity names mapped across Devanagari, Romanised Hindi, and English for mandi price lookups
+
+---
+
+## KYC Pipeline
+
+```mermaid
+flowchart LR
+    A[📄 Photo of PAN / Aadhaar] --> B[Textract\nAnalyzeDocument\nFORMS + TABLES]
+    B --> C{Validate Fields}
+    C -->|PAN format: ABCDE1234F\nName + DOB valid| D[✅ Register Seller\nONDC Registry\nWhatsApp confirmation]
+    C -->|Invalid| E[❌ Request re-upload\nwith guidance]
+
+    style D fill:#22c55e,color:#fff
+    style E fill:#ef4444,color:#fff
 ```
-                    +----------------------------+
-                    |      EventBridge Bus        |
-                    |   vyapar-vaani-events       |
-                    |   17 rules + DLQ + archive  |
-                    +---------+------------------+
-                              |
-        +---------+----------++-----------+-----------+
-        v         v          v            v           v
-    whatsapp   whatsapp   catalog     catalog     background
-    .text      .voice     .created    .deleted    .schedule
-    .image     .button                            (7 PM IST)
-        |         |          |            |           |
-        v         v          v            v           v
-    agent     agent       catalog     catalog     background
-    handler   handler     sync to     sync to     agent:
-    (NLP +    (voice to   marketplace marketplace weather +
-     tools)    transcribe) products   products    market prices
-                                                  + AI summary
-```
+
+Timeout: 2 min &nbsp;|&nbsp; Retries: 3 with exponential backoff
 
 ---
 
-## ONDC Integration — 8 Beckn Protocol Actions
+## Background Agent — Daily Proactive Alerts
 
-Full order lifecycle via Beckn protocol adapter:
+Scheduled via EventBridge at **7:00 PM IST** (`cron(30 13 * * ? *)`):
 
-| Phase | Action | Response | What Happens |
-|-------|--------|----------|-------------|
-| Discovery | `search` | `on_search` | Returns ONDC-compliant catalog with `@ondc/org` extensions |
-| Selection | `select` | `on_select` | Quote generation with item availability check |
-| Initialization | `init` | `on_init` | Billing + fulfillment details, payment terms |
-| Confirmation | `confirm` | `on_confirm` | Order created, seller notified via WhatsApp |
-| Tracking | `status` | `on_status` | Real-time order status from DynamoDB |
-| Modification | `update` | `on_update` | Order modifications (address, quantity) |
-| Cancellation | `cancel` | `on_cancel` | Cancellation with reason, refund trigger |
-| Tracking | `track` | `on_track` | Delivery tracking info |
+1. **Weather** — Open-Meteo API, 3-day forecast for seller's location
+2. **Market prices** — data.gov.in live mandi prices for seller's crops
+3. **AI summary** — Nova Lite synthesises weather + prices into actionable Hindi advice
+4. **Delivery** — Text + Polly voice message to every active seller
+
+Also triggered on-demand when a seller asks about weather or prices.
 
 ---
 
-## Language Support — 3 Languages, Voice-First
+## Buyer Marketplace
 
-| Language | Transcribe | Polly Voice | LLM Prompts | System Messages |
-|----------|-----------|-------------|-------------|-----------------|
-| **Hindi** (hi-IN) | Auto-detect | Kajal (Neural) | Yes | Yes |
-| **Marathi** (mr-IN) | Auto-detect | Aditi (Neural) | Yes | Yes |
-| **English** (en-IN) | Auto-detect | Joanna (Neural) | Yes | Yes |
+Live at **[d29x1w2stzqkag.cloudfront.net](https://d29x1w2stzqkag.cloudfront.net)** — served via CloudFront + S3.
 
-- **Auto language detection** via Transcribe `IdentifyLanguage` — no manual selection
-- **Runtime language switching** — say "English mein baat karo" mid-conversation
-- **Voice-first responses** — every text reply has a parallel Polly audio message
-- **35+ commodity names** mapped across Devanagari, Romanized Hindi, and English for market price lookups
-
----
-
-## Marketplace — Buyer Frontend
-
-Live at **[d29x1w2stzqkag.cloudfront.net](https://d29x1w2stzqkag.cloudfront.net)**
-
-| Feature | Implementation |
-|---------|---------------|
+| Feature | Details |
+|---|---|
 | Product browsing | Grid view with images, prices, seller info |
 | Search + filter | Real-time text search, category filtering |
-| Shopping cart | Add/remove, quantity management |
-| UPI payment | UPI ID display + reference input + screenshot AI verification |
+| Cart | Add/remove, quantity management |
+| UPI payment | UPI ID + reference + AI screenshot verification |
 | Cash on delivery | Alternative payment path |
 | Order tracking | Real-time status polling |
-| Mobile responsive | 640px + 380px breakpoints, touch-optimized |
-
-Served via **CloudFront CDN** from **S3** origin with OAI access control.
-
----
-
-## KYC Pipeline — Step Functions State Machine
-
-```
-Photo of PAN/Aadhaar
-  |
-  v  Textract AnalyzeDocument (FORMS + TABLES)
-  |     Extracts: name, PAN number, DOB, address
-  |
-  v  Validate extracted fields
-  |     PAN format: ABCDE1234F
-  |     Name length, date validity
-  |
-  +-- Valid -----> Register seller, ONDC registry, send confirmation
-  |
-  +-- Invalid ---> Request clarification, re-upload photo
-  
-  Timeout: 2 minutes | Retries: 3 with exponential backoff
-```
-
----
-
-## Background Agent — Proactive Daily Alerts
-
-Scheduled via EventBridge at **7:00 PM IST** (cron `30 13 * * ? *`):
-
-1. **Weather forecast** — Open-Meteo API, 3-day forecast for seller's location
-2. **Live market prices** — data.gov.in API for seller's crops (35+ commodities mapped)
-3. **AI-generated summary** — Nova Lite synthesizes weather + prices into actionable Hindi advice
-4. **WhatsApp delivery** — Text + Polly voice message sent to each active seller
-
-Also triggered **on-demand** when seller asks about weather or market prices.
+| Responsive | 640px + 380px breakpoints, touch-optimised |
 
 ---
 
 ## PDF Business Reports
 
-Generated via `pdfmake` with Roboto font, delivered as WhatsApp document + voice summary.
+Generated with `pdfmake` (Roboto font). Delivered as WhatsApp document + Polly voice summary.
 
-| Section | Content |
-|---------|---------|
-| **Header** | Seller name, phone, report period, generation timestamp |
-| **Order Summary** | Total / Confirmed / Pending / Rejected / Cancelled counts |
-| **Revenue Breakdown** | Confirmed revenue, pending revenue, average order value |
-| **Product Performance** | Table: product name, orders, qty sold, revenue, avg price |
-| **Product Catalog** | All listed products with price, stock, status |
-| **AI Recommendations** | Nova Lite-generated business insights based on sales data |
+Sections: Order summary · Revenue breakdown · Product performance · Catalog · **AI recommendations (Nova Lite)**
 
-Report types: **weekly**, **monthly**, **custom date range**
+Report periods: weekly · monthly · custom date range
 
 ---
 
 ## Security
 
 | Layer | Implementation |
-|-------|---------------|
-| **Encryption at rest** | KMS customer-managed key — DynamoDB + S3 |
-| **Encryption in transit** | TLS everywhere — API Gateway, CloudFront, WhatsApp API |
-| **KYC documents** | Separate encrypted S3 bucket, Glacier after 90 days, delete after 7 years |
-| **API authentication** | WhatsApp webhook signature verification, Marketplace API key |
-| **IAM least privilege** | Per-Lambda scoped policies (23 role policies) |
-| **DLQ** | SQS dead-letter queue for all EventBridge targets, 14-day retention |
-| **Event archive** | 30-day EventBridge archive for audit |
+|---|---|
+| Encryption at rest | KMS customer-managed key — DynamoDB + S3 |
+| Encryption in transit | TLS — API Gateway, CloudFront, WhatsApp API |
+| KYC documents | Separate encrypted bucket · Glacier after 90 days · Delete after 7 years |
+| API authentication | WhatsApp webhook signature verification + Marketplace API key |
+| IAM | Per-Lambda scoped policies (23 role policies, least privilege) |
+| Reliability | SQS DLQ (14-day) + 30-day EventBridge archive |
 
 ---
 
 ## Codebase
 
-| Component | Files | Lines |
-|-----------|-------|-------|
-| **Source** (`src/`) | 49 TypeScript files | 18,543 LOC |
-| **Infrastructure** (`infrastructure/`) | 2 CDK stacks | 1,640 LOC |
-| **Tests** (`tests/`) | 69 test files | 909 test cases |
-| **Marketplace** (`marketplace/`) | 4 files (HTML/JS/CSS) | SPA frontend |
-| **Backend Lambdas** (`backend/`) | 4 JS files | Marketplace API handlers |
-
-### Source Structure
+| Component | Files | LOC |
+|---|---|---|
+| `src/` — Lambdas, services, models, utils | 49 TypeScript files | 18,543 |
+| `infrastructure/` — CDK stacks | 2 files | 1,640 |
+| `tests/` — Unit + integration | 69 test files | 909 cases |
+| `marketplace/` — Buyer SPA | 4 files (HTML/JS/CSS) | — |
+| `backend/` — Marketplace API handlers | 4 JS files | — |
 
 ```
 src/
-+-- lambdas/        17 Lambda handlers
-+-- services/       17 service modules (AI agent, analytics, TTS, reports...)
-+-- models/          8 data models (order, intent, seller, catalog...)
-+-- config/          3 config files (AWS clients, constants, env)
-+-- tools/           1 tool module (web search, market prices)
-+-- utils/           3 utilities (formatting, validation, Hindi number normalization)
+├── lambdas/    17 Lambda handlers
+├── services/   17 modules (AI agent, analytics, TTS, reports…)
+├── models/      8 data models (order, intent, seller, catalog…)
+├── config/      3 files (AWS clients, constants, env)
+├── tools/       1 module (web search, market prices)
+└── utils/       3 utilities (formatting, validation, Hindi number normalisation)
 ```
 
 ---
 
 ## Deployment
-
-Single-command deployment via AWS CDK:
 
 ```bash
 npm install
@@ -369,26 +290,7 @@ cp -r node_modules/pdfmake dist/src/node_modules/pdfmake
 npx cdk deploy --all
 ```
 
-**Environment**: Node.js 20.x, TypeScript 5.x, CDK v2, us-east-1
-
----
-
-## Value of the AI Layer
-
-The AI layer is not an enhancement — it is the product. Remove AI and the platform cannot function:
-
-| Without AI | With AI |
-|-----------|---------|
-| Seller must type in English | Seller speaks in any supported language |
-| Seller must know product photography | Titan removes background automatically |
-| Seller must research market prices | Live mandi prices fetched + AI price recommendation |
-| Seller must read order notifications | Polly reads orders aloud |
-| Seller must fill KYC forms | Photo of PAN card, Textract extracts all fields |
-| Seller must track business manually | AI-generated PDF reports with recommendations |
-| Payment verification is manual | AI verifies UPI screenshots |
-| No proactive guidance | Daily AI-powered weather + market + crop advisory |
-
-**AI touches every interaction.** In a typical seller session (list a product), AI is invoked **7 times**: Transcribe (voice to text), Nova Pro (intent), Nova Pro (entities), Nova Lite (description), Titan (image), Nova Lite (price recommendation), Polly (voice confirmation).
+**Stack:** Node.js 20.x · TypeScript 5.x · CDK v2 · Region: `us-east-1`
 
 ---
 
