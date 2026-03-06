@@ -212,6 +212,21 @@ async function processAgentEvent(event: any): Promise<any> {
         break;
     }
 
+    if (userMessage === '__VOICE_FAILED__') {
+      console.log('⚠️ Voice transcription failed, asking user to retry or type');
+      const voiceFailMsg: Record<string, string> = {
+        'hi-IN': 'माफ़ करें, आपकी आवाज़ सुनाई नहीं दी। कृपया दुबारा बोलें या टाइप करें।',
+        'mr-IN': 'माफ करा, तुमचा आवाज ऐकू आला नाही. कृपया पुन्हा बोला किंवा टाइप करा.',
+        'en-IN': 'Sorry, I could not hear your voice message clearly. Please try again or type your message.',
+      };
+      try {
+        await sendEnhancedAgentMessage(phone, voiceFailMsg[language] || voiceFailMsg['hi-IN'], language, 'voice');
+      } catch (e) {
+        console.error('Failed to send voice failure response:', e);
+      }
+      return { success: true };
+    }
+
     if (!userMessage) {
       console.log('⚠️ No user message to process, sending helpful response');
 
@@ -540,7 +555,7 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
     console.error('Voice transcription failed:', transcriptionResult.error);
-    return ''; 
+    return '__VOICE_FAILED__'; 
   }
 
   console.log('Transcription successful:', transcriptionResult.transcription);

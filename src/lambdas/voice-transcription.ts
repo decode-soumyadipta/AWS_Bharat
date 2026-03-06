@@ -18,7 +18,7 @@ import {
 
 const SUPPORTED_LANGUAGES: SupportedLanguage[] = ['hi-IN', 'mr-IN', 'en-IN'];
 
-const MAX_POLLING_ATTEMPTS = 60; 
+const MAX_POLLING_ATTEMPTS = 30; 
 
 const POLLING_INTERVAL_MS = 2000; 
 
@@ -27,6 +27,7 @@ export const handler = async (
 ): Promise<VoiceTranscriptionResponse> => {
   console.log('Voice transcription request:', JSON.stringify(event, null, 2));
 
+  let jobName = '';
   try {
 
     if (!event.audioUrl) {
@@ -36,7 +37,7 @@ export const handler = async (
     const s3Location = parseS3Url(event.audioUrl);
     console.log('S3 location:', s3Location);
 
-    const jobName = generateJobName(event.messageId);
+    jobName = generateJobName(event.messageId);
     console.log('Starting transcription job:', jobName);
 
     const jobId = await startTranscriptionJob(
@@ -68,6 +69,10 @@ export const handler = async (
     };
   } catch (error: any) {
     console.error('Voice transcription failed:', error);
+
+    if (jobName) {
+      await cleanupTranscriptionJob(jobName);
+    }
 
     return {
       success: false,
@@ -147,8 +152,6 @@ async function startTranscriptionJob(
     ShowSpeakerLabels: false, 
     ChannelIdentification: false,
     ShowAlternatives: false,
-
-    VocabularyFilterMethod: 'remove' as any,
   };
 
   console.log('Starting transcription job with params:', JSON.stringify(params, null, 2));
@@ -221,6 +224,14 @@ async function pollTranscriptionJob(jobName: string): Promise<TranscriptionJob> 
   }
 
   throw new Error(`Transcription job timed out after ${MAX_POLLING_ATTEMPTS} attempts`);
+}
+
+async function cleanupTranscriptionJob(jobName: string): Promise<void> {
+  try {
+    await deleteTranscriptionJob(jobName);
+  } catch {
+    // ignore cleanup errors
+  }
 }
 
 async function parseTranscriptionResult(
