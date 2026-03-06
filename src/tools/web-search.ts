@@ -1,49 +1,29 @@
-/**
- * Web Search Tool
- * 
- * Provides web search + REAL-TIME market price capabilities.
- * 
- * Primary: data.gov.in open API (official Govt. of India commodity daily prices)
- * Fallback: Hardcoded seasonal ranges with source attribution
- * 
- * All prices are sourced from the Indian National Agricultural Market (eNAM)
- * and Agmarknet data available through the Open Government Data Platform (OGD).
- */
 
-/**
- * Web search result
- */
-export interface WebSearchResult {
+interface WebSearchResult {
   title: string;
   url: string;
   snippet: string;
   publishedDate?: string;
 }
 
-/**
- * Real market price result
- */
-export interface MarketPriceResult {
+interface MarketPriceResult {
   found: boolean;
   commodity: string;
   minPrice: number | null;
   maxPrice: number | null;
-  modalPrice: number | null;  // most common trading price
+  modalPrice: number | null;  
   market: string;
   state: string;
   arrivalDate: string;
   unit: string;
   sourceUrl: string;
   sourceName: string;
-  priceInfo: string;         // formatted string for display
-  isLive: boolean;           // true = fetched from API, false = fallback
+  priceInfo: string;         
+  isLive: boolean;           
 }
 
-/**
- * Commodity name mapping: Hindi/local names → English commodity names used by data.gov.in
- */
 const COMMODITY_NAME_MAP: Record<string, string> = {
-  // Hindi names
+
   'आम': 'Mango', 'आलू': 'Potato', 'टमाटर': 'Tomato', 'प्याज': 'Onion',
   'गोभी': 'Cauliflower', 'मिर्च': 'Green Chilli', 'भिंडी': 'Bhindi(Ladies Finger)',
   'बैंगन': 'Brinjal', 'गेहूं': 'Wheat', 'चावल': 'Rice', 'दाल': 'Arhar (Tur/Red Gram)(Whole)',
@@ -54,7 +34,7 @@ const COMMODITY_NAME_MAP: Record<string, string> = {
   'मूंगफली': 'Groundnut', 'सरसों': 'Mustard', 'गाजर': 'Carrot', 'मटर': 'Green Peas',
   'पालक': 'Spinach', 'मूली': 'Raddish', 'शिमला मिर्च': 'Capsicum',
   'नारियल': 'Coconut', 'अमरूद': 'Guava', 'लीची': 'Litchi', 'बादाम': 'Almond(Badam)',
-  // Romanized Hindi
+
   'aam': 'Mango', 'aloo': 'Potato', 'tamatar': 'Tomato', 'pyaj': 'Onion', 'pyaaz': 'Onion',
   'gobi': 'Cauliflower', 'mirch': 'Green Chilli', 'bhindi': 'Bhindi(Ladies Finger)',
   'baingan': 'Brinjal', 'gehun': 'Wheat', 'chawal': 'Rice', 'dal': 'Arhar (Tur/Red Gram)(Whole)',
@@ -65,7 +45,7 @@ const COMMODITY_NAME_MAP: Record<string, string> = {
   'moongfali': 'Groundnut', 'sarson': 'Mustard', 'gajar': 'Carrot', 'matar': 'Green Peas',
   'palak': 'Spinach', 'mooli': 'Raddish', 'shimla mirch': 'Capsicum',
   'nariyal': 'Coconut', 'amrood': 'Guava', 'lichi': 'Litchi',
-  // English names
+
   'mango': 'Mango', 'potato': 'Potato', 'tomato': 'Tomato', 'onion': 'Onion',
   'cauliflower': 'Cauliflower', 'chili': 'Green Chilli', 'chilli': 'Green Chilli',
   'okra': 'Bhindi(Ladies Finger)', 'brinjal': 'Brinjal', 'eggplant': 'Brinjal',
@@ -77,13 +57,10 @@ const COMMODITY_NAME_MAP: Record<string, string> = {
   'groundnut': 'Groundnut', 'mustard': 'Mustard', 'carrot': 'Carrot',
   'peas': 'Green Peas', 'spinach': 'Spinach', 'radish': 'Raddish',
   'capsicum': 'Capsicum', 'coconut': 'Coconut', 'guava': 'Guava',
-  // Marathi names
+
   'कांदा': 'Onion', 'बटाटा': 'Potato', 'भाजी': 'Spinach',
 };
 
-/**
- * Fallback price ranges (used when API is unavailable)
- */
 const FALLBACK_PRICES: Record<string, { min: number; max: number; unit: string; season?: string; category: string }> = {
   'Mango': { min: 40, max: 150, unit: 'kg', season: 'Apr-Jul', category: 'fruits' },
   'Banana': { min: 20, max: 60, unit: 'dozen', category: 'fruits' },
@@ -123,10 +100,6 @@ const DATA_GOV_API_URL = 'https://api.data.gov.in/resource/9ef84268-d588-465a-a3
 const DATA_GOV_API_KEY = process.env.DATA_GOV_API_KEY || '579b464db66ec23bdd000001cdd3946e44ce4aad7209ff7b23ac571b';
 const AGMARKNET_URL = 'https://agmarknet.gov.in';
 
-/**
- * Fetch REAL-TIME commodity price from data.gov.in (Indian Government Open Data)
- * API: National Commodity & Derivatives Exchange (NCDEX) / Agmarknet daily arrivals + prices
- */
 export async function fetchLiveMarketPrice(productName: string): Promise<MarketPriceResult> {
   const key = productName.toLowerCase().trim();
   const commodity = COMMODITY_NAME_MAP[key] || productName;
@@ -134,15 +107,14 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
   console.log(`📊 Fetching live price for: "${productName}" → commodity: "${commodity}"`);
 
   try {
-    // data.gov.in Commodity Daily Price API
+
     const today = new Date();
     const dateStr = `${today.getDate().toString().padStart(2, '0')}/${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getFullYear()}`;
-    // Also try yesterday in case today's data isn't published yet
+
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = `${yesterday.getDate().toString().padStart(2, '0')}/${(yesterday.getMonth() + 1).toString().padStart(2, '0')}/${yesterday.getFullYear()}`;
 
-    // Try today first, then yesterday
     for (const dateQuery of [dateStr, yesterdayStr]) {
       const url = `${DATA_GOV_API_URL}?api-key=${DATA_GOV_API_KEY}&format=json&limit=5&filters[commodity]=${encodeURIComponent(commodity)}&filters[arrival_date]=${encodeURIComponent(dateQuery)}`;
 
@@ -155,7 +127,7 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
           signal: AbortSignal.timeout(5000),
         });
         if (response.status === 429) {
-          const backoff = (attempt + 1) * 1000; // 1s, 2s
+          const backoff = (attempt + 1) * 1000; 
           console.warn(`data.gov.in rate limited (429), retrying in ${backoff}ms (attempt ${attempt + 1}/2)`);
           await new Promise(r => setTimeout(r, backoff));
           continue;
@@ -172,7 +144,7 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       const records = data.records || [];
 
       if (records.length > 0) {
-        // Aggregate across ALL returned mandi records for accurate min/max
+
         let globalMin = Infinity;
         let globalMax = 0;
         let modalSum = 0;
@@ -191,7 +163,6 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
         }
         if (globalMin === Infinity) globalMin = globalMax;
 
-        // Convert quintal → kg: floor for min, ceil for max to avoid ₹X-₹X
         const minPerKg = Math.floor(globalMin / 100);
         const maxPerKg = Math.ceil(globalMax / 100);
         const modalPerKg = Math.round((modalCount > 0 ? modalSum / modalCount : (globalMin + globalMax) / 2) / 100);
@@ -222,9 +193,8 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       }
     }
 
-    // No records for today/yesterday — try without date filter (latest available)
     const fallbackUrl = `${DATA_GOV_API_URL}?api-key=${DATA_GOV_API_KEY}&format=json&limit=3&filters[commodity]=${encodeURIComponent(commodity)}&sort[arrival_date]=desc`;
-    
+
     let fallbackResponse: Response | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       fallbackResponse = await fetch(fallbackUrl, {
@@ -245,7 +215,7 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       const records = fallbackData.records || [];
 
       if (records.length > 0) {
-        // Aggregate across all returned mandi records
+
         let globalMin = Infinity;
         let globalMax = 0;
         let modalSum = 0;
@@ -298,13 +268,9 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
     console.warn(`⚠️ data.gov.in API failed for "${commodity}":`, error.message);
   }
 
-  // Fallback to static prices
   return getFallbackPrice(productName, commodity);
 }
 
-/**
- * Get fallback price from static knowledge base
- */
 function getFallbackPrice(productName: string, commodity: string): MarketPriceResult {
   const priceData = FALLBACK_PRICES[commodity];
 
@@ -346,17 +312,13 @@ function getFallbackPrice(productName: string, commodity: string): MarketPriceRe
   };
 }
 
-/**
- * Get market price — backward-compatible wrapper for existing code
- * Now fetches LIVE prices from data.gov.in API
- */
 export function getLocalMarketPrice(product: string): {
   found: boolean;
   priceInfo: string;
   sourceUrl: string;
   sourceName: string;
 } {
-  // For synchronous callers, return fallback (live prices are async)
+
   const key = product.toLowerCase().trim();
   const commodity = COMMODITY_NAME_MAP[key] || product;
   const result = getFallbackPrice(product, commodity);
@@ -369,27 +331,21 @@ export function getLocalMarketPrice(product: string): {
   };
 }
 
-/**
- * Perform web search using multiple strategies
- */
 export async function remote_web_search(params: { query: string }): Promise<WebSearchResult[]> {
   console.log('🔍 Web search:', params.query);
 
-  // Strategy 1: Try Brave Search API (free tier, 1000 queries/month)
   const braveResults = await searchBrave(params.query);
   if (braveResults.length > 0) {
     console.log(`✅ Brave search: ${braveResults.length} results`);
     return braveResults;
   }
 
-  // Strategy 2: Try DuckDuckGo HTML search
   const ddgResults = await searchDuckDuckGoHTML(params.query);
   if (ddgResults.length > 0) {
     console.log(`✅ DDG HTML search: ${ddgResults.length} results`);
     return ddgResults;
   }
 
-  // Strategy 3: DuckDuckGo Instant Answer API
   const ddgInstant = await searchDuckDuckGoInstant(params.query);
   if (ddgInstant.length > 0) {
     console.log(`✅ DDG Instant search: ${ddgInstant.length} results`);
@@ -400,9 +356,6 @@ export async function remote_web_search(params: { query: string }): Promise<WebS
   return [];
 }
 
-/**
- * Search using Brave Search API
- */
 async function searchBrave(query: string): Promise<WebSearchResult[]> {
   const apiKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!apiKey) {
@@ -429,9 +382,6 @@ async function searchBrave(query: string): Promise<WebSearchResult[]> {
   }
 }
 
-/**
- * DuckDuckGo HTML search (scrape lite version)
- */
 async function searchDuckDuckGoHTML(query: string): Promise<WebSearchResult[]> {
   try {
     const response = await fetch(
@@ -445,7 +395,6 @@ async function searchDuckDuckGoHTML(query: string): Promise<WebSearchResult[]> {
     if (!response.ok) return [];
     const html = await response.text();
 
-    // Extract results from HTML
     const results: WebSearchResult[] = [];
     const linkRegex = /<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
     const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
@@ -476,9 +425,6 @@ async function searchDuckDuckGoHTML(query: string): Promise<WebSearchResult[]> {
   }
 }
 
-/**
- * DuckDuckGo Instant Answer API (fallback)
- */
 async function searchDuckDuckGoInstant(query: string): Promise<WebSearchResult[]> {
   try {
     const response = await fetch(

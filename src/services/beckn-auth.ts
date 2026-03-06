@@ -1,27 +1,11 @@
-/**
- * Beckn Auth Utility — Request Signing & Verification
- * 
- * Implements Ed25519 signing per the Beckn/ONDC auth spec:
- * - Signs outgoing responses with BPP's private key
- * - Verifies incoming BAP requests via ONDC registry public key lookup
- * - Generates `Authorization` header in Beckn format
- * 
- * Header format:
- *   Signature keyId="subscriber_id|key_id|algorithm",algorithm="ed25519",
- *   created="unix_ts",expires="unix_ts",headers="(created) (expires) digest",
- *   signature="base64_sig"
- */
 
 import * as crypto from 'crypto';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, KYC_BUCKET_NAME } from '../config/aws-clients';
 
 const SIGNING_ALGORITHM = 'ed25519';
-const SIGNATURE_VALIDITY_SECONDS = 300; // 5 minutes
+const SIGNATURE_VALIDITY_SECONDS = 300; 
 
-/**
- * Create a Beckn-compliant Authorization header
- */
 export async function createAuthorizationHeader(
   body: string,
   subscriberId: string,
@@ -36,13 +20,10 @@ export async function createAuthorizationHeader(
   const created = Math.floor(Date.now() / 1000);
   const expires = created + SIGNATURE_VALIDITY_SECONDS;
 
-  // Create digest of the body
   const digest = createDigest(body);
 
-  // Construct signing string per Beckn spec
   const signingString = `(created): ${created}\n(expires): ${expires}\ndigest: BLAKE-512=${digest}`;
 
-  // Sign with Ed25519
   const privateKeyBuffer = Buffer.from(privateKeyBase64, 'base64');
   const signature = crypto.sign(null, Buffer.from(signingString), {
     key: Buffer.concat([
@@ -58,9 +39,6 @@ export async function createAuthorizationHeader(
   return `Signature keyId="${subscriberId}|${keyId}|${SIGNING_ALGORITHM}",algorithm="${SIGNING_ALGORITHM}",created="${created}",expires="${expires}",headers="(created) (expires) digest",signature="${signatureBase64}"`;
 }
 
-/**
- * Verify an incoming Beckn Authorization header
- */
 export async function verifyAuthorizationHeader(
   authHeader: string,
   body: string,
@@ -101,26 +79,19 @@ export async function verifyAuthorizationHeader(
   }
 }
 
-/**
- * Create BLAKE2b-512 digest of body (ONDC uses this)
- * Falls back to SHA-512 as BLAKE2b may not be available in all Node.js builds
- */
 function createDigest(body: string): string {
   try {
     const hash = crypto.createHash('blake2b512');
     hash.update(body);
     return hash.digest('base64');
   } catch {
-    // Fallback to SHA-512 if BLAKE2b not available
+
     const hash = crypto.createHash('sha512');
     hash.update(body);
     return hash.digest('base64');
   }
 }
 
-/**
- * Parse Authorization header components
- */
 function parseAuthHeader(header: string): {
   keyId: string;
   algorithm: string;
@@ -159,9 +130,6 @@ function parseAuthHeader(header: string): {
   }
 }
 
-/**
- * Retrieve private key from S3 (KMS encrypted)
- */
 async function getPrivateKey(sellerId: string): Promise<string | null> {
   try {
     const command = new GetObjectCommand({
@@ -180,9 +148,6 @@ async function getPrivateKey(sellerId: string): Promise<string | null> {
   }
 }
 
-/**
- * Look up a subscriber's public key from the ONDC registry
- */
 export async function lookupPublicKey(
   subscriberId: string,
   registryUrl: string = 'https://registry.ondc.org/ondc/vlookup'

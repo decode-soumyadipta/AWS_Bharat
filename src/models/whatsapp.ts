@@ -1,37 +1,25 @@
-/**
- * WhatsApp Message Models
- * 
- * These interfaces define the structure of WhatsApp messages
- * received from AWS End User Messaging (Social) and sent to sellers.
- */
 
-/**
- * Incoming WhatsApp message event from AWS End User Messaging
- */
 export interface WhatsAppInboundEvent {
   messageId: string;
-  from: string; // Phone number in E.164 format
+  from: string; 
   timestamp: number;
   type: 'text' | 'audio' | 'image' | 'button_reply';
   content: {
     text?: string;
-    mediaUrl?: string; // S3 pre-signed URL for audio/image
-    mediaId?: string; // WhatsApp media ID
+    mediaUrl?: string; 
+    mediaId?: string; 
     mimeType?: string;
-    buttonPayload?: string; // For interactive button responses
-    buttonTitle?: string; // Button title for interactive responses
+    buttonPayload?: string; 
+    buttonTitle?: string; 
   };
   profile: {
     name: string;
-    language?: string; // Detected or stored preference
+    language?: string; 
   };
 }
 
-/**
- * Outgoing WhatsApp message to be sent via AWS End User Messaging
- */
 export interface WhatsAppOutboundMessage {
-  to: string; // Phone number
+  to: string; 
   type: 'text' | 'interactive' | 'image' | 'audio' | 'document';
   content: {
     text?: string;
@@ -47,12 +35,9 @@ export interface WhatsAppOutboundMessage {
   language: 'hi' | 'mr' | 'en';
 }
 
-/**
- * EventBridge event detail for WhatsApp messages
- */
 export interface WhatsAppEventDetail {
   messageId: string;
-  sellerId?: string; // Resolved from phone number
+  sellerId?: string; 
   phone: string;
   timestamp: number;
   messageType: 'text' | 'audio' | 'image' | 'button_reply';
@@ -66,8 +51,8 @@ export interface WhatsAppEventDetail {
     name: string;
     language?: string;
   };
-  // State routing information
-  state?: string; // User's current state in the workflow
-  handler?: string; // Handler that should process this message
-  language?: string; // User's language preference
+
+  state?: string; 
+  handler?: string; 
+  language?: string; 
 }

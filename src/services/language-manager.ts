@@ -1,19 +1,8 @@
-/**
- * Language Manager Service
- * 
- * Manages language detection, storage, and message translations for the voice-first workflow.
- * Supports Hindi, Marathi, and English with natural, conversational phrasing.
- * 
- * Requirements: 9.1, 9.2, 9.3, 9.4, 9.5
- */
 
 import { updateUserLanguage } from './state-manager';
 
 export type SupportedLanguage = 'hi-IN' | 'mr-IN' | 'en-IN';
 
-/**
- * Message template keys for system responses
- */
 export type MessageKey =
   | 'KYC_SUCCESS'
   | 'KYC_ERROR'
@@ -36,9 +25,6 @@ export type MessageKey =
   | 'HELP_MESSAGE'
   | 'WELCOME_MESSAGE';
 
-/**
- * Message templates in all supported languages
- */
 const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> = {
   WELCOME_MESSAGE: {
     'hi-IN': 'नमस्ते! व्यापार वाणी में आपका स्वागत है। मैं आपका AI बिज़नेस असिस्टेंट हूँ। आप PAN कार्ड की फोटो भेज सकते हैं वेरिफिकेशन के लिए, या सीधे गेस्ट के रूप में शुरू कर सकते हैं।',
@@ -142,37 +128,22 @@ const MESSAGE_TEMPLATES: Record<MessageKey, Record<SupportedLanguage, string>> =
   },
 };
 
-/**
- * Detect language from transcribed text
- * 
- * This is a simple heuristic-based detection. In production, you would use
- * Amazon Comprehend or a similar service for accurate language detection.
- * 
- * @param transcription - Transcribed text
- * @returns Detected language code
- */
 export function detectLanguage(transcription: string): SupportedLanguage {
-  // Simple heuristic: check for common Hindi/Marathi/English words
-  const hindiPatterns = /[\u0900-\u097F]/; // Devanagari script
-  const marathiPatterns = /[\u0900-\u097F]/; // Also Devanagari
-  
+
+  const hindiPatterns = /[\u0900-\u097F]/; 
+  const marathiPatterns = /[\u0900-\u097F]/; 
+
   if (hindiPatterns.test(transcription)) {
-    // Check for Marathi-specific words
+
     if (transcription.includes('आहे') || transcription.includes('नाही') || transcription.includes('काय')) {
       return 'mr-IN';
     }
     return 'hi-IN';
   }
-  
-  return 'en-IN'; // Default to English
+
+  return 'en-IN'; 
 }
 
-/**
- * Store language preference for a user
- * 
- * @param phone - User phone number
- * @param language - Detected language
- */
 export async function storeLanguagePreference(
   phone: string,
   language: SupportedLanguage
@@ -180,24 +151,10 @@ export async function storeLanguagePreference(
   await updateUserLanguage(phone, language);
 }
 
-/**
- * Get language preference for a user
- * 
- * @param language - User's language preference (optional)
- * @returns Language code, defaults to Hindi if not provided
- */
 export function getLanguagePreference(language?: SupportedLanguage): SupportedLanguage {
-  return language || 'hi-IN'; // Default to Hindi
+  return language || 'hi-IN'; 
 }
 
-/**
- * Translate a message key to the user's language
- * 
- * @param messageKey - Message template key
- * @param language - User's language preference
- * @param params - Optional parameters for template substitution
- * @returns Translated message
- */
 export function translateMessage(
   messageKey: MessageKey,
   language?: SupportedLanguage,
@@ -205,32 +162,23 @@ export function translateMessage(
 ): string {
   const lang = getLanguagePreference(language);
   let message = MESSAGE_TEMPLATES[messageKey][lang];
-  
-  // Substitute parameters if provided
+
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
-      // Use a function replacer to avoid issues with special replacement patterns like $&, $`, $', $n
+
       message = message.replace(`{${key}}`, () => value);
     });
   }
-  
+
   return message;
 }
 
-/**
- * Generate a conversational missing fields prompt in the user's language
- * 
- * @param missingFields - Array of missing field names
- * @param language - User's language preference
- * @returns Natural, conversational prompt asking for missing information
- */
 export function generateMissingFieldsPrompt(
   missingFields: string[],
   language?: SupportedLanguage
 ): string {
   const lang = getLanguagePreference(language);
-  
-  // Create conversational prompts based on what's missing
+
   const conversationalPrompts: Record<SupportedLanguage, Record<string, string>> = {
     'hi-IN': {
       productName: 'उत्पाद का नाम क्या है',
@@ -251,26 +199,25 @@ export function generateMissingFieldsPrompt(
       unit: 'what is the unit - like kg, bottle, piece',
     },
   };
-  
+
   const prompts = missingFields.map(field => conversationalPrompts[lang][field]).filter(Boolean);
-  
-  // Create natural conversation flow
+
   if (prompts.length === 0) {
     return '';
   }
-  
+
   const intro = {
     'hi-IN': 'कृपया बताएं',
     'mr-IN': 'कृपया सांगा',
     'en-IN': 'Please tell me',
   };
-  
+
   const connector = {
     'hi-IN': 'और',
     'mr-IN': 'आणि',
     'en-IN': 'and',
   };
-  
+
   if (prompts.length === 1) {
     return `${intro[lang]} ${prompts[0]}?`;
   } else if (prompts.length === 2) {
@@ -281,13 +228,6 @@ export function generateMissingFieldsPrompt(
   }
 }
 
-/**
- * Format catalog item details for confirmation
- * 
- * @param item - Partial catalog item
- * @param language - User's language preference
- * @returns Formatted details string
- */
 export function formatCatalogDetails(
   item: {
     productName?: string;
@@ -300,7 +240,7 @@ export function formatCatalogDetails(
   language?: SupportedLanguage
 ): string {
   const lang = getLanguagePreference(language);
-  
+
   const labels = {
     'hi-IN': {
       product: 'उत्पाद',
@@ -324,15 +264,15 @@ export function formatCatalogDetails(
       description: 'Description',
     },
   };
-  
+
   const l = labels[lang];
   const parts: string[] = [];
-  
+
   if (item.productName) {
     parts.push(`${l.product}: ${item.productName}`);
   }
   if (item.price !== undefined && item.unit) {
-    // Show per-unit price for all unit types (e.g., "₹500/kg", "₹250/bottle", "₹100/piece")
+
     parts.push(`${l.price}: ₹${item.price}/${item.unit}`);
   } else if (item.price !== undefined) {
     parts.push(`${l.price}: ₹${item.price}`);
@@ -346,6 +286,6 @@ export function formatCatalogDetails(
   if (item.description) {
     parts.push(`${l.description}: ${item.description}`);
   }
-  
+
   return parts.join('\n');
 }

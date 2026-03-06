@@ -1,68 +1,40 @@
-/**
- * AI-Powered Product Description Generator
- * 
- * Uses Amazon Nova Pro to generate compelling, SEO-friendly product descriptions
- * that help rural sellers create professional listings.
- * 
- * Features:
- * - Multilingual support (Hindi, Marathi, English)
- * - Context-aware descriptions based on product details
- * - Honest and accurate (no exaggeration)
- * - Optimized for e-commerce conversion
- */
 
 import { InvokeModelCommand, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 
-// Create a dedicated Bedrock client for us-east-1 (where Nova models are available)
 const novaBedrockClient = new BedrockRuntimeClient({ region: 'us-east-1' });
 
-/**
- * Product information for description generation
- */
 export interface ProductInfo {
   name: string;
   price: number;
   quantity: number;
   unit: string;
   category: string;
-  language: string; // 'hi-IN', 'mr-IN', 'en-IN'
+  language: string; 
   imageUrl?: string;
   sellerLocation?: string;
 }
 
-/**
- * Generated description with metadata
- */
 export interface GeneratedDescription {
-  shortDescription: string; // 1 line summary
-  longDescription: string; // 2-3 sentences
-  keywords: string[]; // SEO keywords
-  highlights: string[]; // Bullet points
-  confidence: number; // 0-1 score
+  shortDescription: string; 
+  longDescription: string; 
+  keywords: string[]; 
+  highlights: string[]; 
+  confidence: number; 
 }
 
-/**
- * Amazon Nova Lite inference profile ID (cheaper, faster alternative to Nova Pro)
- * Cost: ~$0.00006 per 1K input tokens, ~$0.00024 per 1K output tokens
- */
 const NOVA_MODEL_ID = 'us.amazon.nova-lite-v1:0';
 
-/**
- * Generate compelling product description using AI
- */
 export async function generateProductDescription(
   productInfo: ProductInfo
 ): Promise<GeneratedDescription> {
   console.log('Generating AI description for:', productInfo.name);
 
   try {
-    // Construct prompt based on language
+
     const prompt = buildDescriptionPrompt(productInfo);
 
-    // Call Amazon Nova Pro
     const response = await invokeNovaPro(prompt);
 
-    // Parse and validate response
     const description = parseDescriptionResponse(response, productInfo);
 
     console.log('Generated description:', description);
@@ -70,15 +42,11 @@ export async function generateProductDescription(
 
   } catch (error) {
     console.error('AI description generation failed:', error);
-    
-    // Fallback to template-based description
+
     return generateFallbackDescription(productInfo);
   }
 }
 
-/**
- * Build prompt for Nova Pro based on product info and language
- */
 function buildDescriptionPrompt(product: ProductInfo): string {
   const languageMap = {
     'hi-IN': 'Hindi',
@@ -125,9 +93,6 @@ Important:
 Generate the description now:`;
 }
 
-/**
- * Invoke Amazon Nova Pro model
- */
 async function invokeNovaPro(prompt: string): Promise<string> {
   const requestBody = {
     messages: [
@@ -163,10 +128,9 @@ async function invokeNovaPro(prompt: string): Promise<string> {
   }
 
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-  
-  // Extract text from Nova Pro response
+
   const text = responseBody.output?.message?.content?.[0]?.text;
-  
+
   if (!text) {
     throw new Error('No text in Nova Lite response');
   }
@@ -175,18 +139,14 @@ async function invokeNovaPro(prompt: string): Promise<string> {
   return text;
 }
 
-/**
- * Parse and validate AI response
- */
 function parseDescriptionResponse(
   response: string,
   product: ProductInfo
 ): GeneratedDescription {
   try {
-    // Extract JSON from response (handle markdown code blocks)
+
     let jsonText = response.trim();
-    
-    // Remove markdown code blocks if present
+
     if (jsonText.startsWith('```json')) {
       jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
     } else if (jsonText.startsWith('```')) {
@@ -195,12 +155,10 @@ function parseDescriptionResponse(
 
     const parsed = JSON.parse(jsonText);
 
-    // Validate required fields
     if (!parsed.shortDescription || !parsed.longDescription) {
       throw new Error('Missing required description fields');
     }
 
-    // Ensure arrays exist
     const keywords = Array.isArray(parsed.keywords) ? parsed.keywords : [];
     const highlights = Array.isArray(parsed.highlights) ? parsed.highlights : [];
 
@@ -209,14 +167,13 @@ function parseDescriptionResponse(
       longDescription: parsed.longDescription.substring(0, 500),
       keywords: keywords.slice(0, 10),
       highlights: highlights.slice(0, 5),
-      confidence: 0.9 // High confidence for AI-generated content
+      confidence: 0.9 
     };
 
   } catch (error) {
     console.error('Failed to parse AI response:', error);
     console.error('Response was:', response);
-    
-    // Fallback: use response as-is if it's reasonable text
+
     if (response.length > 20 && response.length < 1000) {
       return {
         shortDescription: `${product.name} - ${product.quantity} ${product.unit}`,
@@ -231,9 +188,6 @@ function parseDescriptionResponse(
   }
 }
 
-/**
- * Generate fallback description using templates (no AI)
- */
 function generateFallbackDescription(product: ProductInfo): GeneratedDescription {
   console.log('Using fallback template for:', product.name);
 
@@ -262,20 +216,16 @@ function generateFallbackDescription(product: ProductInfo): GeneratedDescription
     longDescription: template.long,
     keywords: [product.name, product.category, 'fresh', 'quality'],
     highlights: template.highlights,
-    confidence: 0.3 // Low confidence for template
+    confidence: 0.3 
   };
 }
 
-/**
- * Validate generated description for quality and safety
- */
 export function validateDescription(description: GeneratedDescription): {
   valid: boolean;
   issues: string[];
 } {
   const issues: string[] = [];
 
-  // Check length constraints
   if (description.shortDescription.length > 100) {
     issues.push('Short description too long');
   }
@@ -284,17 +234,15 @@ export function validateDescription(description: GeneratedDescription): {
     issues.push('Long description too long');
   }
 
-  // Check for inappropriate content (basic check)
   const inappropriateWords = ['fake', 'duplicate', 'copy', 'नकली', 'धोखा'];
   const allText = `${description.shortDescription} ${description.longDescription}`.toLowerCase();
-  
+
   for (const word of inappropriateWords) {
     if (allText.includes(word.toLowerCase())) {
       issues.push(`Contains inappropriate word: ${word}`);
     }
   }
 
-  // Check for excessive punctuation (spam indicator)
   const exclamationCount = (allText.match(/!/g) || []).length;
   if (exclamationCount > 3) {
     issues.push('Too many exclamation marks');

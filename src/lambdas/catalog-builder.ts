@@ -1,21 +1,3 @@
-/**
- * Catalog Builder Lambda
- * 
- * This Lambda function constructs Beckn-compliant catalog objects from
- * extracted product entities.
- * 
- * Features:
- * - Maps extracted entities to BecknCatalogItem interface
- * - Generates unique item ID (UUID)
- * - Sets descriptor fields (name, short_desc, long_desc)
- * - Sets price fields (currency: INR, value as decimal string)
- * - Sets quantity fields (available count, maximum count)
- * - Maps product category to ONDC category taxonomy
- * - Adds ONDC-specific tags (@ondc/org/returnable, @ondc/org/cancellable, etc.)
- * - Sets fulfillment_id and location_id from seller profile
- * 
- * Validates: Requirements 2.5, 2.6, 4.5
- */
 
 import { randomUUID } from 'crypto';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -27,89 +9,51 @@ import { eventBridgeClient } from '../config/aws-clients';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 import { generateProductDescription, ProductInfo, validateDescription } from '../services/ai-description-generator';
 
-/**
- * Request to build a catalog item
- */
 export interface CatalogBuilderRequest {
-  /**
-   * Extracted product entities from voice note
-   */
+
   entities: CatalogEntities;
 
-  /**
-   * Seller profile containing fulfillment and location info
-   */
   sellerProfile: SellerProfile;
 
-  /**
-   * Optional image URL (enhanced or raw)
-   */
   imageUrl?: string;
 
-  /**
-   * Message ID for correlation
-   */
   messageId?: string;
 }
 
-/**
- * Response from catalog builder
- */
-export interface CatalogBuilderResponse {
-  /**
-   * Whether construction was successful
-   */
+interface CatalogBuilderResponse {
+
   success: boolean;
 
-  /**
-   * Constructed Beckn catalog item
-   */
   catalogItem?: BecknCatalogItem;
 
-  /**
-   * Generated item ID
-   */
   itemId?: string;
 
-  /**
-   * Validation result from ONDC schema validator
-   */
   validation?: ValidationResult;
 
-  /**
-   * Error information (if failed)
-   */
   error?: {
     code: string;
     message: string;
   };
 }
 
-/**
- * ONDC category taxonomy mapping
- */
 const CATEGORY_MAPPING: Record<string, string> = {
   food: 'Grocery',
   grocery: 'Grocery',
   handicraft: 'Home & Decor',
   textile: 'Fashion',
-  other: 'Grocery', // Default fallback
+  other: 'Grocery', 
 };
 
-/**
- * Lambda handler for catalog builder
- */
 export const handler = async (
   event: any
 ): Promise<CatalogBuilderResponse> => {
   console.log('Catalog builder request:', JSON.stringify(event, null, 2));
 
   try {
-    // Parse EventBridge event format
+
     const eventDetail = event.detail || event;
     const { entities, phone, messageId, intent, language, imageUrl } = eventDetail;
 
-    // Create minimal seller profile from phone number
     const sellerProfile: Partial<SellerProfile> = {
       sellerId: phone || 'unknown',
       phone: phone || '',
@@ -117,12 +61,10 @@ export const handler = async (
       language: (language as 'hi' | 'mr' | 'en') || 'en',
     };
 
-    // Validate input
     if (!entities) {
       throw new Error('Entities are required');
     }
 
-    // Validate required entity fields
     if (!entities.product_name) {
       throw new Error('Product name is required');
     }
@@ -133,22 +75,19 @@ export const handler = async (
       throw new Error('Quantity is required');
     }
 
-    // Generate unique item ID
     const itemId = randomUUID();
     console.log('Generated item ID:', itemId);
 
-    // Construct Beckn catalog item with AI-generated descriptions
     const catalogItem = await constructBecknCatalogItem(
       itemId,
       entities,
       phone || 'unknown',
       language || 'hi-IN',
-      imageUrl // Pass imageUrl from event
+      imageUrl 
     );
 
     console.log('Constructed catalog item:', JSON.stringify(catalogItem, null, 2));
 
-    // Validate against ONDC schema
     const validation = validateCatalogItem(catalogItem);
     console.log('ONDC schema validation result:', JSON.stringify(validation, null, 2));
 
@@ -164,7 +103,6 @@ export const handler = async (
       };
     }
 
-    // Publish catalog.created event to EventBridge
     await publishCatalogCreatedEvent({
       catalogItem,
       itemId,
@@ -191,9 +129,6 @@ export const handler = async (
   }
 };
 
-/**
- * Validate catalog builder request
- */
 function validateCatalogBuilderRequest(request: CatalogBuilderRequest): void {
   if (!request.entities) {
     throw new Error('Entities are required');
@@ -203,7 +138,6 @@ function validateCatalogBuilderRequest(request: CatalogBuilderRequest): void {
     throw new Error('Seller profile is required');
   }
 
-  // Validate required entity fields
   const { product_name, price, quantity, unit, category } = request.entities;
 
   if (!product_name) {
@@ -227,9 +161,6 @@ function validateCatalogBuilderRequest(request: CatalogBuilderRequest): void {
   }
 }
 
-/**
- * Construct Beckn catalog item from entities with AI-generated descriptions
- */
 async function constructBecknCatalogItem(
   itemId: string,
   entities: CatalogEntities,
@@ -237,20 +168,18 @@ async function constructBecknCatalogItem(
   language: string,
   imageUrl?: string
 ): Promise<BecknCatalogItem> {
-  // Map category to ONDC taxonomy
+
   const ondcCategory = mapCategoryToONDC(entities.category!);
 
-  // Format price as decimal string
   const priceValue = formatPrice(entities.price!);
 
-  // Generate AI-powered descriptions
   let shortDesc: string;
   let longDesc: string;
   let aiGenerated = false;
 
   try {
     console.log('Generating AI-powered product description...');
-    
+
     const productInfo: ProductInfo = {
       name: entities.product_name!,
       price: entities.price!,
@@ -262,10 +191,9 @@ async function constructBecknCatalogItem(
     };
 
     const aiDescription = await generateProductDescription(productInfo);
-    
-    // Validate AI-generated description
+
     const validation = validateDescription(aiDescription);
-    
+
     if (validation.valid && aiDescription.confidence > 0.5) {
       shortDesc = aiDescription.shortDescription;
       longDesc = aiDescription.longDescription;
@@ -282,11 +210,9 @@ async function constructBecknCatalogItem(
     longDesc = generateLongDescription(entities);
   }
 
-  // Get default fulfillment and location IDs
   const fulfillmentId = 'F1';
   const locationId = sellerId;
 
-  // Construct the catalog item
   const catalogItem: BecknCatalogItem = {
     id: itemId,
     descriptor: {
@@ -344,32 +270,20 @@ async function constructBecknCatalogItem(
   return catalogItem;
 }
 
-/**
- * Map product category to ONDC category taxonomy
- */
 function mapCategoryToONDC(category: string): string {
   const normalizedCategory = category.toLowerCase();
   return CATEGORY_MAPPING[normalizedCategory] || CATEGORY_MAPPING.other;
 }
 
-/**
- * Format price as decimal string with 2 decimal places
- */
 function formatPrice(price: number): string {
   return price.toFixed(2);
 }
 
-/**
- * Generate short description from entities
- */
 function generateShortDescription(entities: CatalogEntities): string {
   const { product_name, quantity, unit } = entities;
   return `${product_name} - ${quantity} ${unit}`;
 }
 
-/**
- * Generate long description from entities
- */
 function generateLongDescription(entities: CatalogEntities): string {
   const { product_name, description, quantity, unit, category } = entities;
 
@@ -388,9 +302,6 @@ function generateLongDescription(entities: CatalogEntities): string {
   return longDesc;
 }
 
-/**
- * Publish catalog.created event to EventBridge
- */
 async function publishCatalogCreatedEvent(data: {
   catalogItem: BecknCatalogItem;
   itemId: string;
@@ -403,7 +314,6 @@ async function publishCatalogCreatedEvent(data: {
     return;
   }
 
-  // Publish catalog.created event
   const command = new PutEventsCommand({
     Entries: [
       {

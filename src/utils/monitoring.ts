@@ -1,20 +1,9 @@
-/**
- * Monitoring and Observability Utilities
- * 
- * Provides CloudWatch metrics for state transitions, error rates, and performance monitoring.
- * Supports X-Ray tracing integration.
- * 
- * Requirements: 8.1, 8.4, 8.5, 8.7
- */
 
 import { publishMetric, publishMetrics, MetricName, MetricUnit } from '../config/metrics';
 import { UserStateType } from '../services/state-manager';
 import { logStructured } from './error-handler';
 
-/**
- * Custom metric names for voice-first workflow
- */
-export const VoiceWorkflowMetrics = {
+const VoiceWorkflowMetrics = {
   STATE_TRANSITION: 'StateTransition',
   STATE_TRANSITION_DURATION: 'StateTransitionDuration',
   ERROR_RATE: 'ErrorRate',
@@ -27,9 +16,6 @@ export const VoiceWorkflowMetrics = {
   ACTIVE_USERS_BY_STATE: 'ActiveUsersByState',
 } as const;
 
-/**
- * Publish state transition metric
- */
 export async function publishStateTransitionMetric(
   phone: string,
   fromState: UserStateType,
@@ -62,7 +48,7 @@ export async function publishStateTransitionMetric(
 
   try {
     await publishMetrics(metrics);
-    
+
     logStructured('INFO', 'State transition recorded', {
       phone,
       fromState,
@@ -74,10 +60,7 @@ export async function publishStateTransitionMetric(
   }
 }
 
-/**
- * Publish error rate metric
- */
-export async function publishErrorRateMetric(
+async function publishErrorRateMetric(
   operation: string,
   errorCode: string,
   errorCategory: string
@@ -98,10 +81,7 @@ export async function publishErrorRateMetric(
   }
 }
 
-/**
- * Publish retry count metric
- */
-export async function publishRetryMetric(
+async function publishRetryMetric(
   operation: string,
   attemptNumber: number,
   success: boolean
@@ -121,17 +101,14 @@ export async function publishRetryMetric(
   }
 }
 
-/**
- * Publish operation duration metric
- */
-export async function publishOperationDuration(
+async function publishOperationDuration(
   operation: string,
   duration: number,
   success: boolean,
   additionalDimensions?: Record<string, string>
 ): Promise<void> {
   const metricName = getOperationMetricName(operation);
-  
+
   try {
     await publishMetric(
       metricName as any,
@@ -148,9 +125,6 @@ export async function publishOperationDuration(
   }
 }
 
-/**
- * Get metric name for operation
- */
 function getOperationMetricName(operation: string): string {
   const metricMap: Record<string, string> = {
     'media_download': VoiceWorkflowMetrics.MEDIA_DOWNLOAD_DURATION,
@@ -163,9 +137,6 @@ function getOperationMetricName(operation: string): string {
   return metricMap[operation] || 'OperationDuration';
 }
 
-/**
- * Track operation with automatic metrics and error handling
- */
 export async function trackOperation<T>(
   operation: string,
   fn: () => Promise<T>,
@@ -180,7 +151,7 @@ export async function trackOperation<T>(
     return result;
   } finally {
     const duration = Date.now() - startTime;
-    
+
     await publishOperationDuration(
       operation,
       duration,
@@ -200,24 +171,14 @@ export async function trackOperation<T>(
   }
 }
 
-/**
- * X-Ray tracing utilities
- */
-export const XRayTracing = {
-  /**
-   * Get current trace ID from environment
-   */
+const XRayTracing = {
+
   getTraceId(): string | undefined {
     return process.env._X_AMZN_TRACE_ID;
   },
 
-  /**
-   * Add annotation to X-Ray trace
-   * Annotations are indexed and searchable
-   */
   addAnnotation(key: string, value: string | number | boolean): void {
-    // X-Ray SDK would be used here in production
-    // For now, just log it
+
     logStructured('DEBUG', 'X-Ray annotation', {
       annotationKey: key,
       annotationValue: value,
@@ -225,10 +186,6 @@ export const XRayTracing = {
     });
   },
 
-  /**
-   * Add metadata to X-Ray trace
-   * Metadata is not indexed but provides additional context
-   */
   addMetadata(namespace: string, key: string, value: any): void {
     logStructured('DEBUG', 'X-Ray metadata', {
       namespace,
@@ -238,45 +195,39 @@ export const XRayTracing = {
     });
   },
 
-  /**
-   * Create a subsegment for detailed tracing
-   */
   async traceSubsegment<T>(
     name: string,
     fn: () => Promise<T>
   ): Promise<T> {
     const startTime = Date.now();
-    
+
     try {
       const result = await fn();
       const duration = Date.now() - startTime;
-      
+
       logStructured('DEBUG', `Subsegment ${name} completed`, {
         subsegment: name,
         duration,
         traceId: this.getTraceId(),
       });
-      
+
       return result;
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      
+
       logStructured('ERROR', `Subsegment ${name} failed`, {
         subsegment: name,
         duration,
         error: error.message,
         traceId: this.getTraceId(),
       });
-      
+
       throw error;
     }
   },
 };
 
-/**
- * Health check metrics
- */
-export async function publishHealthMetric(
+async function publishHealthMetric(
   component: string,
   healthy: boolean,
   details?: Record<string, any>
@@ -302,28 +253,22 @@ export async function publishHealthMetric(
   }
 }
 
-/**
- * Batch metrics publisher for high-volume scenarios
- */
-export class MetricsBatcher {
+class MetricsBatcher {
   private metrics: Array<{
     name: string;
     value: number;
     unit: MetricUnit;
     dimensions?: Record<string, string>;
   }> = [];
-  
+
   private flushInterval: NodeJS.Timeout | null = null;
-  private readonly maxBatchSize = 20; // CloudWatch limit
-  private readonly flushIntervalMs = 5000; // 5 seconds
+  private readonly maxBatchSize = 20; 
+  private readonly flushIntervalMs = 5000; 
 
   constructor() {
     this.startAutoFlush();
   }
 
-  /**
-   * Add metric to batch
-   */
   add(
     name: string,
     value: number,
@@ -337,16 +282,13 @@ export class MetricsBatcher {
     }
   }
 
-  /**
-   * Flush all pending metrics
-   */
   async flush(): Promise<void> {
     if (this.metrics.length === 0) {
       return;
     }
 
     const batch = this.metrics.splice(0, this.maxBatchSize);
-    
+
     try {
       await publishMetrics(batch as any);
       logStructured('DEBUG', `Flushed ${batch.length} metrics`);
@@ -355,18 +297,12 @@ export class MetricsBatcher {
     }
   }
 
-  /**
-   * Start automatic flushing
-   */
   private startAutoFlush(): void {
     this.flushInterval = setInterval(() => {
       this.flush();
     }, this.flushIntervalMs);
   }
 
-  /**
-   * Stop automatic flushing and flush remaining metrics
-   */
   async stop(): Promise<void> {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);

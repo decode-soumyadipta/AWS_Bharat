@@ -15,7 +15,6 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { MarketplaceIntegration } from './marketplace-integration';
 
-// Event pattern constants
 const EVENT_SOURCES = {
   WHATSAPP: 'vyapar.vaani.whatsapp',
   ONDC: 'vyapar.vaani.ondc',
@@ -41,27 +40,24 @@ export class VyaparVaaniStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // KMS Key for encryption at rest
     this.encryptionKey = new kms.Key(this, 'VyaparVaaniEncryptionKey', {
       description: 'Encryption key for Vyapar-Vaani data',
       enableKeyRotation: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // DynamoDB Single Table with GSIs
     this.dataTable = new dynamodb.Table(this, 'VyaparVaaniDataTable', {
       tableName: 'vyapar-vaani-data',
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // On-demand billing for scale-to-zero
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, 
       encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: this.encryptionKey,
       pointInTimeRecovery: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN, // Protect production data
+      removalPolicy: cdk.RemovalPolicy.RETAIN, 
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
 
-    // GSI1: Phone Number Lookup
     this.dataTable.addGlobalSecondaryIndex({
       indexName: 'GSI1',
       partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING },
@@ -69,7 +65,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // GSI2: Order Status Lookup
     this.dataTable.addGlobalSecondaryIndex({
       indexName: 'GSI2',
       partitionKey: { name: 'GSI2PK', type: dynamodb.AttributeType.STRING },
@@ -77,7 +72,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // GSI3: Catalog Category Lookup
     this.dataTable.addGlobalSecondaryIndex({
       indexName: 'GSI3',
       partitionKey: { name: 'GSI3PK', type: dynamodb.AttributeType.STRING },
@@ -85,7 +79,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // GSI4: User State Lookup (for analytics and monitoring)
     this.dataTable.addGlobalSecondaryIndex({
       indexName: 'GSI4',
       partitionKey: { name: 'GSI4PK', type: dynamodb.AttributeType.STRING },
@@ -93,7 +86,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // GSI5: Active Sellers Lookup (for background agent to query all active sellers)
     this.dataTable.addGlobalSecondaryIndex({
       indexName: 'GSI5',
       partitionKey: { name: 'GSI5PK', type: dynamodb.AttributeType.STRING },
@@ -101,16 +93,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    // Enable TTL for automatic cleanup of abandoned flows and temporary data
-    // TTL attribute should be set on items that need automatic expiration
-    // (e.g., user state records, partial catalog data)
     const cfnTable = this.dataTable.node.defaultChild as dynamodb.CfnTable;
     cfnTable.timeToLiveSpecification = {
       attributeName: 'TTL',
       enabled: true,
     };
 
-    // S3 Bucket for KYC Documents
     this.kycBucket = new s3.Bucket(this, 'KYCDocumentsBucket', {
       bucketName: `vyapar-vaani-kyc-${this.account}`,
       encryption: s3.BucketEncryption.KMS,
@@ -129,13 +117,12 @@ export class VyaparVaaniStack extends cdk.Stack {
         },
         {
           id: 'DeleteAfter7Years',
-          expiration: cdk.Duration.days(2555), // 7 years as per Indian data retention regulations
+          expiration: cdk.Duration.days(2555), 
         },
       ],
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // S3 Bucket for Product Images
     this.productsBucket = new s3.Bucket(this, 'ProductImagesBucket', {
       bucketName: `vyapar-vaani-products-${this.account}`,
       encryption: s3.BucketEncryption.KMS,
@@ -169,12 +156,10 @@ export class VyaparVaaniStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
-    // EventBridge Event Bus
     this.eventBus = new events.EventBus(this, 'VyaparVaaniEventBus', {
       eventBusName: 'vyapar-vaani-events',
     });
 
-    // Enable event archiving for debugging
     new events.Archive(this, 'VyaparVaaniEventArchive', {
       sourceEventBus: this.eventBus,
       archiveName: 'vyapar-vaani-archive',
@@ -184,14 +169,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       },
     });
 
-    // Dead Letter Queue for EventBridge rule failures
     const eventBridgeDlq = new sqs.Queue(this, 'EventBridgeDLQ', {
       queueName: 'vyapar-vaani-eventbridge-dlq',
       retentionPeriod: cdk.Duration.days(14),
       encryption: sqs.QueueEncryption.SQS_MANAGED,
     });
 
-    // CloudWatch Log Groups
     const logGroups = [
       'whatsapp-webhook',
       'whatsapp-sender',
@@ -214,11 +197,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       });
     });
 
-    // CloudWatch Metrics Namespace (defined via custom metrics in Lambda functions)
-    // Namespace: VyaparVaani
-    // Metrics: TimeToNetwork, CatalogRejectionRate, ImageEnhancementSuccessRate, OrderAcceptanceRate
-
-    // IAM Role for Lambda Functions (base permissions)
     const lambdaExecutionRole = new iam.Role(this, 'LambdaExecutionRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
@@ -226,14 +204,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       ],
     });
 
-    // Grant permissions to Lambda role
     this.dataTable.grantReadWriteData(lambdaExecutionRole);
     this.kycBucket.grantReadWrite(lambdaExecutionRole);
     this.productsBucket.grantReadWrite(lambdaExecutionRole);
     this.eventBus.grantPutEventsTo(lambdaExecutionRole);
     this.encryptionKey.grantEncryptDecrypt(lambdaExecutionRole);
 
-    // Add explicit EventBridge PutEvents permission
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -242,7 +218,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant AWS AI service permissions
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -262,7 +237,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant Step Functions permissions
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -275,7 +249,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant Lambda invoke permissions (for Lambda-to-Lambda calls)
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -284,7 +257,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant SNS permissions for error notifications
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -293,7 +265,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant CloudWatch Metrics permissions
     lambdaExecutionRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -302,9 +273,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Lambda Functions for KYC Processing Workflow
-    
-    // Document Extraction Lambda
     const documentExtractionLambda = new lambda.Function(this, 'DocumentExtractionLambda', {
       functionName: 'vyapar-vaani-document-extraction',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -319,12 +287,11 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // KYC Validation Lambda
     const kycValidationLambda = new lambda.Function(this, 'KYCValidationLambda', {
       functionName: 'vyapar-vaani-kyc-validation',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -339,12 +306,11 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Seller Registration Lambda
     const sellerRegistrationLambda = new lambda.Function(this, 'SellerRegistrationLambda', {
       functionName: 'vyapar-vaani-seller-registration',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -359,7 +325,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
         ONDC_REGISTRY_URL: 'https://registry.ondc.org/api/v1',
         NETWORK_PARTICIPANT_ID: 'vyapar-vaani.ondc.in',
         BPP_BASE_URL: 'https://api.vyapar-vaani.ondc.in',
@@ -367,7 +333,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // WhatsApp Message Sender Lambda
     const whatsappSenderLambda = new lambda.Function(this, 'WhatsAppSenderLambda', {
       functionName: 'vyapar-vaani-whatsapp-sender',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -382,7 +347,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
         WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
@@ -390,13 +355,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Voice Transcription Lambda
     const voiceTranscriptionLambda = new lambda.Function(this, 'VoiceTranscriptionLambda', {
       functionName: 'vyapar-vaani-voice-transcription',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/voice-transcription.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.minutes(3), // Transcription can take time
+      timeout: cdk.Duration.minutes(3), 
       memorySize: 512,
       role: lambdaExecutionRole,
       environment: {
@@ -405,12 +369,11 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Intent Classification Lambda
     const intentClassificationLambda = new lambda.Function(this, 'IntentClassificationLambda', {
       functionName: 'vyapar-vaani-intent-classification',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -425,12 +388,11 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
-        
+
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Entity Extraction Lambda
     const entityExtractionLambda = new lambda.Function(this, 'EntityExtractionLambda', {
       functionName: 'vyapar-vaani-entity-extraction',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -449,14 +411,13 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Catalog Builder Lambda
     const catalogBuilderLambda = new lambda.Function(this, 'CatalogBuilderLambda', {
       functionName: 'vyapar-vaani-catalog-builder',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/catalog-builder.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.seconds(30), // Increased for AI processing
-      memorySize: 512, // Increased for AI processing
+      timeout: cdk.Duration.seconds(30), 
+      memorySize: 512, 
       role: lambdaExecutionRole,
       environment: {
         TABLE_NAME: this.dataTable.tableName,
@@ -469,7 +430,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Catalog Storage Broadcast Lambda
     const catalogStorageBroadcastLambda = new lambda.Function(this, 'CatalogStorageBroadcastLambda', {
       functionName: 'vyapar-vaani-catalog-storage-broadcast',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -488,9 +448,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // ========================================
-    // BPP Adapter Lambda — ONDC Beckn Protocol Gateway
-    // ========================================
     const bppAdapterLambda = new lambda.Function(this, 'BPPAdapterLambda', {
       functionName: 'vyapar-vaani-bpp-adapter',
       description: 'Beckn Protocol Provider (BPP) adapter for ONDC network',
@@ -509,14 +466,11 @@ export class VyaparVaaniStack extends cdk.Stack {
         NETWORK_PARTICIPANT_ID: 'vyapar-vaani.ondc.in',
         BPP_BASE_URL: 'https://api.vyapar-vaani.ondc.in',
         ONDC_REGISTRY_URL: 'https://registry.ondc.org/api/v1',
-        VERIFY_BECKN_SIGNATURES: 'false', // Enable in production after ONDC onboarding
+        VERIFY_BECKN_SIGNATURES: 'false', 
       },
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // BPP Adapter API Gateway routes — added after HTTP API is created (see below)
-
-    // WhatsApp Webhook Handler Lambda
     const webhookLambdaRole = new iam.Role(this, 'WebhookLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
@@ -524,14 +478,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       ],
     });
 
-    // Grant webhook Lambda permissions
     this.dataTable.grantReadWriteData(webhookLambdaRole);
     this.kycBucket.grantReadWrite(webhookLambdaRole);
     this.productsBucket.grantReadWrite(webhookLambdaRole);
     this.eventBus.grantPutEventsTo(webhookLambdaRole);
     this.encryptionKey.grantEncryptDecrypt(webhookLambdaRole);
-    
-    // Grant Polly permissions for voice synthesis
+
     webhookLambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['polly:SynthesizeSpeech'],
@@ -563,7 +515,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // HTTP API Gateway for WhatsApp Webhook
     this.httpApi = new apigatewayv2.HttpApi(this, 'WhatsAppWebhookApi', {
       apiName: 'vyapar-vaani-whatsapp-webhook',
       description: 'WhatsApp webhook endpoint for Vyapar-Vaani',
@@ -574,17 +525,14 @@ export class VyaparVaaniStack extends cdk.Stack {
       },
     });
 
-    // Lambda integration
     const webhookIntegration = new HttpLambdaIntegration('WhatsAppWebhookIntegration', whatsappWebhookLambda);
 
-    // Add routes
     this.httpApi.addRoutes({
       path: '/whatsapp/webhook',
       methods: [apigatewayv2.HttpMethod.GET, apigatewayv2.HttpMethod.POST],
       integration: webhookIntegration,
     });
 
-    // Add BPP Adapter routes for Beckn protocol
     const bppIntegration = new HttpLambdaIntegration('BPPAdapterIntegration', bppAdapterLambda);
     this.httpApi.addRoutes({
       path: '/beckn/{action}',
@@ -592,9 +540,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       integration: bppIntegration,
     });
 
-    // EventBridge Rules to wire up the complete flow
-    
-    // Rule 1: Text messages → Intent Classification
     new events.Rule(this, 'TextMessageRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -604,7 +549,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(intentClassificationLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule 2: Voice messages → Voice Transcription
     new events.Rule(this, 'VoiceMessageRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -614,7 +558,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(voiceTranscriptionLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule 3: Image messages → Image Enhancement
     const imageEnhancementLambda = new lambda.Function(this, 'ImageEnhancementLambda', {
       functionName: 'vyapar-vaani-image-enhancement',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -633,11 +576,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // NOTE: Image enhancement is handled INLINE by the agent handler Lambda.
-    // The standalone imageEnhancementLambda is kept for potential direct invocation
-    // but no longer needs an EventBridge rule (the AgentHandlerRule covers images).
-
-    // Rule 4: Intent classified → Entity Extraction
     new events.Rule(this, 'IntentClassifiedRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -647,7 +585,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(entityExtractionLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule 5: WhatsApp message send events → WhatsApp Sender
     new events.Rule(this, 'WhatsAppSendRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -657,9 +594,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(whatsappSenderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule 6: Catalog build requested (after confirmation) → Catalog Builder
-    // NOTE: Changed from 'entities.extracted' to 'catalog.build_requested'
-    // to prevent premature catalog creation before image and confirmation
     new events.Rule(this, 'CatalogCreationRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -669,7 +603,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(catalogBuilderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule 7: Catalog created → Catalog Storage Broadcast
     new events.Rule(this, 'CatalogStorageRule', {
       eventBus: this.eventBus,
       eventPattern: {
@@ -679,11 +612,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(catalogStorageBroadcastLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // ========================================
-    // ONDC Event Rules — Route ONDC events to BPP Adapter
-    // ========================================
-
-    // Rule: ONDC order events → BPP Adapter for Beckn protocol handling
     new events.Rule(this, 'ONDCOrderEventsRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-ondc-order-events',
@@ -700,7 +628,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(bppAdapterLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule: ONDC search events → BPP Adapter
     new events.Rule(this, 'ONDCSearchEventsRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-ondc-search-events',
@@ -716,9 +643,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(bppAdapterLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Step Functions State Machine for KYC Processing
-    
-    // Define state machine tasks
     const extractDocumentTask = new tasks.LambdaInvoke(this, 'ExtractText', {
       lambdaFunction: documentExtractionLambda,
       outputPath: '$.Payload',
@@ -769,7 +693,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       retryOnServiceExceptions: true,
     });
 
-    // Define state machine flow
     const validationChoice = new sfn.Choice(this, 'IsValidationSuccessful?')
       .when(
         sfn.Condition.booleanEquals('$.validationResult.valid', true),
@@ -790,11 +713,10 @@ export class VyaparVaaniStack extends cdk.Stack {
       .next(validateFieldsTask)
       .next(validationChoice);
 
-    // Create state machine with error handling and timeout
     this.kycProcessingStateMachine = new sfn.StateMachine(this, 'KYCProcessingStateMachine', {
       stateMachineName: 'vyapar-vaani-kyc-processing',
       definition,
-      timeout: cdk.Duration.minutes(2), // 2 minutes total workflow timeout
+      timeout: cdk.Duration.minutes(2), 
       logs: {
         destination: new logs.LogGroup(this, 'KYCStateMachineLogGroup', {
           logGroupName: '/aws/vendedlogs/states/vyapar-vaani-kyc-processing',
@@ -807,13 +729,10 @@ export class VyaparVaaniStack extends cdk.Stack {
       tracingEnabled: true,
     });
 
-    // Update webhook Lambda with state machine ARN
     whatsappWebhookLambda.addEnvironment('KYC_STATE_MACHINE_ARN', this.kycProcessingStateMachine.stateMachineArn);
-    
-    // Grant webhook Lambda permission to start state machine executions
+
     this.kycProcessingStateMachine.grantStartExecution(webhookLambdaRole);
 
-    // Add retry logic with exponential backoff to Lambda tasks
     extractDocumentTask.addRetry({
       errors: ['States.TaskFailed', 'States.Timeout', 'Lambda.ServiceException'],
       interval: cdk.Duration.seconds(2),
@@ -849,15 +768,11 @@ export class VyaparVaaniStack extends cdk.Stack {
       backoffRate: 2.0,
     });
 
-    // Grant state machine permission to invoke Lambda functions
     documentExtractionLambda.grantInvoke(this.kycProcessingStateMachine);
     kycValidationLambda.grantInvoke(this.kycProcessingStateMachine);
     sellerRegistrationLambda.grantInvoke(this.kycProcessingStateMachine);
     whatsappSenderLambda.grantInvoke(this.kycProcessingStateMachine);
 
-    // Voice-First Workflow Handler Lambdas
-
-    // KYC Handler Lambda
     const kycHandlerLambda = new lambda.Function(this, 'KYCHandlerLambda', {
       functionName: 'vyapar-vaani-kyc-handler',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -883,13 +798,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Voice Handler Lambda
     const voiceHandlerLambda = new lambda.Function(this, 'VoiceHandlerLambda', {
       functionName: 'vyapar-vaani-voice-handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/voice-handler.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.minutes(5), // Voice processing can take time
+      timeout: cdk.Duration.minutes(5), 
       memorySize: 1024,
       role: lambdaExecutionRole,
       environment: {
@@ -910,13 +824,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Image Handler Lambda
     const imageHandlerLambda = new lambda.Function(this, 'ImageHandlerLambda', {
       functionName: 'vyapar-vaani-image-handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/image-handler.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.minutes(3), // Image enhancement can take time
+      timeout: cdk.Duration.minutes(3), 
       memorySize: 1024,
       role: lambdaExecutionRole,
       environment: {
@@ -935,7 +848,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Confirmation Handler Lambda
     const confirmationHandlerLambda = new lambda.Function(this, 'ConfirmationHandlerLambda', {
       functionName: 'vyapar-vaani-confirmation-handler',
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -962,7 +874,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Grant Polly permissions to confirmation handler
     confirmationHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -971,7 +882,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant Polly permissions to voice handler for missing info prompts
     voiceHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -980,9 +890,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // EventBridge Rules for Voice-First Workflow State-Based Routing
-
-    // Rule: KYC Handler - Image messages in NEW or KYC_PENDING state
     new events.Rule(this, 'KYCHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-kyc-handler-rule',
@@ -998,7 +905,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(kycHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule: Voice Handler - Audio/text messages in KYC_VERIFIED, VOICE_RECEIVED, or ACTIVE state
     new events.Rule(this, 'VoiceHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-voice-handler-rule',
@@ -1017,7 +923,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(voiceHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Agent Handler Lambda - Unified AI agent for all message types
     const agentHandlerLambda = new lambda.Function(this, 'AgentHandlerLambda', {
       functionName: 'vyapar-vaani-agent-handler',
       description: 'Unified AI agent handler for natural language processing',
@@ -1035,13 +940,12 @@ export class VyaparVaaniStack extends cdk.Stack {
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_BUSINESS_ACCOUNT_ID: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
         CONFIRMATION_HANDLER_FUNCTION_NAME: 'vyapar-vaani-confirmation-handler',
-        BEDROCK_AGENT_ID: '', // Set after agent deployment via: aws lambda update-function-configuration
+        BEDROCK_AGENT_ID: '', 
         BEDROCK_AGENT_ALIAS_ID: 'TSTALIASID',
       },
       logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
-    // Grant permissions to agent handler
     this.dataTable.grantReadWriteData(agentHandlerLambda);
     this.eventBus.grantPutEventsTo(agentHandlerLambda);
     this.productsBucket.grantReadWrite(agentHandlerLambda);
@@ -1050,7 +954,6 @@ export class VyaparVaaniStack extends cdk.Stack {
     imageEnhancementLambda.grantInvoke(agentHandlerLambda);
     confirmationHandlerLambda.grantInvoke(agentHandlerLambda);
 
-    // Grant Bedrock permissions for AI agent (Nova Pro + Nova Lite fallback + Titan Image Generator v2)
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -1065,7 +968,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant Polly permissions for voice synthesis
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -1074,7 +976,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant Transcribe permissions for voice transcription
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -1087,7 +988,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Grant CloudWatch Metrics permissions
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
@@ -1096,7 +996,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       })
     );
 
-    // Rule: Agent Handler - ALL messages routed to AGENT handler across ALL states (including NEW, GUEST)
     new events.Rule(this, 'AgentHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-agent-handler-rule',
@@ -1117,7 +1016,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(agentHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule: Image Handler - Image messages in IMAGE_PENDING or ACTIVE state
     new events.Rule(this, 'ImageHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-image-handler-rule',
@@ -1133,7 +1031,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(imageHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule: Image Request - Send WhatsApp message requesting product image
     new events.Rule(this, 'ImageRequestRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-image-request-rule',
@@ -1145,13 +1042,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(whatsappSenderLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // Rule: Confirmation Handler - Button clicks in CONFIRMATION_PENDING state
-    // This rule matches button_reply events when the user is in CONFIRMATION_PENDING state
-    // The event detail structure from whatsapp-webhook-handler includes:
-    // - messageType: 'button_reply'
-    // - state: 'CONFIRMATION_PENDING'
-    // - handler: 'CONFIRMATION'
-    // - content.buttonPayload: 'approve' | 'edit_quantity' | 'view_products'
     new events.Rule(this, 'ConfirmationHandlerRule', {
       eventBus: this.eventBus,
       ruleName: 'vyapar-vaani-confirmation-handler-rule',
@@ -1168,11 +1058,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(confirmationHandlerLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
-    // ========================================
-    // Bedrock Agent — Agentic AI with Tool-Use
-    // ========================================
-
-    // Agent Tools Lambda — implements the 5 action group tools
     const agentToolsLambda = new lambda.Function(this, 'AgentToolsLambda', {
       functionName: 'vyapar-vaani-agent-tools',
       description: 'Bedrock Agent action group — market prices, catalog, orders, stock, analytics',
@@ -1189,14 +1074,12 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_WEEK,
     });
 
-    // Grant Bedrock Agent service permission to invoke the tools Lambda
     agentToolsLambda.addPermission('BedrockAgentInvoke', {
       principal: new iam.ServicePrincipal('bedrock.amazonaws.com'),
       action: 'lambda:InvokeFunction',
       sourceAccount: this.account,
     });
 
-    // Bedrock Agent IAM Role
     const bedrockAgentRole = new iam.Role(this, 'BedrockAgentRole', {
       roleName: 'vyapar-vaani-bedrock-agent-role',
       assumedBy: new iam.ServicePrincipal('bedrock.amazonaws.com'),
@@ -1218,7 +1101,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       resources: [agentToolsLambda.functionArn],
     }));
 
-    // Bedrock Agent (L1 CfnAgent construct)
     const bedrockAgent = new cdk.CfnResource(this, 'VyaparVaaniBedrockAgent', {
       type: 'AWS::Bedrock::Agent',
       properties: {
@@ -1353,7 +1235,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       exportName: 'VyaparVaaniEventBridgeDLQUrl',
     });
 
-    // Outputs
     new cdk.CfnOutput(this, 'DataTableName', {
       value: this.dataTable.tableName,
       description: 'DynamoDB table name',
@@ -1396,9 +1277,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       exportName: 'VyaparVaaniWhatsAppWebhookUrl',
     });
 
-    // ========================================
-    // Marketplace Buyer Interface Integration
-    // ========================================
     const marketplace = new MarketplaceIntegration(this, 'MarketplaceIntegration', {
       dataTable: this.dataTable,
       eventBus: this.eventBus,
@@ -1411,7 +1289,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       },
     });
 
-    // Grant agent handler access to marketplace products table for UPI sync
     marketplace.marketplaceProductsTable.grantReadWriteData(agentHandlerLambda);
     agentHandlerLambda.addEnvironment('MARKETPLACE_PRODUCTS_TABLE', marketplace.marketplaceProductsTable.tableName);
 
@@ -1433,17 +1310,13 @@ export class VyaparVaaniStack extends cdk.Stack {
       exportName: 'VyaparVaaniBPPAdapterUrl',
     });
 
-    // ========================================
-    // Background Agent — Scheduled Proactive Intelligence
-    // Runs every 6 hours to send weather, price, and crop alerts
-    // ========================================
     const backgroundAgentLambda = new lambda.Function(this, 'BackgroundAgentLambda', {
       functionName: 'vyapar-vaani-background-agent',
       description: 'Proactive seller intelligence: weather, market prices, crop advisories',
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'lambdas/background-agent.handler',
       code: lambda.Code.fromAsset('dist/src'),
-      timeout: cdk.Duration.minutes(5), // May process many sellers
+      timeout: cdk.Duration.minutes(5), 
       memorySize: 512,
       role: lambdaExecutionRole,
       environment: {
@@ -1455,7 +1328,6 @@ export class VyaparVaaniStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_MONTH,
     });
 
-    // Schedule: Run once daily at 7:00 PM IST (13:30 UTC) — evening summary
     new events.Rule(this, 'BackgroundAgentSchedule', {
       ruleName: 'vyapar-vaani-background-agent-schedule',
       description: 'Triggers background agent daily at 7 PM IST for evening seller summary',

@@ -1,16 +1,3 @@
-/**
- * Conversation Memory Service
- * 
- * Manages conversation history and memory for the agentic system.
- * Allows the agent to remember past conversations, orders, and interactions.
- * 
- * Features:
- * - Store conversation messages with timestamps
- * - Retrieve conversation history
- * - Query past orders
- * - Track successful catalog additions
- * - Support for "yesterday's order" type queries
- */
 
 import {
   PutCommand,
@@ -20,10 +7,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { docClient, TABLE_NAME } from '../config/aws-clients';
 
-/**
- * Conversation message record
- */
-export interface ConversationMessage {
+interface ConversationMessage {
   phone: string;
   messageId: string;
   timestamp: number;
@@ -34,23 +18,15 @@ export interface ConversationMessage {
 }
 
 interface ConversationMessageRecord extends ConversationMessage {
-  PK: string; // USER#<phone>
-  SK: string; // CONVERSATION#<timestamp>#<messageId>
+  PK: string; 
+  SK: string; 
   entityType: 'CONVERSATION_MESSAGE';
   TTL?: number;
 }
 
-/**
- * TTL configuration - keep conversation history for 30 days
- */
 const CONVERSATION_TTL_DAYS = 30;
 
-/**
- * Store a conversation message
- * 
- * @param message - Conversation message to store
- */
-export async function storeConversationMessage(
+async function storeConversationMessage(
   message: ConversationMessage
 ): Promise<void> {
   const ttl = Math.floor(Date.now() / 1000) + (CONVERSATION_TTL_DAYS * 24 * 60 * 60);
@@ -72,15 +48,6 @@ export async function storeConversationMessage(
   console.log(`Stored conversation message for ${message.phone}`);
 }
 
-/**
- * Get conversation history for a user
- * 
- * @param phone - User phone number
- * @param limit - Maximum number of messages to retrieve (default: 50)
- * @param startTime - Optional start timestamp for filtering
- * @param endTime - Optional end timestamp for filtering
- * @returns Array of conversation messages
- */
 export async function getConversationHistory(
   phone: string,
   limit: number = 50,
@@ -103,7 +70,7 @@ export async function getConversationHistory(
           ':skPrefix': 'CONVERSATION#',
         },
     Limit: limit,
-    ScanIndexForward: false, // Most recent first
+    ScanIndexForward: false, 
   };
 
   const result = await docClient.send(new QueryCommand(params));
@@ -123,9 +90,6 @@ export async function getConversationHistory(
   }));
 }
 
-/**
- * User conversation context with patterns and preferences
- */
 export interface UserConversationContext {
   messages: Array<{ role: string; content: string; timestamp: number }>;
   patterns: {
@@ -140,14 +104,6 @@ export interface UserConversationContext {
   };
 }
 
-/**
- * Get conversation context for agent
- * Returns recent conversation history formatted for agent context with patterns
- * 
- * @param phone - User phone number
- * @param messageCount - Number of recent messages to include (default: 10)
- * @returns Formatted conversation context with patterns and preferences
- */
 export async function getConversationContext(
   phone: string,
   messageCount: number = 20
@@ -164,14 +120,12 @@ export async function getConversationContext(
     timestamp: msg.timestamp,
   }));
 
-  // Calculate patterns
   const totalInteractions = history.length;
   const successfulCatalogs = history.filter(
     (msg) => msg.role === 'system' && msg.metadata?.event === 'catalog_added'
   ).length;
   const lastInteractionTime = history[0]?.timestamp;
 
-  // Extract preferences from conversation history
   const categories = new Set<string>();
   const prices: number[] = [];
 
@@ -207,12 +161,6 @@ export async function getConversationContext(
   };
 }
 
-/**
- * Add a conversation message (alias for storeConversationMessage)
- * 
- * @param phone - User phone number
- * @param message - Message data
- */
 export async function addConversationMessage(
   phone: string,
   message: {
@@ -234,17 +182,11 @@ export async function addConversationMessage(
   });
 }
 
-/**
- * Update user preferences
- * 
- * @param phone - User phone number
- * @param preferences - Preferences to update
- */
 export async function updateUserPreferences(
   phone: string,
   preferences: { language?: string }
 ): Promise<void> {
-  // Store preference as a system message
+
   await storeConversationMessage({
     phone,
     messageId: `pref-${Date.now()}`,
@@ -257,21 +199,14 @@ export async function updateUserPreferences(
     },
   });
 
-  // Also update in state manager if language changed
   if (preferences.language) {
     const { updateUserLanguage } = await import('./state-manager');
     await updateUserLanguage(phone, preferences.language as any);
   }
 }
 
-/**
- * Get yesterday's orders for a user
- * 
- * @param phone - User phone number (seller)
- * @returns Array of orders from yesterday
- */
-export async function getYesterdayOrders(phone: string): Promise<any[]> {
-  // Get seller ID from user state
+async function getYesterdayOrders(phone: string): Promise<any[]> {
+
   const { getUserState } = await import('./state-manager');
   const userState = await getUserState(phone);
 
@@ -279,7 +214,6 @@ export async function getYesterdayOrders(phone: string): Promise<any[]> {
     return [];
   }
 
-  // Calculate yesterday's date range
   const now = new Date();
   const yesterdayStart = new Date(now);
   yesterdayStart.setDate(now.getDate() - 1);
@@ -289,11 +223,9 @@ export async function getYesterdayOrders(phone: string): Promise<any[]> {
   yesterdayEnd.setDate(now.getDate() - 1);
   yesterdayEnd.setHours(23, 59, 59, 999);
 
-  // Query orders from DynamoDB
   const { getOrdersBySeller } = await import('./dynamodb-repository');
   const allOrders = await getOrdersBySeller(userState.sellerId, phone);
 
-  // Filter orders from yesterday
   const yesterdayOrders = allOrders.filter((order) => {
     const orderDate = order.createdAt;
     return orderDate >= yesterdayStart.getTime() && orderDate <= yesterdayEnd.getTime();
@@ -302,12 +234,6 @@ export async function getYesterdayOrders(phone: string): Promise<any[]> {
   return yesterdayOrders;
 }
 
-/**
- * Track successful catalog addition
- * Stores a system message in conversation history
- * 
- * @param phone - User phone number
- */
 export async function trackSuccessfulCatalog(phone: string): Promise<void> {
   await storeConversationMessage({
     phone,
@@ -321,11 +247,6 @@ export async function trackSuccessfulCatalog(phone: string): Promise<void> {
   });
 }
 
-/**
- * Get a concise conversation summary for richer LLM context.
- * Summarizes total interactions, product additions, categories, price patterns,
- * and recent activity without including raw messages.
- */
 export async function getConversationSummary(phone: string): Promise<string> {
   try {
     const history = await getConversationHistory(phone, 50);
@@ -335,7 +256,6 @@ export async function getConversationSummary(phone: string): Promise<string> {
     const catalogAdded = history.filter(m => m.role === 'system' && m.metadata?.event === 'catalog_added').length;
     const stockUpdates = history.filter(m => m.role === 'system' && m.metadata?.event === 'stock_updated').length;
 
-    // Extract categories and prices from metadata
     const categories = new Set<string>();
     const prices: number[] = [];
     const productNames = new Set<string>();
@@ -346,7 +266,6 @@ export async function getConversationSummary(phone: string): Promise<string> {
       if (msg.metadata?.productName) productNames.add(msg.metadata.productName);
     });
 
-    // Calculate time since first interaction
     const oldestMsg = history[history.length - 1];
     const newestMsg = history[0];
     const daysSinceFirst = oldestMsg?.timestamp

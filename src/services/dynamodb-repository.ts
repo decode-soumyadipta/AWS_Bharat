@@ -1,20 +1,3 @@
-/**
- * DynamoDB Repository
- * 
- * This module provides data access functions for all entities
- * using DynamoDB single-table design with GSIs.
- * 
- * Access Patterns:
- * - Get seller profile by phone (GSI1)
- * - Get seller by seller ID
- * - Create and update catalog items (GSI3 for category lookup)
- * - Get all items for a seller
- * - Create and update orders (GSI2 for status lookup)
- * - Get orders by seller and status
- * - Optimistic locking for concurrent updates
- * 
- * Validates: Requirements 1.7, 2.9, 5.6, 6.4
- */
 
 import {
   PutCommand,
@@ -32,9 +15,6 @@ import { SellerProfile } from '../models/seller';
 import { CatalogItem } from '../models/catalog';
 import { Order, OrderStatus } from '../models/order';
 
-/**
- * Error thrown when optimistic locking fails
- */
 export class OptimisticLockError extends Error {
   constructor(message: string) {
     super(message);
@@ -42,26 +22,13 @@ export class OptimisticLockError extends Error {
   }
 }
 
-/**
- * Error thrown when an entity is not found
- */
-export class EntityNotFoundError extends Error {
+class EntityNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'EntityNotFoundError';
   }
 }
 
-// ============================================================================
-// SELLER PROFILE OPERATIONS
-// ============================================================================
-
-/**
- * Create a new seller profile
- * 
- * @param profile - Seller profile to create
- * @returns Created seller profile
- */
 export async function createSellerProfile(profile: SellerProfile): Promise<SellerProfile> {
   const params: PutCommandInput = {
     TableName: TABLE_NAME,
@@ -80,12 +47,6 @@ export async function createSellerProfile(profile: SellerProfile): Promise<Selle
   }
 }
 
-/**
- * Get seller profile by seller ID
- * 
- * @param sellerId - Unique seller identifier
- * @returns Seller profile or null if not found
- */
 export async function getSellerById(sellerId: string): Promise<SellerProfile | null> {
   const params: GetCommandInput = {
     TableName: TABLE_NAME,
@@ -99,12 +60,6 @@ export async function getSellerById(sellerId: string): Promise<SellerProfile | n
   return (result.Item as SellerProfile) || null;
 }
 
-/**
- * Get seller profile by phone number using GSI1
- * 
- * @param phone - Phone number in E.164 format
- * @returns Seller profile or null if not found
- */
 export async function getSellerByPhone(phone: string): Promise<SellerProfile | null> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
@@ -121,13 +76,6 @@ export async function getSellerByPhone(phone: string): Promise<SellerProfile | n
   return result.Items && result.Items.length > 0 ? (result.Items[0] as SellerProfile) : null;
 }
 
-/**
- * Update seller profile
- * 
- * @param sellerId - Seller ID
- * @param updates - Partial seller profile with fields to update
- * @returns Updated seller profile
- */
 export async function updateSellerProfile(
   sellerId: string,
   updates: Partial<Omit<SellerProfile, 'PK' | 'SK' | 'sellerId' | 'createdAt'>>
@@ -136,7 +84,6 @@ export async function updateSellerProfile(
   const expressionAttributeNames: Record<string, string> = {};
   const expressionAttributeValues: Record<string, any> = {};
 
-  // Build update expression dynamically
   Object.entries(updates).forEach(([key, value]) => {
     if (value !== undefined) {
       updateExpressions.push(`#${key} = :${key}`);
@@ -145,7 +92,6 @@ export async function updateSellerProfile(
     }
   });
 
-  // Auto-populate GSI5 (ACTIVE_SELLERS) when onboardingState is set to ACTIVE
   if (updates.onboardingState === 'ACTIVE') {
     updateExpressions.push('#gsi5pk = :gsi5pk', '#gsi5sk = :gsi5sk');
     expressionAttributeNames['#gsi5pk'] = 'GSI5PK';
@@ -154,7 +100,6 @@ export async function updateSellerProfile(
     expressionAttributeValues[':gsi5sk'] = sellerId;
   }
 
-  // Always update the updatedAt timestamp
   updateExpressions.push('#updatedAt = :updatedAt');
   expressionAttributeNames['#updatedAt'] = 'updatedAt';
   expressionAttributeValues[':updatedAt'] = Date.now();
@@ -175,16 +120,6 @@ export async function updateSellerProfile(
   return result.Attributes as SellerProfile;
 }
 
-// ============================================================================
-// CATALOG ITEM OPERATIONS
-// ============================================================================
-
-/**
- * Create a new catalog item
- * 
- * @param item - Catalog item to create
- * @returns Created catalog item
- */
 export async function createCatalogItem(item: CatalogItem): Promise<CatalogItem> {
   const params: PutCommandInput = {
     TableName: TABLE_NAME,
@@ -203,13 +138,6 @@ export async function createCatalogItem(item: CatalogItem): Promise<CatalogItem>
   }
 }
 
-/**
- * Get catalog item by seller ID and item ID
- * 
- * @param sellerId - Seller ID
- * @param itemId - Item ID
- * @returns Catalog item or null if not found
- */
 export async function getCatalogItem(sellerId: string, itemId: string): Promise<CatalogItem | null> {
   const params: GetCommandInput = {
     TableName: TABLE_NAME,
@@ -223,12 +151,6 @@ export async function getCatalogItem(sellerId: string, itemId: string): Promise<
   return (result.Item as CatalogItem) || null;
 }
 
-/**
- * Get all catalog items for a seller
- * 
- * @param sellerId - Seller ID
- * @returns Array of catalog items
- */
 export async function getCatalogItemsBySeller(sellerId: string): Promise<CatalogItem[]> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
@@ -243,12 +165,6 @@ export async function getCatalogItemsBySeller(sellerId: string): Promise<Catalog
   return (result.Items || []) as CatalogItem[];
 }
 
-/**
- * Get catalog items by category using GSI3
- * 
- * @param category - Product category
- * @returns Array of catalog items in the category
- */
 export async function getCatalogItemsByCategory(category: string): Promise<CatalogItem[]> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
@@ -264,16 +180,6 @@ export async function getCatalogItemsByCategory(category: string): Promise<Catal
   return (result.Items || []) as CatalogItem[];
 }
 
-/**
- * Update catalog item with optimistic locking
- * 
- * @param sellerId - Seller ID
- * @param itemId - Item ID
- * @param updates - Partial catalog item with fields to update
- * @param currentVersion - Current version number for optimistic locking
- * @returns Updated catalog item
- * @throws OptimisticLockError if version mismatch
- */
 export async function updateCatalogItem(
   sellerId: string,
   itemId: string,
@@ -284,7 +190,6 @@ export async function updateCatalogItem(
   const expressionAttributeNames: Record<string, string> = {};
   const expressionAttributeValues: Record<string, any> = {};
 
-  // Build update expression dynamically
   Object.entries(updates).forEach(([key, value]) => {
     if (value !== undefined && key !== 'version') {
       updateExpressions.push(`#${key} = :${key}`);
@@ -293,7 +198,6 @@ export async function updateCatalogItem(
     }
   });
 
-  // Increment version and update timestamp
   updateExpressions.push('#version = :newVersion');
   updateExpressions.push('#updatedAt = :updatedAt');
   expressionAttributeNames['#version'] = 'version';
@@ -328,12 +232,6 @@ export async function updateCatalogItem(
   }
 }
 
-/**
- * Delete catalog item
- * 
- * @param sellerId - Seller ID
- * @param itemId - Item ID
- */
 export async function deleteCatalogItem(sellerId: string, itemId: string): Promise<void> {
   const params = {
     TableName: TABLE_NAME,
@@ -346,16 +244,6 @@ export async function deleteCatalogItem(sellerId: string, itemId: string): Promi
   await docClient.send(new DeleteCommand(params));
 }
 
-// ============================================================================
-// ORDER OPERATIONS
-// ============================================================================
-
-/**
- * Create a new order
- * 
- * @param order - Order to create
- * @returns Created order
- */
 export async function createOrder(order: Order): Promise<Order> {
   const params: PutCommandInput = {
     TableName: TABLE_NAME,
@@ -374,12 +262,6 @@ export async function createOrder(order: Order): Promise<Order> {
   }
 }
 
-/**
- * Get order by order ID
- * 
- * @param orderId - Order ID
- * @returns Order or null if not found
- */
 export async function getOrderById(orderId: string): Promise<Order | null> {
   const params: GetCommandInput = {
     TableName: TABLE_NAME,
@@ -393,17 +275,6 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
   return (result.Item as Order) || null;
 }
 
-/**
- * Get all orders for a seller using GSI2
- * 
- * Queries by sellerId (UUID from registration) AND optionally by phone number,
- * because marketplace orders store GSI2PK as SELLER#<phone> while ONDC orders
- * use SELLER#<uuid>. Merges and deduplicates by orderId.
- * 
- * @param sellerId - Seller ID (UUID)
- * @param sellerPhone - Optional seller phone number for marketplace order lookup
- * @returns Array of orders
- */
 export async function getOrdersBySeller(sellerId: string, sellerPhone?: string): Promise<Order[]> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
@@ -418,8 +289,6 @@ export async function getOrdersBySeller(sellerId: string, sellerPhone?: string):
   const result = await docClient.send(new QueryCommand(params));
   const orders = (result.Items || []) as Order[];
 
-  // Also query by phone number if provided and different from sellerId
-  // (marketplace submitOrder stores GSI2PK as SELLER#<phone>)
   if (sellerPhone && sellerPhone !== sellerId) {
     const phoneParams: QueryCommandInput = {
       TableName: TABLE_NAME,
@@ -434,7 +303,6 @@ export async function getOrdersBySeller(sellerId: string, sellerPhone?: string):
     const phoneResult = await docClient.send(new QueryCommand(phoneParams));
     const phoneOrders = (phoneResult.Items || []) as Order[];
 
-    // Deduplicate by orderId
     const seenIds = new Set(orders.map(o => o.orderId));
     for (const order of phoneOrders) {
       if (!seenIds.has(order.orderId)) {
@@ -447,13 +315,6 @@ export async function getOrdersBySeller(sellerId: string, sellerPhone?: string):
   return orders;
 }
 
-/**
- * Get orders by seller and status using GSI2
- * 
- * @param sellerId - Seller ID
- * @param status - Order status
- * @returns Array of orders with the specified status
- */
 export async function getOrdersBySellerAndStatus(
   sellerId: string,
   status: OrderStatus
@@ -472,15 +333,6 @@ export async function getOrdersBySellerAndStatus(
   return (result.Items || []) as Order[];
 }
 
-/**
- * Update order status and timeline
- * 
- * @param orderId - Order ID
- * @param sellerId - Seller ID (needed for GSI2SK update)
- * @param newStatus - New order status
- * @param timelineEntry - Timeline entry to add
- * @returns Updated order
- */
 export async function updateOrderStatus(
   orderId: string,
   sellerId: string,
@@ -488,7 +340,7 @@ export async function updateOrderStatus(
   timelineEntry: { status: OrderStatus; timestamp: number; actor: 'SELLER' | 'BUYER' | 'SYSTEM'; notes?: string }
 ): Promise<Order> {
   const timestamp = Date.now();
-  
+
   const params: UpdateCommandInput = {
     TableName: TABLE_NAME,
     Key: {
@@ -515,15 +367,6 @@ export async function updateOrderStatus(
   return result.Attributes as Order;
 }
 
-/**
- * Update order with optimistic locking
- * 
- * @param orderId - Order ID
- * @param updates - Partial order with fields to update
- * @param currentUpdatedAt - Current updatedAt timestamp for optimistic locking
- * @returns Updated order
- * @throws OptimisticLockError if timestamp mismatch
- */
 export async function updateOrder(
   orderId: string,
   updates: Partial<Omit<Order, 'PK' | 'SK' | 'orderId' | 'createdAt'>>,
@@ -533,7 +376,6 @@ export async function updateOrder(
   const expressionAttributeNames: Record<string, string> = {};
   const expressionAttributeValues: Record<string, any> = {};
 
-  // Build update expression dynamically
   Object.entries(updates).forEach(([key, value]) => {
     if (value !== undefined) {
       updateExpressions.push(`#${key} = :${key}`);
@@ -542,7 +384,6 @@ export async function updateOrder(
     }
   });
 
-  // Always update the updatedAt timestamp
   updateExpressions.push('#updatedAt = :updatedAt');
   expressionAttributeNames['#updatedAt'] = 'updatedAt';
   expressionAttributeValues[':updatedAt'] = Date.now();

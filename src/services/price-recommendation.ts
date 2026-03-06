@@ -1,15 +1,3 @@
-/**
- * Smart Price Recommendation Engine
- * 
- * Analyzes marketplace data and uses AI to suggest optimal pricing
- * for rural sellers who don't understand competitive pricing.
- * 
- * Features:
- * - Query marketplace for similar products
- * - Calculate market statistics
- * - AI-powered price analysis
- * - Multilingual recommendations
- */
 
 import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
@@ -20,15 +8,12 @@ const bedrockClient = new BedrockRuntimeClient({ region: 'us-east-1' });
 
 const NOVA_MODEL_ID = 'us.amazon.nova-lite-v1:0';
 
-/**
- * Price suggestion with market analysis
- */
-export interface PriceSuggestion {
+interface PriceSuggestion {
   competitive: 'good' | 'too_high' | 'too_low';
   recommendedMin: number;
   recommendedMax: number;
-  reasoning: string; // In seller's language
-  tip: string; // Actionable advice
+  reasoning: string; 
+  tip: string; 
   marketData: {
     averagePrice: number;
     minPrice: number;
@@ -38,9 +23,6 @@ export interface PriceSuggestion {
   confidence: number;
 }
 
-/**
- * Marketplace product for comparison
- */
 interface MarketplaceProduct {
   id: string;
   name: string;
@@ -50,9 +32,6 @@ interface MarketplaceProduct {
   category: string;
 }
 
-/**
- * Suggest optimal price for a product
- */
 export async function suggestOptimalPrice(
   productName: string,
   category: string,
@@ -64,18 +43,16 @@ export async function suggestOptimalPrice(
   console.log('Generating price recommendation for:', productName);
 
   try {
-    // 1. Query marketplace for similar products
+
     const similarProducts = await querySimilarProducts(productName, category);
-    
+
     if (similarProducts.length === 0) {
-      // No market data available - return neutral recommendation
+
       return generateNoDataRecommendation(sellerPrice, language);
     }
 
-    // 2. Calculate market statistics
     const marketData = calculateMarketStats(similarProducts);
 
-    // 3. Use AI to analyze and provide recommendations
     const prompt = buildPriceAnalysisPrompt({
       productName,
       category,
@@ -94,42 +71,36 @@ export async function suggestOptimalPrice(
 
   } catch (error) {
     console.error('Price recommendation failed:', error);
-    
-    // Fallback to neutral recommendation
+
     return generateNoDataRecommendation(sellerPrice, language);
   }
 }
 
-/**
- * Query marketplace for similar products
- */
 async function querySimilarProducts(
   productName: string,
   category: string
 ): Promise<MarketplaceProduct[]> {
   const tableName = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
-  
+
   try {
     const command = new ScanCommand({
       TableName: tableName,
-      Limit: 50 // Limit to avoid high costs
+      Limit: 50 
     });
 
     const result = await dynamoClient.send(command);
-    
+
     if (!result.Items || result.Items.length === 0) {
       return [];
     }
 
-    // Unmarshal and filter similar products
     const products = result.Items.map(item => unmarshall(item)) as any[];
-    
-    // Filter by category or name similarity
+
     const similar = products.filter(p => {
       const nameMatch = p.name?.toLowerCase().includes(productName.toLowerCase()) ||
                        productName.toLowerCase().includes(p.name?.toLowerCase());
       const categoryMatch = p.category?.toLowerCase() === category.toLowerCase();
-      
+
       return nameMatch || categoryMatch;
     });
 
@@ -148,12 +119,9 @@ async function querySimilarProducts(
   }
 }
 
-/**
- * Calculate market statistics from similar products
- */
 function calculateMarketStats(products: MarketplaceProduct[]) {
   const prices = products.map(p => p.price).filter(p => p > 0);
-  
+
   if (prices.length === 0) {
     return {
       averagePrice: 0,
@@ -176,9 +144,6 @@ function calculateMarketStats(products: MarketplaceProduct[]) {
   };
 }
 
-/**
- * Build AI prompt for price analysis
- */
 function buildPriceAnalysisPrompt(data: {
   productName: string;
   category: string;
@@ -245,9 +210,6 @@ Important:
 Generate the recommendation now:`;
 }
 
-/**
- * Invoke Nova Lite for price analysis
- */
 async function invokeNovaLite(prompt: string): Promise<string> {
   const requestBody = {
     messages: [
@@ -288,17 +250,14 @@ async function invokeNovaLite(prompt: string): Promise<string> {
   return text;
 }
 
-/**
- * Parse AI response into price recommendation
- */
 function parsePriceRecommendation(
   response: string,
   marketData: any
 ): PriceSuggestion {
   try {
-    // Extract JSON from response
+
     let jsonText = response.trim();
-    
+
     if (jsonText.startsWith('```json')) {
       jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
     } else if (jsonText.startsWith('```')) {
@@ -319,8 +278,7 @@ function parsePriceRecommendation(
 
   } catch (error) {
     console.error('Failed to parse price recommendation:', error);
-    
-    // Fallback based on market data
+
     return {
       competitive: 'good',
       recommendedMin: Math.round(marketData.averagePrice * 0.9),
@@ -333,16 +291,13 @@ function parsePriceRecommendation(
   }
 }
 
-/**
- * Generate recommendation when no market data available
- */
 function generateNoDataRecommendation(
   sellerPrice: number,
   language: string
 ): PriceSuggestion {
-  // Ensure price is positive and reasonable
+
   const validPrice = Math.max(10, Math.abs(sellerPrice));
-  
+
   const templates: Record<string, any> = {
     'hi-IN': {
       reasoning: 'बाज़ार में अभी इस उत्पाद के लिए पर्याप्त डेटा नहीं है। आपकी कीमत उचित लग रही है।',

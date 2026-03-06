@@ -1,26 +1,12 @@
-/**
- * Error Handling and Monitoring Utilities
- * 
- * Provides structured error handling with categorization, logging, and monitoring.
- * Implements retry logic with exponential backoff for transient errors.
- * 
- * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.7
- */
 
 import { publishMetric, MetricName, MetricUnit } from '../config/metrics';
 
-/**
- * Error categories for different handling strategies
- */
 export enum ErrorCategory {
-  TRANSIENT = 'TRANSIENT',     // Retry automatically (network, throttling)
-  PERMANENT = 'PERMANENT',      // Notify user immediately (invalid format, unsupported type)
-  CRITICAL = 'CRITICAL',        // Alert monitoring (DynamoDB failures, KMS errors)
+  TRANSIENT = 'TRANSIENT',     
+  PERMANENT = 'PERMANENT',      
+  CRITICAL = 'CRITICAL',        
 }
 
-/**
- * Structured error with category and context
- */
 export class CategorizedError extends Error {
   constructor(
     message: string,
@@ -35,56 +21,43 @@ export class CategorizedError extends Error {
   }
 }
 
-/**
- * Error codes for specific error scenarios
- */
 export const ErrorCodes = {
-  // Media download errors
+
   MEDIA_DOWNLOAD_FAILED: 'MEDIA_DOWNLOAD_FAILED',
   MEDIA_URL_EXPIRED: 'MEDIA_URL_EXPIRED',
   MEDIA_TOO_LARGE: 'MEDIA_TOO_LARGE',
   MEDIA_UNSUPPORTED_TYPE: 'MEDIA_UNSUPPORTED_TYPE',
-  
-  // KYC errors
+
   DOCUMENT_EXTRACTION_FAILED: 'DOCUMENT_EXTRACTION_FAILED',
   INVALID_PAN_FORMAT: 'INVALID_PAN_FORMAT',
   MISSING_AADHAAR: 'MISSING_AADHAAR',
   KYC_REGISTRATION_FAILED: 'KYC_REGISTRATION_FAILED',
-  
-  // Voice processing errors
+
   TRANSCRIPTION_FAILED: 'TRANSCRIPTION_FAILED',
   UNSUPPORTED_AUDIO_FORMAT: 'UNSUPPORTED_AUDIO_FORMAT',
   INTENT_CLASSIFICATION_FAILED: 'INTENT_CLASSIFICATION_FAILED',
   ENTITY_EXTRACTION_FAILED: 'ENTITY_EXTRACTION_FAILED',
-  
-  // State management errors
+
   STATE_RETRIEVAL_FAILED: 'STATE_RETRIEVAL_FAILED',
   STATE_UPDATE_FAILED: 'STATE_UPDATE_FAILED',
   INVALID_STATE_TRANSITION: 'INVALID_STATE_TRANSITION',
-  
-  // Image processing errors
+
   IMAGE_ENHANCEMENT_FAILED: 'IMAGE_ENHANCEMENT_FAILED',
   INVALID_IMAGE_FORMAT: 'INVALID_IMAGE_FORMAT',
-  
-  // Catalog errors
+
   CATALOG_CREATION_FAILED: 'CATALOG_CREATION_FAILED',
   ONDC_BROADCAST_FAILED: 'ONDC_BROADCAST_FAILED',
-  
-  // AWS service errors
+
   DYNAMODB_THROTTLED: 'DYNAMODB_THROTTLED',
   S3_UPLOAD_FAILED: 'S3_UPLOAD_FAILED',
   KMS_ENCRYPTION_FAILED: 'KMS_ENCRYPTION_FAILED',
   LAMBDA_INVOCATION_FAILED: 'LAMBDA_INVOCATION_FAILED',
   EVENTBRIDGE_PUBLISH_FAILED: 'EVENTBRIDGE_PUBLISH_FAILED',
-  
-  // Generic errors
+
   UNEXPECTED_ERROR: 'UNEXPECTED_ERROR',
   NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
 } as const;
 
-/**
- * Structured log entry for CloudWatch Logs
- */
 interface LogEntry {
   timestamp: string;
   level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'CRITICAL';
@@ -96,9 +69,6 @@ interface LogEntry {
   requestId?: string;
 }
 
-/**
- * Log structured message to CloudWatch
- */
 export function logStructured(
   level: LogEntry['level'],
   message: string,
@@ -117,19 +87,14 @@ export function logStructured(
     requestId: process.env.AWS_REQUEST_ID,
   };
 
-  // Use console.log for structured JSON logging
   console.log(JSON.stringify(entry));
 }
 
-/**
- * Categorize AWS SDK errors
- */
 export function categorizeAwsError(error: any): ErrorCategory {
   const errorName = error.name || error.code || '';
   const errorMessage = error.message || '';
   const errorCode = error.code || '';
 
-  // Transient errors - retry automatically
   if (
     errorName.includes('Throttling') ||
     errorName.includes('TooManyRequests') ||
@@ -145,7 +110,6 @@ export function categorizeAwsError(error: any): ErrorCategory {
     return ErrorCategory.TRANSIENT;
   }
 
-  // Critical errors - alert monitoring
   if (
     errorName.includes('KMS') ||
     errorName.includes('AccessDenied') ||
@@ -156,55 +120,44 @@ export function categorizeAwsError(error: any): ErrorCategory {
     return ErrorCategory.CRITICAL;
   }
 
-  // Permanent errors - notify user
   return ErrorCategory.PERMANENT;
 }
 
-/**
- * Categorize application errors
- */
 export function categorizeError(error: any, errorCode?: string): ErrorCategory {
-  // If already categorized, return the category
+
   if (error instanceof CategorizedError) {
     return error.category;
   }
 
-  // Categorize by error code first
   if (errorCode) {
     switch (errorCode) {
-      // Transient
+
       case ErrorCodes.MEDIA_DOWNLOAD_FAILED:
       case ErrorCodes.NETWORK_TIMEOUT:
       case ErrorCodes.DYNAMODB_THROTTLED:
         return ErrorCategory.TRANSIENT;
 
-      // Critical
       case ErrorCodes.STATE_UPDATE_FAILED:
       case ErrorCodes.STATE_RETRIEVAL_FAILED:
       case ErrorCodes.KMS_ENCRYPTION_FAILED:
       case ErrorCodes.EVENTBRIDGE_PUBLISH_FAILED:
         return ErrorCategory.CRITICAL;
 
-      // Permanent
       default:
         return ErrorCategory.PERMANENT;
     }
   }
 
-  // Check if it's an AWS SDK error or has AWS-like error names
   const errorName = error.name || error.code || '';
   const errorMessage = error.message || '';
   const errorCodeProp = error.code || '';
-  
-  // Check for AWS SDK metadata
+
   const isAwsError = error.$metadata || errorName.includes('Exception');
-  
-  // Check for network errors by error code
+
   if (errorCodeProp === 'ECONNRESET' || errorCodeProp === 'ETIMEDOUT') {
     return ErrorCategory.TRANSIENT;
   }
-  
-  // If it looks like an AWS error or has specific error names, use AWS categorization
+
   if (isAwsError || 
       errorName.includes('Throttling') ||
       errorName.includes('TooManyRequests') ||
@@ -218,14 +171,10 @@ export function categorizeError(error: any, errorCode?: string): ErrorCategory {
     return categorizeAwsError(error);
   }
 
-  // Default to permanent for unknown errors
   return ErrorCategory.PERMANENT;
 }
 
-/**
- * Handle error with appropriate logging and metrics
- */
-export async function handleError(
+async function handleError(
   error: any,
   operation: string,
   context?: Record<string, any>
@@ -234,7 +183,6 @@ export async function handleError(
   const category = categorizeError(error, errorCode);
   const retryable = category === ErrorCategory.TRANSIENT;
 
-  // Log structured error
   logStructured(
     category === ErrorCategory.CRITICAL ? 'CRITICAL' : 'ERROR',
     `${operation} failed: ${error.message}`,
@@ -247,10 +195,9 @@ export async function handleError(
     category
   );
 
-  // Publish error metric
   try {
     await publishMetric(
-      MetricName.VOICE_TRANSCRIPTION_FAILURE, // Generic metric, should be parameterized
+      MetricName.VOICE_TRANSCRIPTION_FAILURE, 
       1,
       MetricUnit.COUNT,
       {
@@ -265,10 +212,7 @@ export async function handleError(
   }
 }
 
-/**
- * Retry configuration
- */
-export interface RetryConfig {
+interface RetryConfig {
   maxAttempts: number;
   baseDelay: number;
   maxDelay: number;
@@ -276,9 +220,6 @@ export interface RetryConfig {
   jitter: boolean;
 }
 
-/**
- * Default retry configuration
- */
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   maxAttempts: 3,
   baseDelay: 1000,
@@ -287,9 +228,6 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   jitter: true,
 };
 
-/**
- * Calculate exponential backoff delay with optional jitter
- */
 export function calculateBackoffDelay(
   attempt: number,
   config: RetryConfig = DEFAULT_RETRY_CONFIG
@@ -306,10 +244,6 @@ export function calculateBackoffDelay(
   return delay;
 }
 
-/**
- * Retry a function with exponential backoff
- * Only retries on transient errors
- */
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   operation: string,
@@ -321,8 +255,7 @@ export async function retryWithBackoff<T>(
   for (let attempt = 0; attempt < config.maxAttempts; attempt++) {
     try {
       const result = await fn();
-      
-      // Log success if this was a retry
+
       if (attempt > 0) {
         logStructured(
           'INFO',
@@ -330,13 +263,12 @@ export async function retryWithBackoff<T>(
           context
         );
       }
-      
+
       return result;
     } catch (error: any) {
       lastError = error;
       const category = categorizeError(error);
 
-      // Don't retry permanent or critical errors
       if (category !== ErrorCategory.TRANSIENT) {
         logStructured(
           category === ErrorCategory.CRITICAL ? 'CRITICAL' : 'ERROR',
@@ -347,7 +279,6 @@ export async function retryWithBackoff<T>(
         throw error;
       }
 
-      // Don't retry if this was the last attempt
       if (attempt >= config.maxAttempts - 1) {
         break;
       }
@@ -363,38 +294,32 @@ export async function retryWithBackoff<T>(
     }
   }
 
-  // All retries exhausted
   await handleError(lastError, operation, {
     ...context,
     attemptsExhausted: config.maxAttempts,
   });
-  
+
   throw lastError;
 }
 
-/**
- * Wrap a function with error handling and metrics
- */
 export async function withErrorHandling<T>(
   fn: () => Promise<T>,
   operation: string,
   context?: Record<string, any>
 ): Promise<T> {
   const startTime = Date.now();
-  
+
   try {
     const result = await fn();
     const duration = Date.now() - startTime;
-    
-    // Log success
+
     logStructured('INFO', `${operation} completed successfully`, {
       ...context,
       duration,
     });
-    
-    // Publish success metric
+
     await publishMetric(
-      MetricName.TIME_TO_NETWORK, // Generic metric, should be parameterized
+      MetricName.TIME_TO_NETWORK, 
       duration,
       MetricUnit.MILLISECONDS,
       {
@@ -402,16 +327,16 @@ export async function withErrorHandling<T>(
         status: 'success',
       }
     );
-    
+
     return result;
   } catch (error: any) {
     const duration = Date.now() - startTime;
-    
+
     await handleError(error, operation, {
       ...context,
       duration,
     });
-    
+
     throw error;
   }
 }

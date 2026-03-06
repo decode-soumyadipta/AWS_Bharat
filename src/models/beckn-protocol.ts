@@ -1,33 +1,19 @@
-/**
- * Beckn Protocol v1.2.0 Complete Type Definitions
- * 
- * Full type system for all Beckn transaction APIs used in ONDC.
- * Covers: search, select, init, confirm, status, track, cancel, update, rating, support
- * and their on_* callback counterparts.
- */
 
-// ============================================================================
-// CORE BECKN TYPES
-// ============================================================================
-
-/**
- * Beckn Context — present in every request/response
- */
 export interface BecknContext {
-  domain: string;               // e.g., 'ONDC:RET10' (Grocery)
-  country: string;              // 'IND'
-  city: string;                 // e.g., 'std:080' (Bangalore)
+  domain: string;               
+  country: string;              
+  city: string;                 
   action: BecknAction;
   core_version: '1.2.0';
-  bap_id: string;               // Buyer App subscriber ID
-  bap_uri: string;              // Buyer App callback URI
-  bpp_id: string;               // Seller Platform subscriber ID
-  bpp_uri: string;              // Seller Platform callback URI
-  transaction_id: string;       // UUID — unique per transaction
-  message_id: string;           // UUID — unique per message
-  timestamp: string;            // ISO 8601
-  ttl?: string;                 // ISO 8601 Duration (e.g., 'PT30S')
-  key?: string;                 // Encryption key
+  bap_id: string;               
+  bap_uri: string;              
+  bpp_id: string;               
+  bpp_uri: string;              
+  transaction_id: string;       
+  message_id: string;           
+  timestamp: string;            
+  ttl?: string;                 
+  key?: string;                 
 }
 
 export type BecknAction =
@@ -42,10 +28,6 @@ export type BecknAction =
   | 'rating' | 'on_rating'
   | 'support' | 'on_support';
 
-// ============================================================================
-// BECKN ENTITIES
-// ============================================================================
-
 export interface BecknDescriptorFull {
   name: string;
   code?: string;
@@ -59,7 +41,7 @@ export interface BecknDescriptorFull {
 
 export interface BecknLocation {
   id: string;
-  gps: string;                  // 'lat,long'
+  gps: string;                  
   address?: {
     door?: string;
     name?: string;
@@ -70,7 +52,7 @@ export interface BecknLocation {
     city: string;
     state: string;
     country: string;
-    area_code: string;          // Pincode
+    area_code: string;          
   };
   circle?: {
     gps: string;
@@ -90,7 +72,7 @@ export interface BecknFulfillment {
   id: string;
   type: 'Delivery' | 'Self-Pickup';
   '@ondc/org/category'?: string;
-  '@ondc/org/TAT'?: string;     // ISO 8601 Duration (e.g., 'P2D')
+  '@ondc/org/TAT'?: string;     
   provider_id?: string;
   tracking?: boolean;
   state?: {
@@ -164,7 +146,7 @@ export interface BecknItem {
   id: string;
   fulfillment_id: string;
   quantity: { count: number };
-  // Additional fields populated by BPP
+
   descriptor?: BecknDescriptorFull;
   price?: { currency: string; value: string };
   category_id?: string;
@@ -211,21 +193,11 @@ export interface BecknCancellationTerm {
   reason_required?: boolean;
 }
 
-// ============================================================================
-// API REQUEST/RESPONSE TYPES
-// ============================================================================
-
-/**
- * Generic Beckn request wrapper
- */
 export interface BecknRequest<T = any> {
   context: BecknContext;
   message: T;
 }
 
-/**
- * Generic Beckn response (used for on_* callbacks)
- */
 export interface BecknResponse<T = any> {
   context: BecknContext;
   message: T;
@@ -239,7 +211,6 @@ export interface BecknError {
   message: string;
 }
 
-// --- search / on_search ---
 export interface SearchMessage {
   intent: {
     item?: { descriptor?: { name?: string }; category?: { id?: string }; price?: { minimum_value?: string; maximum_value?: string } };
@@ -291,7 +262,6 @@ export interface BecknCatalogItemFull {
   '@ondc/org/statutory_reqs_prepackaged_food'?: BecknTagGroup;
 }
 
-// --- select / on_select ---
 export interface SelectMessage {
   order: {
     provider: { id: string; locations?: Array<{ id: string }> };
@@ -310,7 +280,6 @@ export interface OnSelectMessage {
   };
 }
 
-// --- init / on_init ---
 export interface InitMessage {
   order: {
     provider: { id: string };
@@ -337,7 +306,6 @@ export interface OnInitMessage {
   };
 }
 
-// --- confirm / on_confirm ---
 export interface ConfirmMessage {
   order: BecknOrder;
 }
@@ -351,7 +319,6 @@ export interface OnConfirmMessage {
   };
 }
 
-// --- status / on_status ---
 export interface StatusMessage {
   order_id: string;
 }
@@ -364,7 +331,6 @@ export interface OnStatusMessage {
   };
 }
 
-// --- cancel / on_cancel ---
 export interface CancelMessage {
   order_id: string;
   cancellation_reason_id: string;
@@ -380,7 +346,6 @@ export interface OnCancelMessage {
   };
 }
 
-// --- update / on_update ---
 export interface UpdateMessage {
   update_target: 'fulfillment' | 'item' | 'order';
   order: Partial<BecknOrder> & { id: string };
@@ -390,7 +355,6 @@ export interface OnUpdateMessage {
   order: BecknOrder & { id: string; state: string };
 }
 
-// --- track / on_track ---
 export interface TrackMessage {
   order_id: string;
   callback_url?: string;
@@ -404,12 +368,11 @@ export interface OnTrackMessage {
   };
 }
 
-// --- rating / on_rating ---
 export interface RatingMessage {
   ratings: Array<{
     id: string;
     rating_category: string;
-    value: string;      // '1' to '5'
+    value: string;      
     feedback_form?: Array<{ question: string; answer: string }>;
   }>;
 }
@@ -419,9 +382,8 @@ export interface OnRatingMessage {
   rating_ack: boolean;
 }
 
-// --- support / on_support ---
 export interface SupportMessage {
-  ref_id: string;       // order_id or transaction_id
+  ref_id: string;       
 }
 
 export interface OnSupportMessage {
@@ -429,10 +391,6 @@ export interface OnSupportMessage {
   email?: string;
   url?: string;
 }
-
-// ============================================================================
-// ONDC SPECIFIC CONSTANTS
-// ============================================================================
 
 export const ONDC_DOMAINS = {
   GROCERY: 'ONDC:RET10',

@@ -1,16 +1,3 @@
-/**
- * Agent Handler Lambda
- * 
- * Unified handler that routes ALL messages through the personal AI agent.
- * No more separate voice/image/confirmation handlers - everything goes through the agent.
- * 
- * The agent:
- * - Maintains full conversation memory
- * - Generates all responses dynamically
- * - Asks clarifying questions
- * - Handles dilemmas interactively
- * - Operates in real-time
- */
 
 import { processWithEnhancedAgent, sendEnhancedAgentMessage } from '../services/enhanced-agent';
 import { getUserState, updateUserState } from '../services/state-manager';
@@ -30,14 +17,10 @@ import { DynamoDBDocumentClient, ScanCommand, UpdateCommand, GetCommand } from '
 
 const marketplaceDdbClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
-/**
- * Normalize Hindi/Hinglish number words to digits in transcribed text.
- * Handles common Transcribe outputs like "sau" (100), "hazaar" (1000), etc.
- */
 function normalizeHindiNumbers(text: string): string {
-  // Hindi number word mappings (romanized + Devanagari)
+
   const numberWords: Record<string, number> = {
-    // Basic numbers
+
     'ek': 1, 'एक': 1,
     'do': 2, 'दो': 2,
     'teen': 3, 'तीन': 3,
@@ -67,40 +50,34 @@ function normalizeHindiNumbers(text: string): string {
     'sattar': 70, 'सत्तर': 70,
     'assi': 80, 'अस्सी': 80,
     'nabbe': 90, 'नब्बे': 90,
-    // Hundred variants
+
     'sau': 100, 'सौ': 100,
-    // Thousand variants
+
     'hazaar': 1000, 'हज़ार': 1000, 'hazar': 1000, 'hajaar': 1000, 'हजार': 1000,
-    // Lakh/Crore
+
     'lakh': 100000, 'लाख': 100000, 'lac': 100000,
     'crore': 10000000, 'करोड़': 10000000, 'karod': 10000000,
-    // Common compound patterns
+
     'dedh sau': 150, 'डेढ़ सौ': 150,
     'dhai sau': 250, 'ढाई सौ': 250,
     'dedh': 1.5, 'डेढ़': 1.5,
     'dhai': 2.5, 'ढाई': 2.5,
-    'sadhe': 0.5, 'साढ़े': 0.5,  // used as prefix: "sadhe teen sau" = 350
+    'sadhe': 0.5, 'साढ़े': 0.5,  
   };
 
-  // Helper: build word-boundary regex that works for BOTH ASCII and Devanagari/Unicode
-  // \b only works for [a-zA-Z0-9_] — Devanagari chars are NOT \w, so \b fails for them.
-  // Use Unicode-aware lookbehind/lookahead for Devanagari, and \b for ASCII.
   function wordBoundaryRegex(word: string, flags: string = 'gi'): RegExp {
     const isDevanagari = /[\u0900-\u097F]/.test(word);
     if (isDevanagari) {
-      // For Devanagari: match when preceded by start/space/digit and followed by end/space/digit
+
       const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       return new RegExp(`(?<=^|[\\s\\d])${escaped}(?=$|[\\s\\d])`, flags);
     }
-    // ASCII: standard \b works fine
+
     return new RegExp(`\\b${word}\\b`, flags);
   }
 
   let result = text;
 
-  // Handle compound patterns first (e.g., "do sau pachaas" → 250, "paanch hazaar" → 5000)
-  // Pattern: <multiplier> sau/hazaar/lakh [additional]
-  // ASCII version
   const compoundPatternAscii = /\b(ek|do|teen|char|panch|paanch|cheh|chhe|saat|aath|nau|das|bees|tees|chaalees|pachaas)\s+(sau|hazaar|hazar|hajaar|lakh|lac|crore|karod)\b/gi;
   result = result.replace(compoundPatternAscii, (match, multiplierWord, unitWord) => {
     const multiplier = numberWords[multiplierWord.toLowerCase()] || 1;
@@ -108,7 +85,6 @@ function normalizeHindiNumbers(text: string): string {
     return String(multiplier * unit);
   });
 
-  // Devanagari compound version — uses Unicode-aware boundaries
   const devanagariMultipliers = 'एक|दो|तीन|चार|पाँच|छह|सात|आठ|नौ|दस|बीस|तीस|चालीस|पचास';
   const devanagariUnits = 'सौ|हज़ार|हजार|लाख|करोड़';
   const compoundPatternDev = new RegExp(
@@ -120,10 +96,8 @@ function normalizeHindiNumbers(text: string): string {
     return String(multiplier * unit);
   });
 
-  // Handle standalone number words (replace remaining uncompounded ones)
-  // Sort by length descending so longer matches go first (e.g., "dedh sau" before "sau")
   const sortedWords = Object.entries(numberWords)
-    .filter(([_, v]) => v >= 10) // Only replace substantial numbers standalone
+    .filter(([_, v]) => v >= 10) 
     .sort((a, b) => b[0].length - a[0].length);
 
   for (const [word, num] of sortedWords) {
@@ -131,24 +105,20 @@ function normalizeHindiNumbers(text: string): string {
     result = result.replace(regex, String(num));
   }
 
-  // Clean up "dedh sau", "dhai sau" patterns that may have been partially replaced
   result = result.replace(/\b1\.5\s+100\b/g, '150');
   result = result.replace(/\b2\.5\s+100\b/g, '250');
   result = result.replace(/\b1\.5\s+1000\b/g, '1500');
   result = result.replace(/\b2\.5\s+1000\b/g, '2500');
 
-  // Handle Hindi compound number addition: "100 50" → "150" when before a unit word
-  // Only add when n2 < n1 (valid Hindi: "sau pachaas" = 150, but "100 100" is NOT 200)
   result = result.replace(/(\d+)\s+(\d+)(?=\s*(rupaye|rupee|kilo|kg|gram|रुपये|किलो|ग्राम|rupaiye))/gi, 
     (match, n1, n2) => {
       const num1 = parseInt(n1);
       const num2 = parseInt(n2);
-      // Only add if n2 < n1 (Hindi additive: "sau pachaas" = 100 + 50)
-      // If n2 >= n1, they're separate numbers, not a compound
+
       if (num2 < num1) {
         return String(num1 + num2);
       }
-      return match; // Keep as-is (separate numbers)
+      return match; 
     }
   );
 
@@ -156,9 +126,6 @@ function normalizeHindiNumbers(text: string): string {
   return result;
 }
 
-/**
- * Agent handler event
- */
 interface AgentHandlerEvent {
   phone: string;
   messageId: string;
@@ -171,10 +138,6 @@ interface AgentHandlerEvent {
   language?: 'hi-IN' | 'mr-IN' | 'en-IN';
 }
 
-/**
- * Main agent handler
- * Lambda timeout is 5 minutes — no artificial timeout wrapper needed.
- */
 export const handler = async (event: any): Promise<any> => {
   console.log('🤖 Agent handler invoked:', JSON.stringify(event, null, 2));
   return processAgentEvent(event);
@@ -189,20 +152,15 @@ async function processAgentEvent(event: any): Promise<any> {
       throw new Error('Phone number is required');
     }
 
-    // ── TYPING INDICATOR: Exact reference implementation ──────────────────────
-    // markMessageAsRead(messageID, true) = read receipt + typing bubble (~25s)
-    // Called unconditionally here, same as: markMessageAsRead(messageID, true)
     const { sendTypingIndicator, markMessageAsRead, setLastMessageId } = await import('./whatsapp-message-sender');
     if (eventDetail.messageId) {
       setLastMessageId(phone, eventDetail.messageId);
       await markMessageAsRead(eventDetail.messageId, true);
     } else {
-      // No messageId in event (e.g. internal re-trigger) — still refresh typing via cache
+
       await sendTypingIndicator(phone);
     }
-    // ── END TYPING INDICATOR ────────────────────────────────────────────────────
 
-    // Get user state and context
     const userState = await getUserState(phone);
     const conversationContext = await getConversationContext(phone);
     const partialData = await getPartialData(phone);
@@ -213,11 +171,9 @@ async function processAgentEvent(event: any): Promise<any> {
       conversationLength: conversationContext?.messages.length || 0,
     });
 
-    // Handle different message types
     let userMessage = '';
     let shouldProcessWithAgent = true;
 
-    // Keep typing active during voice transcription
     switch (messageType) {
       case 'voice':
       case 'audio':
@@ -250,7 +206,7 @@ async function processAgentEvent(event: any): Promise<any> {
         break;
 
       default:
-        // Never error out on unknown message types — respond helpfully
+
         console.warn('⚠️ Unknown message type:', messageType);
         userMessage = `[User sent a ${messageType || 'unknown'} message]`;
         break;
@@ -258,7 +214,7 @@ async function processAgentEvent(event: any): Promise<any> {
 
     if (!userMessage) {
       console.log('⚠️ No user message to process, sending helpful response');
-      // NEVER fail silently — always respond to the user
+
       const emptyMsgResponse: Record<string, string> = {
         'hi-IN': 'मुझे आपका मैसेज समझ नहीं आया। कृपया दुबारा वॉइस मैसेज भेजें या टाइप करके बताएं की आपको क्या चाहिए।',
         'mr-IN': 'मला तुमचा मेसेज समजला नाही. कृपया पुन्हा व्हॉइस मेसेज पाठवा।',
@@ -272,12 +228,8 @@ async function processAgentEvent(event: any): Promise<any> {
       return { success: true };
     }
 
-    // For CONFIRMATION_PENDING state:
-    // 1) Detect verbal confirmation ("haan", "ok", "theek hai") → approve immediately
-    // 2) Detect price/quantity updates → apply and resend confirmation
     if (userState?.state === 'CONFIRMATION_PENDING' && partialData) {
-      // ── VERBAL CONFIRMATION SHORTCUT ─────────────────────────────────────
-      // If user says yes/haan/theek hai, approve directly without LLM
+
       if (detectVerbalConfirmation(userMessage)) {
         console.log('⚡ Verbal confirmation detected — directly approving catalog');
         await createCatalog(phone, language);
@@ -291,10 +243,8 @@ async function processAgentEvent(event: any): Promise<any> {
       }
     }
 
-    // Keep typing indicator active while agent processes
     await sendTypingIndicator(phone, eventDetail.messageId);
 
-    // Process with agent
     if (shouldProcessWithAgent) {
       const agentResponse = await processWithEnhancedAgent(
         phone,
@@ -306,10 +256,8 @@ async function processAgentEvent(event: any): Promise<any> {
 
       console.log('🤖 Agent response:', agentResponse);
 
-      // Refresh typing before sending response
       await sendTypingIndicator(phone, eventDetail.messageId);
 
-      // Send agent message with correct response mode
       await sendEnhancedAgentMessage(
         phone, 
         agentResponse.message, 
@@ -318,7 +266,6 @@ async function processAgentEvent(event: any): Promise<any> {
         eventDetail.messageId
       );
 
-      // Execute agent actions
       if (agentResponse.actions && agentResponse.actions.length > 0) {
         await executeAgentActions(phone, agentResponse.actions, language);
       }
@@ -330,13 +277,12 @@ async function processAgentEvent(event: any): Promise<any> {
     };
   } catch (error: any) {
     console.error('❌ Agent handler error:', error);
-    
-    // Send specific, helpful error message to user — NEVER fail silently
+
     try {
       const phone = event.detail?.phone || event.phone;
       const language = event.detail?.language || event.language || 'hi-IN';
       if (phone) {
-        // Show typing indicator before error message for natural UX
+
         try { 
           const { sendTypingIndicator: sendTyp } = await import('./whatsapp-message-sender');
           await sendTyp(phone, (event.detail || event)?.messageId); 
@@ -344,7 +290,7 @@ async function processAgentEvent(event: any): Promise<any> {
 
         let errorMessage = '';
         const errMsg = error.message || '';
-        
+
         if (errMsg.includes('transcription') || errMsg.includes('audio') || errMsg.includes('download')) {
           errorMessage = language === 'en-IN' 
             ? 'Your voice message was not clear. Could you send it again, a bit louder? You can also type your message if you prefer.' 
@@ -376,30 +322,20 @@ async function processAgentEvent(event: any): Promise<any> {
   }
 }
 
-/**
- * Detect verbal confirmation intent during CONFIRMATION_PENDING.
- * Matches affirmative words in Hindi (romanized + Devanagari), Marathi, and English.
- * Short-circuits the LLM call — directly approves the catalog.
- */
 export function detectVerbalConfirmation(message: string): boolean {
   const m = message.toLowerCase().trim();
 
-  // Very short messages (1-4 words) — check affirmative patterns
   const wordCount = m.split(/\s+/).length;
 
-  // Romanized Hindi / English affirmatives (case-insensitive)
   const romanized = /\b(haan|ha|haa|han|ji\s*haan|yes|yeah|yep|yup|ok|okay|okie|theek\s*hai|thik\s*hai|sahi\s*hai|sahi|theek|thik|approve|approved|confirm|confirmed|done|bilkul|kar\s*do|kar\s*de|kar\s*dena|ban\s*jaye|chalega|chal|chalo|pakka|acha|accha|achha|achchha|ready|agreed|sab\s*theek|sab\s*thik|correct|right|laga\s*do|ho\s*gaya|ho\s*jayega|manzoor|rakh\s*do|chaaluuuu|chalu|daal\s*do|dal\s*do)\b/i;
   if (romanized.test(m)) return true;
 
-  // Hindi Devanagari affirmatives
   const hindi = /हाँ|हां|हा\b|जी\s*हाँ|जी\s*हां|ठीक\s*है|ठीक|सही\s*है|सही|हो\b|कर\s*दो|कर\s*दे|बन\s*जाये|बिल्कुल|पक्का|अच्छा|कन्फर्म|सब\s*ठीक|मंजूर|लगा\s*दो|रख\s*दो|डाल\s*दो|चालू|तैयार|हो\s*गया/;
   if (hindi.test(message)) return true;
 
-  // Marathi affirmatives
   const marathi = /हो\b|होय|चालेल|ठीक\s*आहे|बरोबर|मंजूर|करा|करा\s*ना|ठीक|योग्य/;
   if (marathi.test(message)) return true;
 
-  // For very short messages (1-2 words), also catch "ji", "hmm", "ho" alone
   if (wordCount <= 2) {
     const shortAffirm = /^(ji|jee|hmm|hm|ho|हो|जी|हम्म)$/i;
     if (shortAffirm.test(m)) return true;
@@ -408,10 +344,6 @@ export function detectVerbalConfirmation(message: string): boolean {
   return false;
 }
 
-/**
- * Server-side category auto-detection from product name.
- * Used as a safety net when LLM doesn't set category.
- */
 function autoDetectCategory(productName: string): string {
   if (!productName) return 'Grocery';
   const p = productName.toLowerCase();
@@ -431,13 +363,9 @@ function autoDetectCategory(productName: string): string {
   if (spices.some(s => p.includes(s))) return 'Spices';
   if (eggs.some(e => p.includes(e))) return 'Eggs & Poultry';
   if (grocery.some(g => p.includes(g))) return 'Grocery';
-  return 'Grocery'; // safe default
+  return 'Grocery'; 
 }
 
-/**
- * Detect and apply price/quantity updates from user message during CONFIRMATION_PENDING
- * Returns true if an update was detected and applied, false otherwise
- */
 async function detectAndApplyUpdate(
   message: string,
   phone: string,
@@ -446,7 +374,6 @@ async function detectAndApplyUpdate(
   messageId?: string
 ): Promise<string | null> {
 
-  // ── Price patterns ──────────────────────────────────────────────────────────
   const pricePatterns = [
     /(?:keemat|kimat|price|daam|dam|rate)\s*(?:₹|rs\.?)?\s*(\d+)/i,
     /(?:₹|rs\.?)\s*(\d+)/i,
@@ -457,8 +384,6 @@ async function detectAndApplyUpdate(
     /दाम\s*(?:₹)?\s*(\d+)/,
   ];
 
-  // ── Quantity patterns (unit-bearing numbers are quantity; bare numbers need
-  //    disambiguation — if price is already set, bare number = quantity) ───────
   const quantityPatterns = [
     /(?:matra|quantity|qty|kitna|kitne)\s*(\d+)/i,
     /(\d+)\s*(?:kg|kilo(?:gram)?|पीस|piece|pcs|dozen|दर्जन|liter|litre|packet|bag|bundle|गट्ठा)/i,
@@ -467,7 +392,6 @@ async function detectAndApplyUpdate(
     /(\d+)\s*(?:किलो|ग्राम|लीटर)\b/,
   ];
 
-  // ── Unit patterns (detect unit associated with a quantity number) ───────────
   const unitMap: Record<string, string> = {
     kg: 'kg', kilo: 'kg', kilogram: 'kg', किलो: 'kg', ग्राम: 'gram',
     piece: 'piece', pcs: 'piece', पीस: 'piece',
@@ -489,7 +413,6 @@ async function detectAndApplyUpdate(
   let newQty: number | null = null;
   let newUnit: string | null = null;
 
-  // ── Try to extract price ────────────────────────────────────────────────────
   for (const pattern of pricePatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
@@ -501,13 +424,12 @@ async function detectAndApplyUpdate(
     }
   }
 
-  // ── Try to extract quantity ─────────────────────────────────────────────────
   for (const pattern of quantityPatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
       const candidate = parseInt(match[1]);
       if (candidate > 0 && candidate < 100000) {
-        // Make sure this is not the SAME digit we already picked as price
+
         if (newPrice === null || candidate !== newPrice) {
           newQty = candidate;
           newUnit = extractUnit(message);
@@ -517,31 +439,24 @@ async function detectAndApplyUpdate(
     }
   }
 
-  // ── Bare-number disambiguation: if only one number in message ───────────────
-  //    "80 rakh do" in CONFIRMATION_PENDING with price already set → quantity
-  //    "80 rakh do" with price NOT set → price
-  //    GUARD: skip if message looks like a UPI ID (contains @) to prevent
-  //    extracting digits from e.g. "seller7@upi" as price=7
   const looksLikeUpi = /\w+@\w+/.test(message);
   const bareNumberMatch = message.match(/^[^\d]*(\d+)[^\d]*$/);
   if (bareNumberMatch && newPrice === null && newQty === null && !looksLikeUpi) {
     const bare = parseInt(bareNumberMatch[1]);
     if (bare > 0 && bare < 1000000) {
       if (partialData?.price && !partialData?.quantity) {
-        // price is known → this bare number is the quantity
+
         newQty = bare;
         newUnit = extractUnit(message);
       } else {
-        // treat as a price update
+
         newPrice = bare;
       }
     }
   }
 
-  // Nothing detected
   if (newPrice === null && newQty === null) return null;
 
-  // ── Apply all detected updates in a single merge ────────────────────────────
   const updates: Record<string, any> = { source: 'text' };
   const summary: string[] = [];
   if (newPrice !== null) { updates.price = newPrice; summary.push(`price=₹${newPrice}`); }
@@ -551,7 +466,6 @@ async function detectAndApplyUpdate(
   console.log(`📝 Applying CONFIRMATION_PENDING updates:`, updates);
   await mergePartialData(phone, updates);
 
-  // ── ACK message to user while confirmation regenerates ──────────────────────
   const { sendEnhancedAgentMessage } = await import('../services/enhanced-agent');
   const ackMessages: Record<string, string> = {
     'hi-IN': newPrice !== null && newQty !== null
@@ -572,14 +486,13 @@ async function detectAndApplyUpdate(
   };
   await sendEnhancedAgentMessage(phone, ackMessages[language] || ackMessages['hi-IN'], language as any, 'voice');
 
-  // ── Re-invoke confirmation handler to resend photo + text card ───────────────
   try {
     const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
     const { InvokeCommand } = await import('@aws-sdk/client-lambda');
     const { lambdaClient } = await import('../config/aws-clients');
     await lambdaClient.send(new InvokeCommand({
       FunctionName: confirmationFunctionName,
-      InvocationType: 'Event', // async — don't wait, user already got the ack
+      InvocationType: 'Event', 
       Payload: JSON.stringify({ detail: { phone, action: 'generate', messageId } }),
     }));
     console.log('✅ Confirmation handler re-invoked after update (messageId:', messageId, ')');
@@ -589,40 +502,36 @@ async function detectAndApplyUpdate(
 
   return summary.join(', ');
 }
-/**
- * Handle voice message
- */
+
 async function handleVoiceMessage(eventDetail: any): Promise<string> {
   console.log('Handling voice message:', eventDetail.content.mediaUrl);
-  
-  // Download audio from WhatsApp first
+
   const { downloadAudio } = await import('../services/media-download');
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
-  
+
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for voice');
-    return ''; // Will trigger the friendly "couldn\'t understand" response
+    return ''; 
   }
-  
+
   console.log('Downloading audio from WhatsApp...');
   const downloadResult = await downloadAudio(eventDetail.content.mediaUrl, bucketName);
-  
+
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Audio download failed:', downloadResult.error);
-    return ''; // Will trigger the friendly "couldn\'t understand" response
+    return ''; 
   }
-  
+
   console.log('Audio downloaded successfully:', downloadResult.s3Url);
-  
-  // Import voice transcription
+
   const { handler: transcriptionHandler } = await import('./voice-transcription');
-  
+
   console.log('Voice transcription request:', {
     audioUrl: downloadResult.s3Url,
     messageId: eventDetail.messageId,
     languageCode: eventDetail.language,
   });
-  
+
   const transcriptionResult = await transcriptionHandler({
     audioUrl: downloadResult.s3Url,
     messageId: eventDetail.messageId,
@@ -631,19 +540,15 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
     console.error('Voice transcription failed:', transcriptionResult.error);
-    return ''; // Will trigger the friendly "couldn\'t understand" response
+    return ''; 
   }
 
   console.log('Transcription successful:', transcriptionResult.transcription);
-  
-  // Normalize Hindi number words to digits
+
   const normalizedText = normalizeHindiNumbers(transcriptionResult.transcription);
   return normalizedText;
 }
 
-/**
- * Handle image message
- */
 async function handleImageMessage(
   eventDetail: any,
   phone: string,
@@ -651,11 +556,9 @@ async function handleImageMessage(
 ): Promise<string> {
   const partialData = await getPartialData(phone);
 
-  // Try to download + store image FIRST, regardless of product context.
-  // This handles rapid sequential messages (voice + photo) where voice hasn't finished yet.
   const { downloadImage } = await import('../services/media-download');
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
-  
+
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for image');
     const errMsg: Record<string, string> = {
@@ -667,7 +570,6 @@ async function handleImageMessage(
     return '__HANDLED__';
   }
 
-  // Download image from WhatsApp and upload to S3
   const downloadResult = await downloadImage(eventDetail.content.mediaUrl, bucketName);
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Image download failed');
@@ -680,22 +582,19 @@ async function handleImageMessage(
     return '__HANDLED__';
   }
 
-  // Always store the image URL in partial data immediately
   await mergePartialData(phone, { originalImageUrl: downloadResult.s3Url });
   console.log('📸 Image stored in partial data:', downloadResult.s3Url);
 
-  // If no product context yet, the photo was sent before/alongside product info
-  // Store the image and send a brief acknowledgment — when STORE_DATA runs, it'll merge
   if (!partialData || !partialData.productName) {
-    // Wait briefly in case voice message STORE_DATA is completing right now
+
     await new Promise(resolve => setTimeout(resolve, 2000));
     const refreshedData = await getPartialData(phone);
-    
+
     if (refreshedData && refreshedData.productName) {
-      // Voice message was processed during our wait — continue with the product context
+
       console.log('📸 Product context available after brief wait, continuing with image processing');
     } else {
-      // Still no product context — acknowledge the photo and wait for product info
+
       const guidance: Record<string, string> = {
         'hi-IN': 'Photo mil gayi! Ab voice message mein product ka naam aur daam bata dijiye, jaise "tamatar pachaas rupaye kilo". Photo automatically jud jaayegi.',
         'mr-IN': 'Photo milala! Aata voice message madhye product che naav aani kimmat sanga, jase "tomato pachaas rupaye kilo". Photo aapoaap judel.',
@@ -706,7 +605,6 @@ async function handleImageMessage(
     }
   }
 
-  // We have product context — proceed with image enhancement
   const { handler: enhancementHandler } = await import('./image-enhancement');
 
   try {
@@ -728,22 +626,20 @@ async function handleImageMessage(
     console.error('Image enhancement failed, using original:', error);
   }
 
-  // Check if all required fields are present → trigger confirmation flow
   const updatedPartial = await getPartialData(phone);
   const hasMissingFields = updatedPartial?.missingFields && updatedPartial.missingFields.length > 0;
 
-  // Guard: reject placeholder/generic product names (same check as STORE_DATA handler)
   const PLACEHOLDER_NAMES_IMG = ['product', 'item', 'goods', 'unknown', 'na', 'n/a', 'product name', 'any product'];
   const imgProductNameLower = (updatedPartial?.productName || '').toLowerCase().trim();
   const imgHasRealProductName = !!(updatedPartial?.productName) &&
     !PLACEHOLDER_NAMES_IMG.includes(imgProductNameLower) &&
     imgProductNameLower.length >= 2;
-  
+
   if (updatedPartial && !hasMissingFields && imgHasRealProductName) {
-    // All product data + image (with real product name) → trigger confirmation handler directly
+
     console.log('✅ All fields + image present (real product name), triggering confirmation flow');
     await updateUserState(phone, 'CONFIRMATION_PENDING');
-    
+
     try {
       const confirmationFunctionName = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
       const { InvokeCommand } = await import('@aws-sdk/client-lambda');
@@ -761,7 +657,6 @@ async function handleImageMessage(
     return '__CONFIRMATION_TRIGGERED__';
   }
 
-  // Image received but some product fields still missing → ask for them
   const missingStr = updatedPartial?.missingFields?.join(', ') || 'details';
   console.log('📸 Image received but missing fields:', missingStr);
   const missingLabel = missingStr === 'price' ? 'keemat' : missingStr === 'quantity' ? 'matra' : missingStr === 'unit' ? 'ikaai, jaise kilo ya piece' : 'kuch jaankari';
@@ -774,9 +669,6 @@ async function handleImageMessage(
   return '__HANDLED__';
 }
 
-/**
- * Handle button click
- */
 async function handleButtonClick(
   eventDetail: any,
   phone: string,
@@ -784,26 +676,23 @@ async function handleButtonClick(
 ): Promise<string> {
   const buttonPayload = eventDetail.content.buttonPayload;
 
-  // Convert button clicks to natural language messages for enhanced agent processing
   let userMessage = '';
-  
-  // Handle order accept/reject buttons (from marketplace orders)
+
   if (buttonPayload.startsWith('accept_order_')) {
     const orderId = buttonPayload.replace('accept_order_', '');
     await handleOrderAcceptReject(phone, orderId, 'ACCEPTED', language);
     return '__HANDLED__';
   }
-  
+
   if (buttonPayload.startsWith('reject_order_')) {
     const orderId = buttonPayload.replace('reject_order_', '');
     await handleOrderAcceptReject(phone, orderId, 'REJECTED', language);
     return '__HANDLED__';
   }
-  
+
   switch (buttonPayload) {
     case 'approve':
-      // Create catalog and return immediately — no further AI processing needed
-      // (extra AI call after createCatalog was triggering spurious STORE_DATA/confirmation)
+
       await createCatalog(phone, language);
       return '__HANDLED__';
 
@@ -819,16 +708,10 @@ async function handleButtonClick(
       userMessage = `Button clicked: ${buttonPayload}`;
   }
 
-  // Process button click through enhanced agent for consistent experience
   const agentResponse = await processWithEnhancedAgent(phone, userMessage, 'text', language as any, eventDetail.messageId);
   return agentResponse.message;
 }
 
-/**
- * Decrement product stock in marketplace-products table.
- * Called when order is CONFIRMED (either via seller accept or UPI auto-confirm).
- * Returns stock status for each item.
- */
 async function decrementMarketplaceStock(
   items: Array<{ itemId?: string; productId?: string; name: string; quantity: number; unit?: string }>
 ): Promise<Array<{ name: string; remainingQty: number; orderedQty: number; unit: string; outOfStock: boolean }>> {
@@ -873,7 +756,6 @@ async function decrementMarketplaceStock(
         outOfStock: remaining <= 0,
       });
 
-      // Mark out of stock
       if (remaining <= 0) {
         try {
           await marketplaceDdbClient.send(new UpdateCommand({
@@ -907,9 +789,6 @@ async function decrementMarketplaceStock(
   return stockResults;
 }
 
-/**
- * Build stock update voice message
- */
 function buildStockVoiceMessage(
   stockResults: Array<{ name: string; remainingQty: number; orderedQty: number; unit: string; outOfStock: boolean }>,
   lang: string
@@ -936,10 +815,6 @@ function buildStockVoiceMessage(
   return `${header}। ${lines.join(' ')}${warning}`;
 }
 
-/**
- * Handle order accept/reject from seller.
- * Updates order status, notifies buyer via voice, and guides payment flow.
- */
 async function handleOrderAcceptReject(
   sellerPhone: string,
   orderId: string,
@@ -949,7 +824,6 @@ async function handleOrderAcceptReject(
   try {
     console.log(`📦 Order ${decision}: ${orderId} by seller ${sellerPhone}`);
 
-    // Fetch the order record
     const orderResult = await docClient.send(new GetCommand({
       TableName: TABLE_NAME,
       Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
@@ -966,7 +840,6 @@ async function handleOrderAcceptReject(
       return;
     }
 
-    // If order is already CONFIRMED (e.g., auto-accepted UPI), inform the seller
     if (order.status === 'CONFIRMED' || order.status === 'CANCELLED') {
       console.log(`Order ${orderId} already ${order.status}, skipping accept/reject`);
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
@@ -985,7 +858,6 @@ async function handleOrderAcceptReject(
     const newStatus = decision === 'ACCEPTED' ? 'CONFIRMED' : 'CANCELLED';
     const buyerPhone = order.buyer?.phone || order.fulfillment?.contact?.phone;
 
-    // Update order status in DynamoDB (including GSI2SK for status queries)
     await docClient.send(new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
@@ -1018,13 +890,12 @@ async function handleOrderAcceptReject(
     const paymentMethod = order.payment?.method || 'COD';
 
     if (decision === 'ACCEPTED') {
-      // -- Seller confirmation --
+
       const sellerMsg = lang === 'hi'
         ? `✅ ऑर्डर स्वीकार किया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI भुगतान' : 'कैश ऑन डिलीवरी'}\n\n${paymentMethod === 'UPI' ? '💡 UPI भुगतान आने का इंतजार करें। भुगतान मिलने पर आपको सूचना मिलेगी।' : '📦 कृपया ऑर्डर पैक करें और डिलीवरी की तैयारी करें!'}`
         : `✅ Order Accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI Payment' : 'Cash on Delivery'}\n\n${paymentMethod === 'UPI' ? '💡 Wait for UPI payment. You will be notified when payment is received.' : '📦 Please pack the order and prepare for delivery!'}`;
       await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
 
-      // -- Buyer notification --
       if (buyerPhone) {
         const buyerMsg = lang === 'hi'
           ? `🎉 आपका ऑर्डर स्वीकार हो गया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 कृपया UPI से ₹' + totalAmount + ' भुगतान करें। भुगतान के बाद स्क्रीनशॉट या रेफरेंस नंबर भेजें।' : '💵 कैश ऑन डिलीवरी - डिलीवरी के समय भुगतान करें।'}\n\n🚚 डिलीवरी जल्द होगी!`
@@ -1032,7 +903,6 @@ async function handleOrderAcceptReject(
         await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
       }
 
-      // -- Decrement stock after order confirmed --
       try {
         const stockResults = await decrementMarketplaceStock(items);
         if (stockResults.length > 0) {
@@ -1045,13 +915,12 @@ async function handleOrderAcceptReject(
         console.error('Stock decrement error (non-fatal):', stockErr.message);
       }
     } else {
-      // -- Seller rejection confirmation --
+
       const sellerMsg = lang === 'hi'
         ? `ऑर्डर अस्वीकार किया गया। ग्राहक को सूचित कर दिया गया है। अगर कोई और ऑर्डर आए तो आपको बताएंगे।`
         : `Order rejected. The buyer has been notified. We'll let you know when new orders come in.`;
       await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
 
-      // -- Buyer notification --
       if (buyerPhone) {
         const buyerMsg = lang === 'hi'
           ? `माफ़ कीजिए, विक्रेता ने आपका ऑर्डर स्वीकार नहीं किया। ${itemSummary}. कृपया दूसरे विक्रेता से ऑर्डर करें।`
@@ -1073,9 +942,6 @@ async function handleOrderAcceptReject(
   }
 }
 
-/**
- * Execute agent actions
- */
 async function executeAgentActions(
   phone: string,
   actions: any[],
@@ -1096,7 +962,7 @@ async function executeAgentActions(
 
         case 'STORE_DATA':
           if (action.data) {
-            // ── Auto-detect category server-side if not set or Unknown ────────
+
             if (!action.data.category || action.data.category === 'Unknown') {
               const productNameForCategory = action.data.productName || '';
               action.data.category = autoDetectCategory(productNameForCategory);
@@ -1112,7 +978,6 @@ async function executeAgentActions(
               hasImage: !!(merged.originalImageUrl || merged.enhancedImageUrl),
             });
 
-            // Track in conversation memory with rich metadata for pattern extraction
             try {
               const { addConversationMessage } = await import('../services/conversation-memory');
               await addConversationMessage(phone, {
@@ -1133,14 +998,10 @@ async function executeAgentActions(
               console.warn('Failed to track STORE_DATA in conversation memory:', memErr);
             }
 
-            // Drive the state machine based on data completeness
             const allFieldsPresent = !merged.missingFields || merged.missingFields.length === 0;
             const hasImage = !!(merged.originalImageUrl || merged.enhancedImageUrl);
             const currentState = (await getUserState(phone))?.state;
 
-            // Guard: reject placeholder/generic product names that AI fills as defaults.
-            // If productName is 'Product', 'item', 'unknown' etc. treat it as missing
-            // to avoid IMAGE_PENDING/CONFIRMATION_PENDING with garbage data.
             const PLACEHOLDER_NAMES = ['product', 'item', 'goods', 'unknown', 'na', 'n/a', 'product name', 'any product'];
             const productNameLower = (merged.productName || '').toLowerCase().trim();
             const hasRealProductName = !!(merged.productName) &&
@@ -1148,7 +1009,7 @@ async function executeAgentActions(
               productNameLower.length >= 2;
 
             if (allFieldsPresent && hasRealProductName && hasImage) {
-              // All data + image → trigger confirmation
+
               console.log('✅ All fields + image complete, triggering confirmation');
               await updateUserState(phone, 'CONFIRMATION_PENDING');
               try {
@@ -1163,11 +1024,11 @@ async function executeAgentActions(
                 console.error('⚠️ Confirmation invoke failed:', e);
               }
             } else if (allFieldsPresent && hasRealProductName && !hasImage) {
-              // All text data present, need image → IMAGE_PENDING
+
               console.log('📸 All fields present, moving to IMAGE_PENDING');
               await updateUserState(phone, 'IMAGE_PENDING');
             } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE' || currentState === 'GUEST_ACTIVE') {
-              // Partial data (or placeholder name), move to VOICE_RECEIVED so user can provide more info
+
               console.log('📝 Partial data or placeholder name, moving to VOICE_RECEIVED');
               await updateUserState(phone, 'VOICE_RECEIVED');
             }
@@ -1183,10 +1044,10 @@ async function executeAgentActions(
           break;
 
         case 'SKIP_KYC':
-          // User chose to proceed as guest — transition to GUEST_ACTIVE
+
           console.log('Guest mode: skipping KYC for', phone);
           await updateUserState(phone, 'GUEST_ACTIVE');
-          // Create minimal seller profile so products can be stored
+
           try {
             const { createSellerProfile, getSellerByPhone } = await import('../services/dynamodb-repository');
             const existingSeller = await getSellerByPhone(phone);
@@ -1210,7 +1071,7 @@ async function executeAgentActions(
                 createdAt: now,
                 updatedAt: now,
               });
-              // Store sellerId in user state
+
               const { updateUserSellerId } = await import('../services/state-manager');
               await updateUserSellerId(phone, sellerId);
             }
@@ -1218,11 +1079,10 @@ async function executeAgentActions(
             console.warn('Guest seller profile creation failed (non-blocking):', e);
           }
 
-          // Send onboarding guide message (text + voice) — feature tour for new sellers
           await new Promise(resolve => setTimeout(resolve, 2000));
           const { sendOnboardingGuide } = await import('../services/onboarding-guide');
           await sendOnboardingGuide(phone, language);
-          // Mark guide as sent in metadata
+
           await updateUserState(phone, 'GUEST_ACTIVE', { guideSent: true });
           break;
 
@@ -1231,15 +1091,11 @@ async function executeAgentActions(
       }
     } catch (actionError: any) {
       console.error(`❌ Action ${action.type} failed:`, actionError.message);
-      // Don't let one failed action kill the whole handler
-      // The agent's MESSAGE was already sent — just log and continue
+
     }
   }
 }
 
-/**
- * Create catalog
- */
 async function createCatalog(phone: string, language: string): Promise<void> {
   const partialData = await getPartialData(phone);
 
@@ -1253,7 +1109,6 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     return;
   }
 
-  // Publish catalog build event
   const catalogBuilderEvent = {
     Source: EVENT_SOURCES.INTERNAL,
     DetailType: INTERNAL_EVENT_TYPES.CATALOG_BUILD_REQUESTED,
@@ -1281,17 +1136,15 @@ async function createCatalog(phone: string, language: string): Promise<void> {
 
   console.log('✅ Published catalog build event');
 
-  // Update state and clean up
   await updateUserState(phone, 'ACTIVE');
   await deletePartialData(phone);
   await trackSuccessfulCatalog(phone);
 
-  // Mark seller profile as ACTIVE + auto-populate cropsGrown for background agent
   try {
     const seller = await getSellerByPhone(phone);
     if (seller) {
       const profileUpdates: Record<string, any> = { onboardingState: 'ACTIVE' };
-      // Add product name to cropsGrown array (deduplicated)
+
       if (partialData?.productName) {
         const existingCrops = seller.cropsGrown || [];
         const newCrop = partialData.productName.toLowerCase().trim();
@@ -1306,7 +1159,6 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     console.warn('Non-critical: failed to update seller profile', e);
   }
 
-  // Send success message via agent
   const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
   const successMsg = lang === 'hi'
     ? '✅ आपका उत्पाद सफलतापूर्वक जोड़ा गया है। अब यह ऑनलाइन बिक्री के लिए तैयार है।'
@@ -1317,20 +1169,16 @@ async function createCatalog(phone: string, language: string): Promise<void> {
   await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
 }
 
-/**
- * Delete product from catalog and marketplace
- */
 async function deleteProduct(phone: string, productName: string, language: string): Promise<void> {
   try {
-    // Find the product in seller's catalog
+
     const catalogItems = await getCatalogItemsBySeller(phone);
-    
+
     if (!catalogItems || catalogItems.length === 0) {
       console.log('❌ No catalog items found for seller:', phone);
       return;
     }
 
-    // Find matching product by name (fuzzy match)
     const normalizedName = (productName || '').toLowerCase().trim();
     const matchingItem = catalogItems.find((item: any) => {
       const itemName = (item.becknItem?.descriptor?.name || '').toLowerCase().trim();
@@ -1351,10 +1199,8 @@ async function deleteProduct(phone: string, productName: string, language: strin
     const displayName = matchingItem.becknItem?.descriptor?.name || productName;
     console.log('🗑️ Deleting product:', { phone, itemId, productName: displayName });
 
-    // 1. Delete from main catalog (DynamoDB vyapar-vaani-data)
     await deleteCatalogItem(phone, itemId);
 
-    // 2. Publish catalog.deleted event for marketplace sync
     const eventBusName = process.env.EVENT_BUS_NAME;
     if (eventBusName) {
       await eventBridgeClient.send(new PutEventsCommand({
@@ -1376,7 +1222,7 @@ async function deleteProduct(phone: string, productName: string, language: strin
     console.log('✅ Product deleted successfully:', itemId);
   } catch (error: any) {
     console.error('❌ Failed to delete product:', error);
-    // Don't re-throw — send friendly error message instead
+
     try {
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
@@ -1389,9 +1235,6 @@ async function deleteProduct(phone: string, productName: string, language: strin
   }
 }
 
-/**
- * Register seller's UPI ID for receiving payments
- */
 async function registerUpi(phone: string, upiId: string, language: string): Promise<void> {
   try {
     if (!upiId || !upiId.includes('@')) {
@@ -1404,7 +1247,6 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
       return;
     }
 
-    // Look up seller profile by phone
     let seller: any = null;
     try {
       seller = await getSellerByPhone(phone);
@@ -1413,12 +1255,12 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
     }
 
     if (seller) {
-      // Update existing seller profile with UPI ID
+
       const sellerId = seller.PK.replace('SELLER#', '');
       await updateSellerProfile(sellerId, { upiId });
       console.log('✅ UPI ID registered for existing seller:', phone, upiId);
     } else {
-      // No seller profile yet — store UPI in user state so it's available when profile is created
+
       try {
         const { createSellerProfile } = await import('../services/dynamodb-repository');
         await createSellerProfile({
@@ -1436,7 +1278,7 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
         } as any);
         console.log('✅ Created minimal seller profile with UPI ID:', phone, upiId);
       } catch (createErr: any) {
-        // Profile might already exist (race condition) — try updating instead
+
         if (createErr.message?.includes('already exists') || createErr.name === 'ConditionalCheckFailedException') {
           console.log('⚠️ Profile exists, updating UPI instead');
           await updateSellerProfile(phone, { upiId });
@@ -1454,12 +1296,11 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
       : `✅ UPI ID *${upiId}* registered successfully. Customers can now pay you directly via UPI.`;
     await sendEnhancedAgentMessage(phone, successMsg, language as any, 'both');
 
-    // Also update all existing marketplace products with the new UPI ID
     await updateMarketplaceProductsUpi(phone, upiId);
 
   } catch (error: any) {
     console.error('❌ Failed to register UPI:', error);
-    // Don't re-throw — send friendly error message instead
+
     try {
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
@@ -1472,10 +1313,6 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
   }
 }
 
-/**
- * Update all marketplace products for a seller with their new UPI ID.
- * Called after UPI registration so buyers can see UPI payment option immediately.
- */
 async function updateMarketplaceProductsUpi(sellerPhone: string, upiId: string): Promise<void> {
   const tableName = process.env.MARKETPLACE_PRODUCTS_TABLE;
   if (!tableName) {
@@ -1484,7 +1321,7 @@ async function updateMarketplaceProductsUpi(sellerPhone: string, upiId: string):
   }
 
   try {
-    // Scan for all products belonging to this seller
+
     const scanResult = await marketplaceDdbClient.send(new ScanCommand({
       TableName: tableName,
       FilterExpression: '#seller.#phone = :phone',
@@ -1506,7 +1343,6 @@ async function updateMarketplaceProductsUpi(sellerPhone: string, upiId: string):
 
     console.log(`Updating ${products.length} marketplace products with UPI ID for seller ${sellerPhone}`);
 
-    // Update each product's seller.upiId
     const updatePromises = products.map(product =>
       marketplaceDdbClient.send(new UpdateCommand({
         TableName: tableName,
@@ -1523,6 +1359,6 @@ async function updateMarketplaceProductsUpi(sellerPhone: string, upiId: string):
     console.log(`✅ Updated ${products.length} marketplace products with UPI ID: ${upiId}`);
   } catch (error: any) {
     console.error('⚠️ Failed to update marketplace products with UPI (non-critical):', error.message);
-    // Non-critical — don't throw. Products will get UPI on next catalog sync.
+
   }
 }

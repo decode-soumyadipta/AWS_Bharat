@@ -1,14 +1,3 @@
-/**
- * Background Agent Service — Proactive Seller Intelligence
- * 
- * Runs on a schedule (daily at 7 PM IST via EventBridge) to:
- * 1. Fetch weather forecasts for seller locations (Open-Meteo API — free, no key)
- * 2. Fetch live market prices for sellers' crops (data.gov.in API)
- * 3. Generate personalized alerts via Bedrock Nova Lite
- * 4. Send proactive WhatsApp voice messages to sellers
- * 
- * Uses GSI5 (ACTIVE_SELLERS) to efficiently query all active sellers.
- */
 
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -21,19 +10,17 @@ import { addConversationMessage } from './conversation-memory';
 const TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
 const EVENT_BUS_NAME = process.env.EVENT_BUS_NAME || 'vyapar-vaani-events';
 
-// ── Weather API (Open-Meteo — free, no API key, unlimited) ──
-
 interface WeatherForecast {
   location: string;
-  temperature: number;       // °C
-  humidity: number;           // %
-  precipitation: number;      // mm
-  windSpeed: number;          // km/h
-  weatherCode: number;        // WMO code
-  description: string;        // Human-readable
+  temperature: number;       
+  humidity: number;           
+  precipitation: number;      
+  windSpeed: number;          
+  weatherCode: number;        
+  description: string;        
   maxTemp: number;
   minTemp: number;
-  alerts: string[];           // Generated alerts
+  alerts: string[];           
 }
 
 const WMO_WEATHER_CODES: Record<number, string> = {
@@ -48,7 +35,6 @@ const WMO_WEATHER_CODES: Record<number, string> = {
   95: 'Thunderstorm', 96: 'Thunderstorm with slight hail', 99: 'Thunderstorm with heavy hail',
 };
 
-// Default coordinates for major Indian agricultural states
 const STATE_COORDINATES: Record<string, { lat: number; lon: number }> = {
   'Maharashtra': { lat: 19.75, lon: 75.71 },
   'Uttar Pradesh': { lat: 26.85, lon: 80.91 },
@@ -65,12 +51,9 @@ const STATE_COORDINATES: Record<string, { lat: number; lon: number }> = {
   'Telangana': { lat: 18.11, lon: 79.02 },
   'Odisha': { lat: 20.94, lon: 84.09 },
   'Chhattisgarh': { lat: 21.27, lon: 81.87 },
-  'default': { lat: 20.59, lon: 78.96 }, // Centre of India
+  'default': { lat: 20.59, lon: 78.96 }, 
 };
 
-/**
- * Fetch weather forecast from Open-Meteo API
- */
 async function fetchWeather(location: SellerLocation): Promise<WeatherForecast | null> {
   try {
     const lat = location.latitude || STATE_COORDINATES[location.state || 'default']?.lat || STATE_COORDINATES['default'].lat;
@@ -95,10 +78,8 @@ async function fetchWeather(location: SellerLocation): Promise<WeatherForecast |
     const maxTemp = daily?.temperature_2m_max?.[0] || temp;
     const minTemp = daily?.temperature_2m_min?.[0] || temp;
 
-    // Generate weather alerts
     const alerts: string[] = [];
-    
-    // Heavy rain alert
+
     const tomorrowPrecip = daily?.precipitation_sum?.[1] || 0;
     if (tomorrowPrecip > 20) {
       alerts.push(`Heavy rain expected tomorrow (${Math.round(tomorrowPrecip)}mm). Protect outdoor crops and stored produce.`);
@@ -106,7 +87,6 @@ async function fetchWeather(location: SellerLocation): Promise<WeatherForecast |
       alerts.push(`Moderate rain expected tomorrow (${Math.round(tomorrowPrecip)}mm). Good for crops but cover harvested produce.`);
     }
 
-    // Extreme heat alert
     const tomorrowMax = daily?.temperature_2m_max?.[1] || maxTemp;
     if (tomorrowMax > 42) {
       alerts.push(`Extreme heat warning: ${Math.round(tomorrowMax)}°C expected tomorrow. Increase irrigation, provide shade to seedlings.`);
@@ -114,19 +94,16 @@ async function fetchWeather(location: SellerLocation): Promise<WeatherForecast |
       alerts.push(`High temperature alert: ${Math.round(tomorrowMax)}°C tomorrow. Ensure adequate watering for crops.`);
     }
 
-    // Cold/frost alert
     const tomorrowMin = daily?.temperature_2m_min?.[1] || minTemp;
     if (tomorrowMin < 5) {
       alerts.push(`Frost risk: Temperature may drop to ${Math.round(tomorrowMin)}°C. Cover sensitive crops tonight.`);
     }
 
-    // Storm alert
     const tomorrowCode = daily?.weather_code?.[1] || 0;
     if (tomorrowCode >= 95) {
       alerts.push(`Thunderstorm warning for tomorrow. Secure greenhouse structures and harvest ripe produce early.`);
     }
 
-    // High wind alert
     if (windSpeed > 40) {
       alerts.push(`Strong winds (${Math.round(windSpeed)} km/h). Stake tall plants, secure covers on produce.`);
     }
@@ -149,8 +126,6 @@ async function fetchWeather(location: SellerLocation): Promise<WeatherForecast |
   }
 }
 
-// ── Active Sellers Query ──
-
 interface ActiveSeller {
   phone: string;
   name: string;
@@ -160,9 +135,6 @@ interface ActiveSeller {
   sellerId: string;
 }
 
-/**
- * Query all active sellers using GSI5
- */
 async function getActiveSellers(): Promise<ActiveSeller[]> {
   try {
     const result = await docClient.send(new QueryCommand({
@@ -170,7 +142,7 @@ async function getActiveSellers(): Promise<ActiveSeller[]> {
       IndexName: 'GSI5',
       KeyConditionExpression: 'GSI5PK = :pk',
       ExpressionAttributeValues: { ':pk': 'ACTIVE_SELLERS' },
-      Limit: 100, // Process up to 100 sellers per run
+      Limit: 100, 
     }));
 
     return (result.Items || []).map((item: any) => ({
@@ -187,8 +159,6 @@ async function getActiveSellers(): Promise<ActiveSeller[]> {
   }
 }
 
-// ── Alert Generation (Bedrock Nova Lite) ──
-
 interface SellerAlert {
   phone: string;
   name: string;
@@ -197,15 +167,12 @@ interface SellerAlert {
   alertType: 'weather' | 'price' | 'crop_advisory' | 'combined';
 }
 
-/**
- * Generate a personalized alert message using Bedrock Nova Lite
- */
 async function generateAlertMessage(
   seller: ActiveSeller,
   weather: WeatherForecast | null,
   priceUpdates: Array<{ crop: string; priceInfo: string }>,
 ): Promise<string | null> {
-  // Only generate if there's something meaningful to tell
+
   const hasWeatherData = weather !== null;
   const hasPriceUpdate = priceUpdates.length > 0;
 
@@ -215,7 +182,7 @@ async function generateAlertMessage(
   const langName = langMap[seller.language] || 'शुद्ध हिंदी (Devanagari script)';
 
   let contextBlock = `Seller name: ${seller.name}\nLanguage: ${langName}\n`;
-  
+
   if (seller.cropsGrown?.length) {
     contextBlock += `Crops/Products: ${seller.cropsGrown.join(', ')}\n`;
   }
@@ -273,7 +240,7 @@ Generate the complete message:`;
     return text || null;
   } catch (error) {
     console.warn('Bedrock alert generation failed:', error);
-    // Fallback: construct a simple alert without AI
+
     if (hasWeatherData && weather) {
       const alert = weather.alerts[0];
       const greetings: Record<string, string> = {
@@ -287,9 +254,6 @@ Generate the complete message:`;
   }
 }
 
-/**
- * Send a proactive WhatsApp alert via EventBridge
- */
 async function sendAlert(alert: SellerAlert): Promise<void> {
   try {
     await eventBridgeClient.send(new PutEventsCommand({
@@ -312,7 +276,6 @@ async function sendAlert(alert: SellerAlert): Promise<void> {
     }));
     console.log(`📤 Alert sent to ${alert.name} (${alert.phone}): ${alert.alertType}`);
 
-    // Store alert in conversation memory so agent can reference it later
     try {
       await addConversationMessage(alert.phone, {
         timestamp: Date.now(),
@@ -332,8 +295,6 @@ async function sendAlert(alert: SellerAlert): Promise<void> {
   }
 }
 
-// ── Main Background Agent Runner ──
-
 export interface BackgroundAgentResult {
   sellersProcessed: number;
   alertsSent: number;
@@ -342,10 +303,6 @@ export interface BackgroundAgentResult {
   errors: string[];
 }
 
-/**
- * Main entry point: process all active sellers and send proactive alerts.
- * Called by the scheduled Lambda daily at 7 PM IST, or on-demand via enhanced agent.
- */
 export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
   const result: BackgroundAgentResult = {
     sellersProcessed: 0,
@@ -357,7 +314,6 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
 
   console.log('🤖 Background Agent starting...');
 
-  // 1. Get all active sellers
   const sellers = await getActiveSellers();
   console.log(`Found ${sellers.length} active sellers`);
 
@@ -366,14 +322,12 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
     return result;
   }
 
-  // 2. Cache weather by state/location to avoid duplicate API calls
   const weatherCache = new Map<string, WeatherForecast | null>();
 
   for (const seller of sellers) {
     try {
       result.sellersProcessed++;
 
-      // 3. Fetch weather (cached by state)
       let weather: WeatherForecast | null = null;
       if (seller.location) {
         const cacheKey = seller.location.state || seller.location.district || 'default';
@@ -386,10 +340,9 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
         }
       }
 
-      // 4. Fetch prices for seller's crops
       const priceUpdates: Array<{ crop: string; priceInfo: string }> = [];
       if (seller.cropsGrown?.length) {
-        for (const crop of seller.cropsGrown.slice(0, 3)) { // Max 3 crops per seller
+        for (const crop of seller.cropsGrown.slice(0, 3)) { 
           try {
             const priceResult = await fetchLiveMarketPrice(crop);
             if (priceResult.found) {
@@ -397,12 +350,11 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
               result.pricesFetched++;
             }
           } catch {
-            // Skip individual crop price failures
+
           }
         }
       }
 
-      // 5. Generate personalized alert
       const message = await generateAlertMessage(seller, weather, priceUpdates);
 
       if (message) {
@@ -420,7 +372,6 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
         result.alertsSent++;
       }
 
-      // Rate limit: small delay between sellers to avoid API throttling
       if (sellers.indexOf(seller) < sellers.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -436,11 +387,6 @@ export async function runBackgroundAgent(): Promise<BackgroundAgentResult> {
   return result;
 }
 
-/**
- * On-demand daily update for a single seller.
- * Called by enhanced agent when user asks "mausam batao", "update do", "aaj ka bhav" etc.
- * Returns the generated Hindi alert text (or null if nothing to report).
- */
 export async function generateOnDemandUpdate(
   phone: string,
   sellerName: string,
@@ -450,15 +396,12 @@ export async function generateOnDemandUpdate(
 ): Promise<string | null> {
   console.log(`📢 On-demand update requested for ${sellerName} (${phone})`);
 
-  // ── FALLBACK: If no location provided, create a default-India location ─────
-  // This lets fetchWeather always have coordinates (STATE_COORDINATES['default'])
   let effectiveLocation = location;
   if (!effectiveLocation) {
     console.log('📍 No location set — using default India centre for weather');
     effectiveLocation = { state: 'default' } as SellerLocation;
   }
 
-  // ── FALLBACK: If no cropsGrown, try fetching seller's catalog product names ─
   let effectiveCrops = cropsGrown;
   if (!effectiveCrops || effectiveCrops.length === 0) {
     try {
@@ -471,7 +414,7 @@ export async function generateOnDemandUpdate(
     } catch (e) {
       console.warn('Could not fetch catalog items for crop fallback:', e);
     }
-    // If still empty, use common Indian crops
+
     if (!effectiveCrops || effectiveCrops.length === 0) {
       effectiveCrops = ['tomato', 'onion', 'potato'];
       console.log('🌾 Using default common crops:', effectiveCrops);
@@ -487,11 +430,9 @@ export async function generateOnDemandUpdate(
     sellerId: '',
   };
 
-  // Fetch weather — always attempted now thanks to fallback location
   let weather: WeatherForecast | null = null;
   weather = await fetchWeather(effectiveLocation);
 
-  // Fetch prices — always attempted now thanks to fallback crops
   const priceUpdates: Array<{ crop: string; priceInfo: string }> = [];
   for (const crop of effectiveCrops.slice(0, 5)) {
     try {
@@ -500,11 +441,10 @@ export async function generateOnDemandUpdate(
         priceUpdates.push({ crop, priceInfo: priceResult.priceInfo });
       }
     } catch {
-      // Skip individual crop price failures
+
     }
   }
 
-  // If STILL no data despite fallbacks, return helpful guidance
   if (!weather && priceUpdates.length === 0) {
     const noUpdate: Record<string, string> = {
       hi: `${sellerName} जी, अभी मौसम और बाज़ार की जानकारी मिलने में दिक्कत आ रही है। कृपया थोड़ी देर बाद पूछें। अगर आप अपना गाँव या शहर बता दें तो बेहतर जानकारी दे सकता हूँ।`,
@@ -514,11 +454,9 @@ export async function generateOnDemandUpdate(
     return noUpdate[language] || noUpdate['hi'];
   }
 
-  // Force-generate even if no weather alerts (user asked explicitly)
   const hasWeatherData = weather !== null;
   const hasPriceData = priceUpdates.length > 0;
 
-  // Build context manually to bypass the "only generate if alerts" check
   const langMap = { hi: 'शुद्ध हिंदी (Devanagari script)', mr: 'मराठी (Devanagari script)', en: 'English' };
   const langName = langMap[language] || 'शुद्ध हिंदी (Devanagari script)';
 

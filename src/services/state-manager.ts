@@ -1,11 +1,3 @@
-/**
- * State Manager Service
- * 
- * Manages user state transitions and persistence for the voice-first workflow.
- * Tracks user progress through onboarding states and ensures atomic state transitions.
- * 
- * Requirements: 3.1, 3.7, 3.8, 7.1, 7.2, 7.3, 7.4, 7.7
- */
 
 import {
   PutCommand,
@@ -38,28 +30,20 @@ export interface UserState {
 }
 
 interface UserStateRecord extends UserState {
-  PK: string; // USER#<phone>
-  SK: string; // STATE
+  PK: string; 
+  SK: string; 
   entityType: 'USER_STATE';
   TTL?: number;
-  // GSI4: For querying users by state (analytics and monitoring)
-  GSI4PK?: string; // STATE#<state>
-  GSI4SK?: string; // <updatedAt>#<phone>
+
+  GSI4PK?: string; 
+  GSI4SK?: string; 
 }
 
-/**
- * TTL configuration in days
- * Configurable via environment variable
- */
 const STATE_TTL_DAYS = parseInt(process.env.STATE_TTL_DAYS || '7', 10);
 
 import { retryWithBackoff as retryWithBackoffUtil, logStructured } from '../utils/error-handler';
 import { publishStateTransitionMetric } from '../utils/monitoring';
 
-/**
- * Retry a function with exponential backoff
- * Uses centralized error handling utility
- */
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   operation: string
@@ -67,12 +51,6 @@ async function retryWithBackoff<T>(
   return retryWithBackoffUtil(fn, operation, undefined, { component: 'state-manager' });
 }
 
-/**
- * Get user state from DynamoDB
- * 
- * @param phone - User phone number in E.164 format
- * @returns User state or null if not found
- */
 export async function getUserState(phone: string): Promise<UserState | null> {
   const params: GetCommandInput = {
     TableName: TABLE_NAME,
@@ -103,16 +81,10 @@ export async function getUserState(phone: string): Promise<UserState | null> {
   };
 }
 
-/**
- * Initialize a new user with NEW state
- * 
- * @param phone - User phone number in E.164 format
- * @returns Initialized user state
- */
 export async function initializeNewUser(phone: string, profileName?: string): Promise<UserState> {
   const now = Date.now();
   const ttl = Math.floor(now / 1000) + (STATE_TTL_DAYS * 24 * 60 * 60);
-  
+
   const userState: UserState = {
     phone,
     state: 'NEW',
@@ -146,7 +118,7 @@ export async function initializeNewUser(phone: string, profileName?: string): Pr
     return userState;
   } catch (error: any) {
     if (error.name === 'ConditionalCheckFailedException') {
-      // User already exists, fetch and return existing state
+
       console.log(`User ${phone} already exists, fetching existing state`);
       const existing = await getUserState(phone);
       if (existing) {
@@ -157,27 +129,19 @@ export async function initializeNewUser(phone: string, profileName?: string): Pr
   }
 }
 
-/**
- * Update user state with atomic transition
- * 
- * @param phone - User phone number
- * @param newState - New state to transition to
- * @param metadata - Optional metadata to store with state
- */
 export async function updateUserState(
   phone: string,
   newState: UserStateType,
   metadata?: Record<string, any>
 ): Promise<void> {
   const startTime = Date.now();
-  
-  // Get current state for metrics
+
   const currentState = await getUserState(phone);
   const previousState = currentState?.state || 'UNKNOWN';
-  
+
   const now = Date.now();
   const ttl = (newState === 'ACTIVE' || newState === 'GUEST_ACTIVE' || newState === 'KYC_VERIFIED')
-    ? undefined // No TTL for active/verified/guest users — prevent re-NEW-ification
+    ? undefined 
     : Math.floor(now / 1000) + (STATE_TTL_DAYS * 24 * 60 * 60);
 
   const updateExpressions: string[] = ['#state = :state', '#updatedAt = :updatedAt'];
@@ -190,7 +154,6 @@ export async function updateUserState(
     ':updatedAt': now,
   };
 
-  // Update GSI4 attributes for state-based querying
   updateExpressions.push('#gsi4pk = :gsi4pk', '#gsi4sk = :gsi4sk');
   expressionAttributeNames['#gsi4pk'] = 'GSI4PK';
   expressionAttributeNames['#gsi4sk'] = 'GSI4SK';
@@ -208,7 +171,7 @@ export async function updateUserState(
     expressionAttributeNames['#ttl'] = 'TTL';
     expressionAttributeValues[':ttl'] = ttl;
   } else {
-    // Remove TTL for active users
+
     updateExpressions.push('REMOVE #ttl');
     expressionAttributeNames['#ttl'] = 'TTL';
   }
@@ -230,8 +193,7 @@ export async function updateUserState(
   );
 
   const duration = Date.now() - startTime;
-  
-  // Publish state transition metric
+
   await publishStateTransitionMetric(phone, previousState as UserStateType, newState, duration);
 
   logStructured('INFO', `Updated user state for ${phone}: ${previousState} -> ${newState}`, {
@@ -243,12 +205,6 @@ export async function updateUserState(
   });
 }
 
-/**
- * Update user language preference
- * 
- * @param phone - User phone number
- * @param language - Detected language
- */
 export async function updateUserLanguage(
   phone: string,
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
@@ -278,12 +234,6 @@ export async function updateUserLanguage(
   console.log(`Updated language for ${phone}: ${language}`);
 }
 
-/**
- * Update seller ID after KYC verification
- * 
- * @param phone - User phone number
- * @param sellerId - Seller ID from registration
- */
 export async function updateUserSellerId(
   phone: string,
   sellerId: string
@@ -313,20 +263,12 @@ export async function updateUserSellerId(
   console.log(`Updated seller ID for ${phone}: ${sellerId}`);
 }
 
-/**
- * Query users by state using GSI4
- * Useful for analytics and monitoring
- * 
- * @param state - User state to query
- * @param limit - Maximum number of results to return (default: 100)
- * @returns Array of user states
- */
 export async function getUsersByState(
   state: UserStateType,
   limit: number = 100
 ): Promise<UserState[]> {
   const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
-  
+
   const params = {
     TableName: TABLE_NAME,
     IndexName: 'GSI4',
@@ -338,7 +280,7 @@ export async function getUsersByState(
       ':gsi4pk': `STATE#${state}`,
     },
     Limit: limit,
-    ScanIndexForward: false, // Most recent first
+    ScanIndexForward: false, 
   };
 
   const result = await retryWithBackoff(
@@ -360,4 +302,3 @@ export async function getUsersByState(
     updatedAt: item.updatedAt,
   }));
 }
-

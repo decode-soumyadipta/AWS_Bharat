@@ -1,16 +1,3 @@
-/**
- * Catalog Storage and Broadcast Lambda
- * 
- * This Lambda function handles the complete catalog lifecycle:
- * - Validates catalog object using schema validator
- * - Requests missing information from seller if validation fails
- * - Stores validated catalog item in DynamoDB
- * - Constructs ONDC on_search payload with seller and item details
- * - Broadcasts catalog to ONDC Registry via BPP Adapter
- * - Sends confirmation WhatsApp message to seller
- * 
- * Validates: Requirements 2.7, 2.8, 2.9, 10.4
- */
 
 import { randomUUID } from 'crypto';
 import { BecknCatalogItem, ONDCCatalogPayload, CatalogItem } from '../models/catalog';
@@ -18,71 +5,34 @@ import { SellerProfile } from '../models/seller';
 import { validateCatalogItem, validateONDCCatalogPayload } from '../services/ondc-schema-validator';
 import { createCatalogItem, getSellerById } from '../services/dynamodb-repository';
 
-/**
- * Request to store and broadcast catalog
- */
 export interface CatalogStorageBroadcastRequest {
-  /**
-   * Constructed Beckn catalog item
-   */
+
   catalogItem: BecknCatalogItem;
 
-  /**
-   * Seller ID
-   */
   sellerId: string;
 
-  /**
-   * Seller phone number for WhatsApp notifications
-   */
   sellerPhone: string;
 
-  /**
-   * Seller's preferred language
-   */
   language: 'hi' | 'mr' | 'en';
 
-  /**
-   * Image URLs (raw and enhanced)
-   */
   images?: {
     raw: string;
     enhanced: string;
   };
 
-  /**
-   * Message ID for correlation
-   */
   messageId?: string;
 }
 
-/**
- * Response from catalog storage and broadcast
- */
-export interface CatalogStorageBroadcastResponse {
-  /**
-   * Whether the operation was successful
-   */
+interface CatalogStorageBroadcastResponse {
+
   success: boolean;
 
-  /**
-   * Item ID of stored catalog
-   */
   itemId?: string;
 
-  /**
-   * Whether catalog was broadcast to ONDC
-   */
   broadcast?: boolean;
 
-  /**
-   * Whether confirmation was sent to seller
-   */
   confirmationSent?: boolean;
 
-  /**
-   * Error information (if failed)
-   */
   error?: {
     code: string;
     message: string;
@@ -90,16 +40,13 @@ export interface CatalogStorageBroadcastResponse {
   };
 }
 
-/**
- * Lambda handler for catalog storage and broadcast
- */
 export const handler = async (
   event: any
 ): Promise<CatalogStorageBroadcastResponse> => {
   console.log('Catalog storage and broadcast request:', JSON.stringify(event, null, 2));
 
   try {
-    // Parse EventBridge event format
+
     const eventDetail = event.detail || event;
     const { catalogItem, sellerId, messageId } = eventDetail;
 
@@ -107,7 +54,6 @@ export const handler = async (
       throw new Error('Catalog item is required');
     }
 
-    // Step 1: Validate catalog object using schema validator
     console.log('Step 1: Validating catalog object...');
     const validation = validateCatalogItem(catalogItem);
 
@@ -124,10 +70,9 @@ export const handler = async (
 
     console.log('Catalog validation passed');
 
-    // Step 2: Store catalog item in DynamoDB
     console.log('Step 2: Storing catalog item in DynamoDB...');
     const itemId = catalogItem.id;
-    
+
     const catalogItemToStore: CatalogItem = {
       PK: `SELLER#${sellerId}`,
       SK: `ITEM#${itemId}`,
@@ -147,15 +92,12 @@ export const handler = async (
     await createCatalogItem(catalogItemToStore);
     console.log('Catalog item stored with ID:', itemId);
 
-    // Step 2.5: Publish catalog.created event for marketplace sync
     console.log('Step 2.5: Publishing catalog.created event...');
     await publishCatalogCreatedEvent(catalogItem, sellerId, itemId);
 
-    // Step 2.6: Broadcast catalog to ONDC network via on_search
     console.log('Step 2.6: Broadcasting catalog to ONDC network...');
     const broadcastResult = await broadcastToONDC(catalogItem, sellerId);
 
-    // Step 3: Send confirmation message to seller
     console.log('Step 3: Sending confirmation message to seller...');
     const confirmationSent = await sendConfirmationToSeller(
       sellerId,
@@ -182,10 +124,6 @@ export const handler = async (
   }
 };
 
-/**
- * Broadcast catalog to ONDC network by publishing an on_search event
- * This makes the catalog item discoverable by BAPs on the ONDC network
- */
 async function broadcastToONDC(
   catalogItem: BecknCatalogItem,
   sellerId: string
@@ -203,7 +141,6 @@ async function broadcastToONDC(
     const { PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
     const { eventBridgeClient } = await import('../config/aws-clients');
 
-    // Construct Beckn on_search payload for ONDC broadcast
     const onSearchPayload = {
       context: {
         domain: catalogItem.category_id?.startsWith('RET') ? `ONDC:${catalogItem.category_id}` : 'ONDC:RET10',
@@ -261,14 +198,11 @@ async function broadcastToONDC(
     return true;
   } catch (error) {
     console.error('Failed to broadcast catalog to ONDC:', error);
-    // Don't throw — ONDC broadcast failure shouldn't block catalog creation
+
     return false;
   }
 }
 
-/**
- * Publish catalog.created event to EventBridge for marketplace sync
- */
 async function publishCatalogCreatedEvent(
   catalogItem: BecknCatalogItem,
   sellerId: string,
@@ -308,20 +242,16 @@ async function publishCatalogCreatedEvent(
     });
   } catch (error) {
     console.error('Failed to publish catalog.created event:', error);
-    // Don't throw - marketplace sync failure shouldn't block catalog creation
+
   }
 }
 
-/**
- * Send confirmation WhatsApp message to seller via EventBridge
- * Sends a concise message with voice confirmation
- */
 async function sendConfirmationToSeller(
   sellerId: string,
   catalogItem: BecknCatalogItem,
   language: 'hi' | 'mr' | 'en'
 ): Promise<boolean> {
-  // Create short, concise message
+
   const messages = {
     hi: `🎉 बधाई हो! ${catalogItem.descriptor.name} सफलतापूर्वक जोड़ा गया।
 
@@ -343,7 +273,7 @@ Your product is now visible to buyers.`,
   const text = messages[language] || messages.en;
 
   try {
-    // Publish WhatsApp message send event to EventBridge with voice enabled
+
     const { EventBridgeClient, PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
     const eventBridge = new EventBridgeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
@@ -354,8 +284,8 @@ Your product is now visible to buyers.`,
             Source: 'vyapar.vaani.internal',
             DetailType: 'whatsapp.message.send',
             Detail: JSON.stringify({
-              to: sellerId, // Using sellerId as phone number
-              type: 'text_with_voice', // Enable voice confirmation
+              to: sellerId, 
+              type: 'text_with_voice', 
               content: {
                 text,
               },

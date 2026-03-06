@@ -1,19 +1,3 @@
-/**
- * Intent Classification Lambda
- * 
- * This Lambda function classifies user intent from transcribed voice notes
- * using Claude 3.5 Sonnet via Amazon Bedrock.
- * 
- * Features:
- * - Constructs prompt with transcribed text and intent options
- * - Calls Amazon Bedrock InvokeModel API with Claude 3.5 Sonnet
- * - Parses JSON response to extract intent and confidence
- * - Supports intents: CREATE_CATALOG, UPDATE_INVENTORY, ACCEPT_ORDER, 
- *   REJECT_ORDER, UPDATE_FULFILLMENT, QUERY_STATUS
- * - Handles low confidence scores (< 70%) by flagging for clarification
- * 
- * Validates: Requirements 2.2, 4.2, 4.3, 12.8
- */
 
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -26,43 +10,30 @@ import {
 } from '../models/intent';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
-/**
- * Amazon Nova Pro - high-quality model without payment instrument requirements
- * Provides excellent accuracy for intent classification
- */
 const MODEL_ID = 'amazon.nova-pro-v1:0';
 
-/**
- * Confidence threshold for requiring clarification
- */
 const CONFIDENCE_THRESHOLD = 0.7;
 
-/**
- * Maximum tokens for Nova response
- */
 const MAX_TOKENS = 500;
 
-/**
- * Lambda handler for intent classification
- */
 export const handler = async (
   event: any
 ): Promise<IntentClassificationResponse> => {
   console.log('Intent classification request:', JSON.stringify(event, null, 2));
 
   try {
-    // Handle EventBridge event format
+
     let transcribedText: string;
     let phoneNumber: string;
     let messageId: string;
-    
+
     if (event.detail && event.detail.content) {
-      // EventBridge event from WhatsApp webhook
+
       transcribedText = event.detail.content.text || event.detail.content.transcribedText || '';
       phoneNumber = event.detail.phone || '';
       messageId = event.detail.messageId || '';
     } else if (event.transcribedText) {
-      // Direct invocation format
+
       transcribedText = event.transcribedText;
       phoneNumber = event.phoneNumber || '';
       messageId = event.messageId || '';
@@ -70,23 +41,18 @@ export const handler = async (
       throw new Error('No text content found in event');
     }
 
-    // Validate input
     if (!transcribedText || transcribedText.trim().length === 0) {
       throw new Error('Transcribed text is required');
     }
 
-    // Construct prompt for Claude
     const prompt = constructIntentClassificationPrompt(transcribedText);
     console.log('Constructed prompt for Claude');
 
-    // Call Claude via Bedrock
     const claudeResponse = await invokeClaudeModel(prompt);
     console.log('Claude response:', JSON.stringify(claudeResponse, null, 2));
 
-    // Parse and validate response
     const { intent, confidence, language } = claudeResponse;
 
-    // Check if clarification is needed
     const needsClarification = confidence < CONFIDENCE_THRESHOLD;
 
     if (needsClarification) {
@@ -95,7 +61,6 @@ export const handler = async (
       );
     }
 
-    // Publish intent classified event to EventBridge
     if (phoneNumber && messageId) {
       await publishIntentClassifiedEvent({
         messageId,
@@ -128,9 +93,6 @@ export const handler = async (
   }
 };
 
-/**
- * Construct prompt for intent classification
- */
 function constructIntentClassificationPrompt(transcribedText: string): string {
   return `You are an intent classifier for an ONDC seller management system. 
 The user is a rural merchant speaking in Hindi, Marathi, or English.
@@ -185,11 +147,8 @@ Rules:
 - Respond with ONLY the JSON object, no other text`;
 }
 
-/**
- * Invoke Amazon Nova Pro via Amazon Bedrock
- */
 async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> {
-  // Construct request body for Nova Messages API format
+
   const requestBody = {
     messages: [
       {
@@ -203,13 +162,12 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
     ],
     inferenceConfig: {
       max_new_tokens: MAX_TOKENS,
-      temperature: 0.0, // Use deterministic output for classification
+      temperature: 0.0, 
     },
   };
 
   console.log('Invoking Amazon Nova Pro:', MODEL_ID);
 
-  // Invoke model
   const command = new InvokeModelCommand({
     modelId: MODEL_ID,
     contentType: 'application/json',
@@ -219,7 +177,6 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
 
   const response = await bedrockClient.send(command);
 
-  // Parse response
   if (!response.body) {
     throw new Error('Empty response from Nova');
   }
@@ -227,7 +184,6 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
   console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Nova response format
   if (!responseBody.output?.message?.content || !Array.isArray(responseBody.output.message.content)) {
     throw new Error('No content in Nova response');
   }
@@ -237,21 +193,16 @@ async function invokeClaudeModel(prompt: string): Promise<ClaudeIntentResponse> 
     throw new Error('No text in Nova response content');
   }
 
-  // Parse JSON from text content
   const intentResponse = parseIntentResponse(textContent);
 
-  // Validate response structure
   validateIntentResponse(intentResponse);
 
   return intentResponse;
 }
 
-/**
- * Parse intent response from Claude's text output
- */
 function parseIntentResponse(text: string): ClaudeIntentResponse {
   try {
-    // Remove any markdown code blocks if present
+
     let cleanedText = text.trim();
     if (cleanedText.startsWith('```json')) {
       cleanedText = cleanedText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
@@ -259,7 +210,6 @@ function parseIntentResponse(text: string): ClaudeIntentResponse {
       cleanedText = cleanedText.replace(/```\n?/g, '');
     }
 
-    // Parse JSON
     const parsed = JSON.parse(cleanedText);
     return parsed as ClaudeIntentResponse;
   } catch (error) {
@@ -268,9 +218,6 @@ function parseIntentResponse(text: string): ClaudeIntentResponse {
   }
 }
 
-/**
- * Validate intent response structure
- */
 function validateIntentResponse(response: ClaudeIntentResponse): void {
   const validIntents: IntentType[] = [
     'CREATE_CATALOG',
@@ -303,9 +250,6 @@ function validateIntentResponse(response: ClaudeIntentResponse): void {
   }
 }
 
-/**
- * Publish intent classified event to EventBridge
- */
 async function publishIntentClassifiedEvent(data: {
   messageId: string;
   phoneNumber: string;

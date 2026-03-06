@@ -1,36 +1,19 @@
-/**
- * Catalog and Product Data Models
- * 
- * These interfaces define the structure of product catalogs
- * conforming to ONDC/Beckn Protocol v1.2.0 specifications.
- * 
- * Validates: Requirements 1.7, 2.9, 5.6
- */
 
-/**
- * Beckn Protocol descriptor for catalog items
- */
 export interface BecknDescriptor {
-  name: string; // Product name (can be in vernacular)
-  code?: string; // Optional: HSN/SAC code
-  symbol?: string; // Image URL
+  name: string; 
+  code?: string; 
+  symbol?: string; 
   short_desc: string;
   long_desc: string;
-  images: string[]; // Array of image URLs
+  images: string[]; 
 }
 
-/**
- * Beckn Protocol price structure
- */
 export interface BecknPrice {
-  currency: 'INR'; // ISO 4217 currency code
-  value: string; // Decimal string (e.g., "200.00")
-  maximum_value?: string; // Optional maximum price
+  currency: 'INR'; 
+  value: string; 
+  maximum_value?: string; 
 }
 
-/**
- * Beckn Protocol quantity structure
- */
 export interface BecknQuantity {
   available: {
     count: number;
@@ -40,23 +23,17 @@ export interface BecknQuantity {
   };
   unitized?: {
     measure: {
-      unit: string; // e.g., "kilogram", "unit", "litre"
-      value: string; // e.g., "1"
+      unit: string; 
+      value: string; 
     };
   };
 }
 
-/**
- * Beckn Protocol time structure
- */
 export interface BecknTime {
   label: 'enable' | 'disable';
-  timestamp: string; // ISO 8601 format
+  timestamp: string; 
 }
 
-/**
- * Beckn Protocol tag structure for ONDC-specific fields
- */
 export interface BecknTag {
   code: string;
   list: Array<{
@@ -65,74 +42,53 @@ export interface BecknTag {
   }>;
 }
 
-/**
- * Complete Beckn Catalog Item conforming to ONDC v1.2.0
- */
 export interface BecknCatalogItem {
-  id: string; // UUID
+  id: string; 
   descriptor: BecknDescriptor;
   price: BecknPrice;
   quantity: BecknQuantity;
-  category_id: string; // ONDC category taxonomy
+  category_id: string; 
   fulfillment_id: string;
   location_id: string;
   time: BecknTime;
   tags: BecknTag[];
-  
-  // ONDC-specific fields (using @ prefix as per spec)
+
   '@ondc/org/returnable'?: boolean;
   '@ondc/org/cancellable'?: boolean;
-  '@ondc/org/return_window'?: string; // ISO 8601 duration (e.g., "P0D")
+  '@ondc/org/return_window'?: string; 
   '@ondc/org/seller_pickup_return'?: boolean;
-  '@ondc/org/time_to_ship'?: string; // ISO 8601 duration (e.g., "P2D")
+  '@ondc/org/time_to_ship'?: string; 
   '@ondc/org/available_on_cod'?: boolean;
-  '@ondc/org/contact_details_consumer_care'?: string; // Format: "phone,email"
+  '@ondc/org/contact_details_consumer_care'?: string; 
 }
 
-/**
- * Product image references
- */
 export interface ProductImages {
-  raw: string; // S3 URL for original uploaded image
-  enhanced: string; // S3 URL for AI-enhanced image
+  raw: string; 
+  enhanced: string; 
 }
 
-/**
- * Catalog item stored in DynamoDB
- * 
- * DynamoDB Keys:
- * - PK: SELLER#<seller_id>
- * - SK: ITEM#<item_id>
- * - GSI3PK: CATEGORY#<category>
- * - GSI3SK: ITEM#<item_id>
- */
 export interface CatalogItem {
-  // DynamoDB Keys
-  PK: string; // SELLER#<seller_id>
-  SK: string; // ITEM#<item_id>
-  GSI3PK: string; // CATEGORY#<category>
-  GSI3SK: string; // ITEM#<item_id>
+
+  PK: string; 
+  SK: string; 
+  GSI3PK: string; 
+  GSI3SK: string; 
   entityType: 'CATALOG_ITEM';
-  
-  // Item Information
-  itemId: string; // UUID
-  sellerId: string; // UUID
-  becknItem: BecknCatalogItem; // Complete Beckn-compliant item structure
+
+  itemId: string; 
+  sellerId: string; 
+  becknItem: BecknCatalogItem; 
   images: ProductImages;
   status: 'DRAFT' | 'ACTIVE' | 'OUT_OF_STOCK' | 'ARCHIVED';
-  
-  // Timestamps and versioning
-  createdAt: number; // Unix timestamp
-  updatedAt: number; // Unix timestamp
-  version: number; // For optimistic locking
+
+  createdAt: number; 
+  updatedAt: number; 
+  version: number; 
 }
 
-/**
- * ONDC on_search catalog payload structure
- */
 export interface ONDCCatalogPayload {
   context: {
-    domain: string; // e.g., "nic2004:52110"
+    domain: string; 
     country: 'IND';
     city: string;
     action: 'on_search';
@@ -141,9 +97,9 @@ export interface ONDCCatalogPayload {
     bap_uri: string;
     bpp_id: string;
     bpp_uri: string;
-    transaction_id: string; // UUID
-    message_id: string; // UUID
-    timestamp: string; // ISO 8601
+    transaction_id: string; 
+    message_id: string; 
+    timestamp: string; 
   };
   message: {
     catalog: {
@@ -155,18 +111,18 @@ export interface ONDCCatalogPayload {
         images: string[];
       };
       'bpp/providers': Array<{
-        id: string; // seller_id
+        id: string; 
         descriptor: BecknDescriptor;
         locations: Array<{
           id: string;
-          gps: string; // Format: "lat,long"
+          gps: string; 
           address: {
             locality: string;
             street: string;
             city: string;
             state: string;
             country: 'IND';
-            area_code: string; // Pincode
+            area_code: string; 
           };
         }>;
         items: BecknCatalogItem[];

@@ -1,17 +1,3 @@
-/**
- * KYC Handler Lambda
- * 
- * Processes KYC verification flow for new users:
- * 1. Downloads image from WhatsApp Media API
- * 2. Uploads to KYC S3 bucket with KMS encryption
- * 3. Calls document-extraction Lambda to extract PAN/Aadhaar
- * 4. Validates PAN format and Aadhaar presence
- * 5. Calls seller-registration Lambda to create seller profile
- * 6. Updates user state to KYC_VERIFIED
- * 7. Sends confirmation message via WhatsApp
- * 
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
- */
 
 import { InvokeCommand } from '@aws-sdk/client-lambda';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -25,50 +11,36 @@ import { withErrorHandling, logStructured, ErrorCodes } from '../utils/error-han
 import { trackOperation } from '../utils/monitoring';
 import { withXRayTracing, Annotations, Metadata, traceSubsegment } from '../utils/xray-config';
 
-/**
- * KYC Handler request event
- */
 export interface KYCHandlerRequest {
-  phone: string; // E.164 format
-  mediaId: string; // WhatsApp media ID for the image
-  messageId?: string; // WhatsApp message ID for tracking
+  phone: string; 
+  mediaId: string; 
+  messageId?: string; 
 }
 
-/**
- * KYC Handler response
- */
-export interface KYCHandlerResponse {
+interface KYCHandlerResponse {
   success: boolean;
   sellerId?: string;
   error?: string;
 }
 
-/**
- * PAN card number format: AAAAA9999A
- */
 const PAN_REGEX = /[A-Z]{5}[0-9]{4}[A-Z]/;
 
-/**
- * Lambda handler for KYC processing
- * Wrapped with X-Ray tracing for distributed tracing
- */
 export const handler = withXRayTracing(async (
-  event: any, // EventBridge event
+  event: any, 
   context: any
 ): Promise<KYCHandlerResponse> => {
-  // Extract data from EventBridge event structure
+
   const detail = event.detail || event;
   const phone = detail.phone;
-  const mediaId = detail.content?.mediaUrl; // WhatsApp sends media ID in mediaUrl field
+  const mediaId = detail.content?.mediaUrl; 
   const messageId = detail.messageId;
-  
+
   logStructured('INFO', 'KYC handler invoked', {
     phone,
     mediaId,
     requestId: context.requestId,
   });
 
-  // Add X-Ray annotations
   Annotations.setUser(phone);
   Annotations.setOperation('kyc_processing');
 
@@ -77,7 +49,7 @@ export const handler = withXRayTracing(async (
     async () => {
       return withErrorHandling(
         async () => {
-          // Get user state
+
           const userState = await traceSubsegment('getUserState', async () => {
             return getUserState(phone);
           });
@@ -88,19 +60,16 @@ export const handler = withXRayTracing(async (
 
           Annotations.setState(userState.state);
 
-          // Validate user is in correct state for KYC (allow GUEST_ACTIVE so guests can verify later)
           if (userState.state !== 'NEW' && userState.state !== 'KYC_PENDING' && userState.state !== 'GUEST_ACTIVE') {
             throw new Error(`Invalid state for KYC: ${userState.state}`);
           }
 
           const language = getLanguagePreference(userState.language);
 
-          // Send typing indicator + single acknowledgment (not voice — just read receipt + typing)
           const { sendTypingIndicator, setLastMessageId } = await import('./whatsapp-message-sender');
           if (detail?.messageId) { setLastMessageId(phone, detail.messageId); }
           await sendTypingIndicator(phone, detail?.messageId);
 
-          // Step 1: Download image from WhatsApp
           logStructured('INFO', 'Downloading image from WhatsApp', { mediaId });
           const downloadResult = await traceSubsegment('downloadImage', async () => {
             return downloadImage(mediaId, KYC_BUCKET_NAME);
@@ -111,12 +80,12 @@ export const handler = withXRayTracing(async (
               error: downloadResult.error,
               mediaId: mediaId,
             }, ErrorCodes.MEDIA_DOWNLOAD_FAILED);
-            
+
             await sendErrorMessage(phone, 'DOCUMENT_UNCLEAR', language);
-            
+
             Annotations.setSuccess(false);
             Annotations.setErrorCode(ErrorCodes.MEDIA_DOWNLOAD_FAILED);
-            
+
             return {
               success: false,
               error: downloadResult.error || 'Failed to download image',
@@ -125,9 +94,8 @@ export const handler = withXRayTracing(async (
 
           logStructured('INFO', 'Image downloaded successfully', { s3Url: downloadResult.s3Url });
 
-          // Step 2: Upload to KYC bucket with KMS encryption
           const kycImageKey = `kyc-documents/${phone}/${Date.now()}-${mediaId}.jpg`;
-          
+
           if (downloadResult.buffer) {
             await traceSubsegment('uploadToS3WithKMS', async () => {
               await s3Client.send(new PutObjectCommand({
@@ -139,13 +107,12 @@ export const handler = withXRayTracing(async (
                 SSEKMSKeyId: KMS_KEY_ID,
               }));
             });
-            
+
             logStructured('INFO', 'Image uploaded with KMS encryption', { key: kycImageKey });
           }
 
           const kycImageUrl = `s3://${KYC_BUCKET_NAME}/${kycImageKey}`;
 
-          // Step 3: Call document-extraction Lambda
           logStructured('INFO', 'Calling document-extraction Lambda');
           const extractionResult = await traceSubsegment('documentExtraction', async () => {
             return callDocumentExtraction(kycImageUrl, phone);
@@ -155,12 +122,12 @@ export const handler = withXRayTracing(async (
             logStructured('ERROR', 'Document extraction failed', {
               error: extractionResult.error,
             }, ErrorCodes.DOCUMENT_EXTRACTION_FAILED);
-            
+
             await sendErrorMessage(phone, 'DOCUMENT_UNCLEAR', language);
-            
+
             Annotations.setSuccess(false);
             Annotations.setErrorCode(ErrorCodes.DOCUMENT_EXTRACTION_FAILED);
-            
+
             return {
               success: false,
               error: extractionResult.error?.message || 'Document extraction failed',
@@ -174,38 +141,33 @@ export const handler = withXRayTracing(async (
             hasAadhaar: !!extractedData.aadharNumber,
           });
 
-          // Keep typing indicator active during verification
           await sendTypingIndicator(phone);
-          
-          // Brief pause before validation
+
           await new Promise(resolve => setTimeout(resolve, 500));
 
-          // Step 4: Validate PAN format and Aadhaar presence
           const validation = validateKYCData(extractedData);
           if (!validation.valid) {
             logStructured('ERROR', 'KYC validation failed', {
               error: validation.error,
             }, validation.error || ErrorCodes.INVALID_PAN_FORMAT);
-            
+
             await sendErrorMessage(
               phone,
               (validation.error === 'INVALID_PAN' || validation.error === 'NOT_PAN_CARD') ? 'KYC_INVALID_DOCUMENT' : 'KYC_ERROR',
               language
             );
-            
+
             Annotations.setSuccess(false);
             Annotations.setErrorCode(validation.error || ErrorCodes.INVALID_PAN_FORMAT);
-            
+
             return {
               success: false,
               error: validation.error,
             };
           }
 
-          // Keep typing indicator active during registration
           await sendTypingIndicator(phone);
 
-          // Step 5: Call seller-registration Lambda
           logStructured('INFO', 'Calling seller-registration Lambda');
           const registrationResult = await traceSubsegment('sellerRegistration', async () => {
             return callSellerRegistration({
@@ -220,12 +182,12 @@ export const handler = withXRayTracing(async (
             logStructured('ERROR', 'Seller registration failed', {
               error: registrationResult.error,
             }, ErrorCodes.KYC_REGISTRATION_FAILED);
-            
+
             await sendErrorMessage(phone, 'KYC_ERROR', language);
-            
+
             Annotations.setSuccess(false);
             Annotations.setErrorCode(ErrorCodes.KYC_REGISTRATION_FAILED);
-            
+
             return {
               success: false,
               error: registrationResult.error?.message || 'Seller registration failed',
@@ -236,27 +198,23 @@ export const handler = withXRayTracing(async (
             sellerId: registrationResult.sellerId,
           });
 
-          // Step 6: Update user state to KYC_VERIFIED
           await traceSubsegment('updateUserState', async () => {
             await updateUserState(phone, 'KYC_VERIFIED');
             await updateUserSellerId(phone, registrationResult.sellerId!);
           });
-          
+
           logStructured('INFO', 'User state updated to KYC_VERIFIED');
 
-          // Step 7: Send consolidated success message (text + voice)
           await new Promise(resolve => setTimeout(resolve, 1000));
           const extractedName = extractedData.name?.value || '';
           await sendSuccessMessage(phone, language, extractedName, extractedData.panNumber?.value || '');
           logStructured('INFO', 'Success message sent');
 
-          // Step 8: Send onboarding guide (feature tour including UPI) after 2 seconds
-          // Wrapped in try/catch — guide failure must NOT trigger KYC_ERROR after successful verification
           try {
             await new Promise(resolve => setTimeout(resolve, 2000));
             const { sendOnboardingGuide } = await import('../services/onboarding-guide');
             await sendOnboardingGuide(phone, language);
-            // Mark guide as sent in metadata
+
             await updateUserState(phone, 'KYC_VERIFIED', { guideSent: true });
             logStructured('INFO', 'Onboarding guide sent');
           } catch (guideError: any) {
@@ -287,12 +245,11 @@ export const handler = withXRayTracing(async (
       error: error.message,
       stack: error.stack,
     }, error.code || ErrorCodes.UNEXPECTED_ERROR);
-    
+
     Annotations.setSuccess(false);
     Annotations.setErrorCode(error.code || ErrorCodes.UNEXPECTED_ERROR);
     Metadata.setErrorDetails(error);
-    
-    // Only send KYC_ERROR if user hasn't already been verified (avoid confusing "error" after success)
+
     try {
       const userState = await getUserState(phone);
       if (userState?.state !== 'KYC_VERIFIED') {
@@ -314,9 +271,6 @@ export const handler = withXRayTracing(async (
   });
 });
 
-/**
- * Call document-extraction Lambda
- */
 async function callDocumentExtraction(
   documentUrl: string,
   sellerId: string
@@ -333,7 +287,7 @@ async function callDocumentExtraction(
   });
 
   const response = await lambdaClient.send(command);
-  
+
   if (!response.Payload) {
     throw new Error('No response from document-extraction Lambda');
   }
@@ -342,11 +296,8 @@ async function callDocumentExtraction(
   return result as DocumentExtractionResponse;
 }
 
-/**
- * Validate extracted KYC data
- */
 function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: string } {
-  // Check if document type is recognized - ONLY PAN cards accepted
+
   if (data.documentType === 'UNKNOWN') {
     return {
       valid: false,
@@ -354,7 +305,6 @@ function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: stri
     };
   }
 
-  // Enforce PAN card ONLY - reject Aadhaar-only or other documents
   if (!data.panNumber || !data.panNumber.value) {
     return {
       valid: false,
@@ -369,14 +319,12 @@ function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: stri
     };
   }
 
-  // Aadhaar is optional - log if missing but don't fail
   if (!data.aadharNumber || !data.aadharNumber.value) {
     logStructured('WARN', 'Aadhaar not found - proceeding with PAN only', {
       panNumber: data.panNumber.value,
     });
   }
 
-  // Check confidence scores
   if (data.overallConfidence < 0.5) {
     return {
       valid: false,
@@ -387,9 +335,6 @@ function validateKYCData(data: ExtractedKYCData): { valid: boolean; error?: stri
   return { valid: true };
 }
 
-/**
- * Call seller-registration Lambda
- */
 async function callSellerRegistration(
   request: SellerRegistrationRequest
 ): Promise<SellerRegistrationResponse> {
@@ -400,7 +345,7 @@ async function callSellerRegistration(
   });
 
   const response = await lambdaClient.send(command);
-  
+
   if (!response.Payload) {
     throw new Error('No response from seller-registration Lambda');
   }
@@ -409,9 +354,6 @@ async function callSellerRegistration(
   return result as SellerRegistrationResponse;
 }
 
-/**
- * Send feedback message via WhatsApp — voice-only for progress updates
- */
 async function sendFeedbackMessage(
   phone: string,
   messageKey: 'DOCUMENT_RECEIVED' | 'DOCUMENT_VERIFIED' | 'REGISTERING_SELLER',
@@ -419,18 +361,14 @@ async function sendFeedbackMessage(
 ): Promise<void> {
   const message = translateMessage(messageKey, language);
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
-  
+
   const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
-  
+
   await sendTypingIndicator(phone);
-  
-  // Progress updates are voice-only — no text clutter
+
   await sendVoiceOnly(phone, message, langCode);
 }
 
-/**
- * Send success confirmation — text showing extracted data + voice with personal greeting
- */
 async function sendSuccessMessage(
   phone: string,
   language: 'hi-IN' | 'mr-IN' | 'en-IN',
@@ -439,10 +377,9 @@ async function sendSuccessMessage(
 ): Promise<void> {
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
   const { sendTextMessage, sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
-  
+
   await sendTypingIndicator(phone);
-  
-  // Text message showing extracted KYC info — in user's native script
+
   const panDisplay = panNumber ? `${panNumber.slice(0, 3)}****${panNumber.slice(-1)}` : '';
   const nameBlock = extractedName ? `\nनाम: ${extractedName}` : '';
   const nameBlockMr = extractedName ? `\nनाव: ${extractedName}` : '';
@@ -453,30 +390,25 @@ async function sendSuccessMessage(
     'en-IN': `✅ Verification successful!${nameBlockEn}\nPAN: ${panDisplay}\nStatus: Verified`,
   };
   await sendTextMessage(phone, textData[language] || textData['hi-IN']);
-  
-  // Voice message with warm personal greeting + next steps
+
   const nameJi = extractedName ? `${extractedName} ji` : '';
   const voiceMsg: Record<string, string> = {
     'hi-IN': `${nameJi ? nameJi + ', ' : ''}aapka PAN card verify ho gaya hai. Ab aap apne products add kar sakte hain. Bas apne product ka naam, daam aur photo bhejiye. Ya phir UPI ID bhejiye taaki customers seedha payment kar sakein.`,
     'mr-IN': `${nameJi ? nameJi + ', ' : ''}tumcha PAN card verify zala aahe. Aata tumhi tumche products add karu shakta. Phakta tumchya product che naav, kimmat aani photo pathva. Kinva UPI ID pathva mhanje customers direct payment karu shakatil.`,
     'en-IN': `${nameJi ? nameJi + ', ' : ''}your PAN card has been verified. You can now add your products. Just send the product name, price and photo. Or send your UPI ID so customers can pay you directly.`,
   };
-  
+
   await new Promise(resolve => setTimeout(resolve, 1000));
   await sendVoiceOnly(phone, voiceMsg[language] || voiceMsg['hi-IN'], langCode);
 }
 
-/**
- * Send error message via WhatsApp with voice — romanized for voice clarity
- */
 async function sendErrorMessage(
   phone: string,
   messageKey: 'DOCUMENT_UNCLEAR' | 'KYC_INVALID_DOCUMENT' | 'KYC_ERROR',
   language: 'hi-IN' | 'mr-IN' | 'en-IN'
 ): Promise<void> {
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
-  
-  // Use romanized messages for voice (no Devanagari — this is spoken aloud)
+
   const errorMessages: Record<string, Record<string, string>> = {
     'DOCUMENT_UNCLEAR': {
       'hi-IN': 'Aapki document photo saaf nahi aayi. Kripya PAN card ki photo dubara bhejiye, acchi roshni mein aur poora card dikhna chahiye.',
@@ -496,15 +428,12 @@ async function sendErrorMessage(
   };
 
   const message = errorMessages[messageKey]?.[language] || errorMessages[messageKey]?.['hi-IN'] || 'Kripya dubara koshish karein.';
-  
+
   const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   await sendTypingIndicator(phone);
   await sendVoiceOnly(phone, message, langCode);
 }
 
-/**
- * Send UPI setup nudge — voice-only, conversational, no emojis
- */
 async function sendUpiNudgeMessage(
   phone: string,
   language: 'hi-IN' | 'mr-IN' | 'en-IN',
@@ -516,10 +445,10 @@ async function sendUpiNudgeMessage(
     'mr-IN': `${nameJi}tumhi tumcha UPI ID pathavla tar customers direct tumhala payment karu shakatil. Tumcha UPI ID pathva, jase yourname at upi kinva phone number at paytm.`,
     'en-IN': `${nameJi}if you send your UPI ID, customers can pay you directly. Just send your UPI ID, like yourname at upi or phone number at paytm.`,
   };
-  
+
   const message = upiNudge[language] || upiNudge['hi-IN'];
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
-  
+
   const { sendVoiceOnly, sendTypingIndicator } = await import('./whatsapp-message-sender');
   await sendTypingIndicator(phone);
   await sendVoiceOnly(phone, message, langCode);

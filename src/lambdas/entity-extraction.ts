@@ -1,20 +1,3 @@
-/**
- * Entity Extraction Lambda
- * 
- * This Lambda function extracts structured entities from transcribed voice notes
- * using Claude 3.5 Sonnet via Amazon Bedrock.
- * 
- * Features:
- * - Constructs intent-specific prompts for entity extraction
- * - For CREATE_CATALOG: extracts product_name, price, quantity, unit, description, category
- * - For UPDATE_INVENTORY: extracts product_identifier, new_quantity, operation
- * - For order intents: extracts order_id, action, reason
- * - Calls Amazon Bedrock InvokeModel API
- * - Parses JSON response and validates extracted entities
- * - Handles missing required fields by requesting clarification
- * 
- * Validates: Requirements 2.3, 4.4, 6.2
- */
 
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -31,27 +14,17 @@ import {
 } from '../models/intent';
 import { EVENT_SOURCES, INTERNAL_EVENT_TYPES } from '../config/event-patterns';
 
-/**
- * Amazon Nova Pro - high-quality model without payment instrument requirements
- * Provides excellent accuracy for entity extraction
- */
 const MODEL_ID = 'amazon.nova-pro-v1:0';
 
-/**
- * Maximum tokens for Nova response
- */
 const MAX_TOKENS = 1000;
 
-/**
- * Lambda handler for entity extraction
- */
 export const handler = async (
   event: any
 ): Promise<EntityExtractionResponse> => {
   console.log('Entity extraction request:', JSON.stringify(event, null, 2));
 
   try {
-    // Handle EventBridge event format
+
     let transcribedText: string;
     let intent: IntentType;
     let phoneNumber: string;
@@ -59,14 +32,14 @@ export const handler = async (
     let language: string;
 
     if (event.detail) {
-      // EventBridge event from intent classification
+
       transcribedText = event.detail.transcribedText || '';
       intent = event.detail.intent;
       phoneNumber = event.detail.phone || '';
       messageId = event.detail.messageId || '';
       language = event.detail.language || 'en';
     } else {
-      // Direct invocation format
+
       transcribedText = event.transcribedText || '';
       intent = event.intent;
       phoneNumber = event.phoneNumber || '';
@@ -74,7 +47,6 @@ export const handler = async (
       language = event.language || 'en';
     }
 
-    // Validate input
     if (!transcribedText || transcribedText.trim().length === 0) {
       throw new Error('Transcribed text is required');
     }
@@ -83,22 +55,17 @@ export const handler = async (
       throw new Error('Intent is required');
     }
 
-    // Construct intent-specific prompt
     const prompt = constructEntityExtractionPrompt(
       transcribedText,
       intent
     );
     console.log('Constructed prompt for Claude');
 
-    // Call Claude via Bedrock
     const claudeResponse = await invokeClaudeModel(prompt);
     console.log('Claude response:', JSON.stringify(claudeResponse, null, 2));
 
-    // Validate extracted entities
     const validationResult = validateEntities(claudeResponse, intent);
 
-    // Publish entities extracted event for downstream processing
-    // Only publish if all required fields are present
     if (!validationResult.missingFields.length && phoneNumber && messageId) {
       await publishEntitiesExtractedEvent({
         messageId,
@@ -128,16 +95,13 @@ export const handler = async (
   }
 };
 
-/**
- * Construct intent-specific prompt for entity extraction
- */
 function constructEntityExtractionPrompt(
   transcribedText: string,
   intent: IntentType
 ): string {
   switch (intent) {
     case 'CREATE_CATALOG':
-    case 'CONFIRM_CATALOG': // Treat confirmation as catalog creation
+    case 'CONFIRM_CATALOG': 
       return constructCatalogPrompt(transcribedText);
     case 'UPDATE_PRICE':
       return constructPriceUpdatePrompt(transcribedText);
@@ -155,9 +119,6 @@ function constructEntityExtractionPrompt(
   }
 }
 
-/**
- * Construct prompt for catalog creation entity extraction
- */
 function constructCatalogPrompt(transcribedText: string): string {
   return `You are a STRICT information extractor. Your job is to extract ONLY what is EXPLICITLY stated.
 
@@ -232,9 +193,6 @@ Respond with ONLY a JSON object (no additional text):
 }`;
 }
 
-/**
- * Construct prompt for price update entity extraction
- */
 function constructPriceUpdatePrompt(transcribedText: string): string {
   return `Extract price update information from this voice note.
 
@@ -273,9 +231,6 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }`;
 }
 
-/**
- * Construct prompt for quantity update entity extraction
- */
 function constructQuantityUpdatePrompt(transcribedText: string): string {
   return `Extract quantity update information from this voice note.
 
@@ -314,9 +269,6 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }`;
 }
 
-/**
- * Construct prompt for inventory update entity extraction
- */
 function constructInventoryPrompt(transcribedText: string): string {
   return `Extract inventory update information from this voice note.
 
@@ -346,9 +298,6 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }`;
 }
 
-/**
- * Construct prompt for order-related entity extraction
- */
 function constructOrderPrompt(
   transcribedText: string,
   intent: IntentType
@@ -377,11 +326,8 @@ Respond with ONLY a JSON object in this exact format (no additional text):
 }`;
 }
 
-/**
- * Invoke Amazon Nova Pro via Amazon Bedrock
- */
 async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
-  // Construct request body for Nova Messages API format
+
   const requestBody = {
     messages: [
       {
@@ -395,13 +341,12 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
     ],
     inferenceConfig: {
       max_new_tokens: MAX_TOKENS,
-      temperature: 0.0, // Use deterministic output for extraction
+      temperature: 0.0, 
     },
   };
 
   console.log('Invoking Amazon Nova Pro:', MODEL_ID);
 
-  // Invoke model
   const command = new InvokeModelCommand({
     modelId: MODEL_ID,
     contentType: 'application/json',
@@ -411,7 +356,6 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
 
   const response = await bedrockClient.send(command);
 
-  // Parse response
   if (!response.body) {
     throw new Error('Empty response from Nova');
   }
@@ -419,7 +363,6 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
   console.log('Nova raw response:', JSON.stringify(responseBody, null, 2));
 
-  // Extract text from Nova response format
   if (!responseBody.output?.message?.content || !Array.isArray(responseBody.output.message.content)) {
     throw new Error('No content in Nova response');
   }
@@ -429,18 +372,14 @@ async function invokeClaudeModel(prompt: string): Promise<Record<string, any>> {
     throw new Error('No text in Nova response content');
   }
 
-  // Parse JSON from text content
   const entities = parseEntityResponse(textContent);
 
   return entities;
 }
 
-/**
- * Parse entity response from Claude's text output
- */
 function parseEntityResponse(text: string): Record<string, any> {
   try {
-    // Remove any markdown code blocks if present
+
     let cleanedText = text.trim();
     if (cleanedText.startsWith('```json')) {
       cleanedText = cleanedText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
@@ -448,7 +387,6 @@ function parseEntityResponse(text: string): Record<string, any> {
       cleanedText = cleanedText.replace(/```\n?/g, '');
     }
 
-    // Parse JSON
     const parsed = JSON.parse(cleanedText);
     return parsed;
   } catch (error) {
@@ -457,9 +395,6 @@ function parseEntityResponse(text: string): Record<string, any> {
   }
 }
 
-/**
- * Validate extracted entities based on intent
- */
 function validateEntities(
   entities: Record<string, any>,
   intent: IntentType
@@ -485,13 +420,9 @@ function validateEntities(
   }
 }
 
-/**
- * Validate catalog creation entities
- */
 function validateCatalogEntities(entities: CatalogEntities): { missingFields: string[] } {
   const missingFields: string[] = [];
 
-  // Required fields for catalog creation
   if (!entities.product_name) {
     missingFields.push('product_name');
   }
@@ -508,7 +439,6 @@ function validateCatalogEntities(entities: CatalogEntities): { missingFields: st
     missingFields.push('category');
   }
 
-  // Validate data types
   if (entities.price !== null && typeof entities.price !== 'number') {
     missingFields.push('price (must be a number)');
   }
@@ -516,25 +446,16 @@ function validateCatalogEntities(entities: CatalogEntities): { missingFields: st
     missingFields.push('quantity (must be a number)');
   }
 
-  // Note: We store the per-unit price, not the total price
-  // For example, "500 per kg" for 2kg should be stored as price=500, quantity=2, unit=kg
-  // The buyer app will display the per-unit rate
-
   return { missingFields };
 }
 
-/**
- * Validate price update entities
- */
 function validatePriceUpdateEntities(entities: PriceUpdateEntities): { missingFields: string[] } {
   const missingFields: string[] = [];
 
-  // Required field for price update
   if (entities.new_price === null || entities.new_price === undefined) {
     missingFields.push('new_price');
   }
 
-  // Validate data type
   if (entities.new_price !== null && typeof entities.new_price !== 'number') {
     missingFields.push('new_price (must be a number)');
   }
@@ -542,18 +463,13 @@ function validatePriceUpdateEntities(entities: PriceUpdateEntities): { missingFi
   return { missingFields };
 }
 
-/**
- * Validate quantity update entities
- */
 function validateQuantityUpdateEntities(entities: QuantityUpdateEntities): { missingFields: string[] } {
   const missingFields: string[] = [];
 
-  // Required field for quantity update
   if (entities.new_quantity === null || entities.new_quantity === undefined) {
     missingFields.push('new_quantity');
   }
 
-  // Validate data type
   if (entities.new_quantity !== null && typeof entities.new_quantity !== 'number') {
     missingFields.push('new_quantity (must be a number)');
   }
@@ -561,15 +477,11 @@ function validateQuantityUpdateEntities(entities: QuantityUpdateEntities): { mis
   return { missingFields };
 }
 
-/**
- * Validate inventory update entities
- */
 function validateInventoryEntities(
   entities: InventoryEntities
 ): { missingFields: string[] } {
   const missingFields: string[] = [];
 
-  // Required fields for inventory update
   if (!entities.product_identifier) {
     missingFields.push('product_identifier');
   }
@@ -577,13 +489,11 @@ function validateInventoryEntities(
     missingFields.push('new_quantity');
   }
 
-  // Validate operation
   const validOperations = ['SET', 'INCREMENT', 'DECREMENT'];
   if (entities.operation && !validOperations.includes(entities.operation)) {
     missingFields.push('operation (must be SET, INCREMENT, or DECREMENT)');
   }
 
-  // Validate data types
   if (entities.new_quantity !== null && typeof entities.new_quantity !== 'number') {
     missingFields.push('new_quantity (must be a number)');
   }
@@ -591,22 +501,16 @@ function validateInventoryEntities(
   return { missingFields };
 }
 
-/**
- * Validate order-related entities
- */
 function validateOrderEntities(
   entities: OrderEntities,
   intent: IntentType
 ): { missingFields: string[] } {
   const missingFields: string[] = [];
 
-  // order_id is optional for some intents (may be inferred from context)
-  // action should match the intent
   if (!entities.action) {
     missingFields.push('action');
   }
 
-  // For REJECT_ORDER, reason is helpful but not strictly required
   if (intent === 'REJECT_ORDER' && !entities.reason) {
     console.log('Note: Rejection reason not provided');
   }
@@ -614,9 +518,6 @@ function validateOrderEntities(
   return { missingFields };
 }
 
-/**
- * Publish entities extracted event for downstream processing
- */
 async function publishEntitiesExtractedEvent(data: {
   messageId: string;
   phoneNumber: string;

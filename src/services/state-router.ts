@@ -1,11 +1,3 @@
-/**
- * State Router Service
- * 
- * Routes incoming WhatsApp messages to appropriate handlers based on user state and message type.
- * Provides error guidance when users send unexpected message types.
- * 
- * Requirements: 3.2, 3.3, 3.4, 3.5, 3.6
- */
 
 import { UserState, UserStateType } from './state-manager';
 import { translateMessage, SupportedLanguage } from './language-manager';
@@ -13,27 +5,24 @@ import { translateMessage, SupportedLanguage } from './language-manager';
 export type HandlerType = 'KYC' | 'VOICE' | 'IMAGE' | 'CONFIRMATION' | 'AGENT' | 'ERROR';
 export type MessageType = 'text' | 'audio' | 'image' | 'button_reply';
 
-export interface RouteDecision {
+interface RouteDecision {
   handler: HandlerType;
   action: string;
   metadata?: Record<string, any>;
 }
 
-/**
- * Routing rules mapping state and message type to handler
- */
 const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', HandlerType>> = {
   NEW: {
-    image: 'KYC',     // PAN card photo → KYC handler
-    text: 'AGENT',    // "hi", any text → agent for warm onboarding
-    audio: 'AGENT',   // Voice message → agent for warm onboarding
+    image: 'KYC',     
+    text: 'AGENT',    
+    audio: 'AGENT',   
     button_reply: 'AGENT',
     default: 'AGENT',
   },
   KYC_PENDING: {
-    image: 'KYC',     // Retry PAN card photo → KYC handler
-    text: 'AGENT',    // Questions during KYC → agent handles naturally
-    audio: 'AGENT',   // Voice during KYC → agent handles naturally
+    image: 'KYC',     
+    text: 'AGENT',    
+    audio: 'AGENT',   
     button_reply: 'AGENT',
     default: 'AGENT',
   },
@@ -45,50 +34,42 @@ const ROUTING_RULES: Record<UserStateType, Record<MessageType | 'default', Handl
     default: 'AGENT',
   },
   GUEST_ACTIVE: {
-    audio: 'AGENT',   // Guest users get full agent access
+    audio: 'AGENT',   
     text: 'AGENT',
-    image: 'AGENT',   // Can add products, or send PAN later
+    image: 'AGENT',   
     button_reply: 'AGENT',
     default: 'AGENT',
   },
   VOICE_RECEIVED: {
-    audio: 'AGENT',  // Route to AI agent for natural language processing
-    text: 'AGENT',   // Route to AI agent for text queries/UPI
-    image: 'AGENT',  // Route to agent — agent handles download/enhance + state transition
-    button_reply: 'AGENT',  // Route to agent — handles order accept/reject buttons
+    audio: 'AGENT',  
+    text: 'AGENT',   
+    image: 'AGENT',  
+    button_reply: 'AGENT',  
     default: 'ERROR',
   },
   IMAGE_PENDING: {
-    image: 'AGENT',  // Route to agent — handles download/enhance + confirmation trigger
-    text: 'AGENT',   // Allow questions/queries while waiting for image
-    audio: 'AGENT',  // Allow voice queries while waiting for image
-    button_reply: 'AGENT',  // Route to agent — handles order accept/reject buttons
+    image: 'AGENT',  
+    text: 'AGENT',   
+    audio: 'AGENT',  
+    button_reply: 'AGENT',  
     default: 'ERROR',
   },
   CONFIRMATION_PENDING: {
-    button_reply: 'AGENT',  // Route to agent — handles both catalog approve AND order accept/reject
-    text: 'AGENT',  // Route to AI agent for flexible conversational handling
-    audio: 'AGENT', // Route to AI agent for flexible conversational handling  
-    image: 'AGENT', // Allow image even in confirmation (new product photo)
+    button_reply: 'AGENT',  
+    text: 'AGENT',  
+    audio: 'AGENT', 
+    image: 'AGENT', 
     default: 'ERROR',
   },
   ACTIVE: {
-    audio: 'AGENT', // Route to AI agent for natural language processing
-    text: 'AGENT',  // Route to AI agent for natural language processing
-    image: 'AGENT', // Route to AI agent for natural language processing
-    button_reply: 'AGENT', // Route to AI agent for natural language processing
+    audio: 'AGENT', 
+    text: 'AGENT',  
+    image: 'AGENT', 
+    button_reply: 'AGENT', 
     default: 'AGENT',
   },
 };
 
-/**
- * Generate error guidance message based on current state
- * 
- * @param state - Current user state
- * @param messageType - Type of message received
- * @param language - User's language preference
- * @returns Guidance message in user's language
- */
 function generateGuidanceMessage(
   state: UserStateType,
   messageType: MessageType,
@@ -142,13 +123,6 @@ function generateGuidanceMessage(
   return guidance[state][lang];
 }
 
-/**
- * Route incoming message to appropriate handler
- * 
- * @param messageType - Type of message received
- * @param state - Current user state
- * @returns Route decision with handler and action
- */
 export function route(
   messageType: MessageType,
   state: UserState
@@ -178,13 +152,6 @@ export function route(
   };
 }
 
-/**
- * Validate state transition
- * 
- * @param currentState - Current user state
- * @param newState - Proposed new state
- * @returns true if transition is valid
- */
 export function isValidTransition(
   currentState: UserStateType,
   newState: UserStateType
@@ -203,12 +170,6 @@ export function isValidTransition(
   return validTransitions[currentState]?.includes(newState) || false;
 }
 
-/**
- * Get expected message types for current state
- * 
- * @param state - Current user state
- * @returns Array of expected message types
- */
 export function getExpectedMessageTypes(state: UserStateType): MessageType[] {
   const rules = ROUTING_RULES[state];
   return Object.entries(rules)

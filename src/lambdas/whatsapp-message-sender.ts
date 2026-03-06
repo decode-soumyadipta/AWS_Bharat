@@ -1,22 +1,10 @@
-/**
- * WhatsApp Message Sender Lambda
- * 
- * This Lambda function sends WhatsApp messages via AWS End User Messaging API.
- * Supports text messages, interactive messages with buttons, and images with captions.
- * Includes language-specific formatting and retry logic with exponential backoff.
- * 
- * Requirements: 1.4, 1.6, 5.3, 9.2, 12.6
- */
 
 import { WhatsAppOutboundMessage } from '../models/whatsapp';
 
 const MAX_RETRY_ATTEMPTS = 5;
-const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
-const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const INITIAL_RETRY_DELAY_MS = 1000; 
+const MAX_RETRY_DELAY_MS = 24 * 60 * 60 * 1000; 
 
-/**
- * Get WhatsApp API configuration from environment variables
- */
 function getWhatsAppConfig() {
   return {
     endpoint: process.env.WHATSAPP_API_ENDPOINT || '',
@@ -25,9 +13,6 @@ function getWhatsAppConfig() {
   };
 }
 
-/**
- * Language-specific message templates
- */
 const MESSAGE_TEMPLATES = {
   hi: {
     orderReceived: '🛒 नया ऑर्डर!',
@@ -67,9 +52,6 @@ const MESSAGE_TEMPLATES = {
   },
 };
 
-/**
- * Formats a message in the specified language
- */
 export function formatMessage(
   template: string,
   params: Record<string, string>,
@@ -82,18 +64,12 @@ export function formatMessage(
   return message;
 }
 
-/**
- * Marks a WhatsApp message as read, optionally with typing indicator.
- * Matches the WhatsApp Cloud API reference implementation exactly:
- *   POST /{PHONE_NUMBER_ID}/messages
- *   { messaging_product: 'whatsapp', status: 'read', message_id: '...', typing_indicator: { type: 'text' } }
- */
 export async function markMessageAsRead(
   messageId: string,
   showTypingIndicator: boolean = false
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   const config = getWhatsAppConfig();
-  
+
   if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
     console.warn('WhatsApp API configuration missing, skipping mark as read');
     return { success: false, error: 'Configuration missing' };
@@ -101,7 +77,7 @@ export async function markMessageAsRead(
 
   try {
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
-    
+
     const payload: any = {
       messaging_product: 'whatsapp',
       status: 'read',
@@ -131,7 +107,6 @@ export async function markMessageAsRead(
       return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
     }
 
-    // Track this message as already-read so subsequent typing uses standalone endpoint
     alreadyReadMessageIds.add(messageId);
 
     let parsed;
@@ -143,41 +118,20 @@ export async function markMessageAsRead(
   }
 }
 
-/**
- * Sends WhatsApp typing indicator.
- * 
- * IMPORTANT: WhatsApp Cloud API's markMessageAsRead(msgId, true) only triggers
- * the typing bubble on the FIRST call (unread→read transition). Subsequent calls
- * with the same messageId are no-ops — the typing bubble does NOT re-appear.
- * 
- * Fix: After the first mark-as-read, use the standalone typing_indicator endpoint
- * (available in v22.0+) which sends typing directly to a phone number without
- * needing a message state transition.
- */
-
-// Cache the last message ID per phone so typing works even without explicit messageId
 const lastMessageIdByPhone: Record<string, string> = {};
 
-// Track messages already marked as read — subsequent typing must use standalone endpoint
 const alreadyReadMessageIds: Set<string> = new Set();
 
-// Export for testing
 export { alreadyReadMessageIds as _alreadyReadMessageIds };
 
 export function setLastMessageId(phone: string, messageId: string): void {
   lastMessageIdByPhone[phone] = messageId;
 }
 
-/**
- * Re-send typing indicator using the same message_id.
- * Per WhatsApp Cloud API docs, typing_indicator can be sent alongside
- * status: 'read' with the same message_id. The read is idempotent,
- * but the typing indicator fires every time.
- */
 async function resendTypingWithMessageId(
   messageId: string
 ): Promise<{ success: boolean; data?: any; error?: string }> {
-  // Simply re-use markMessageAsRead with typing — the API accepts it
+
   return markMessageAsRead(messageId, true);
 }
 
@@ -187,15 +141,11 @@ export async function sendTypingIndicator(
 ): Promise<{ success: boolean; error?: string }> {
   const msgId = messageId || lastMessageIdByPhone[to];
 
-  // If the message was already marked as read, re-send typing with the same message_id
-  // The WhatsApp API accepts repeated read+typing_indicator calls — read is idempotent,
-  // but the typing indicator fires every time.
   if (msgId && alreadyReadMessageIds.has(msgId)) {
     console.log('📝 Message already read, re-sending typing with message_id for', to);
     return resendTypingWithMessageId(msgId);
   }
 
-  // First time: use markMessageAsRead with typing (triggers read + typing)
   if (msgId) {
     try {
       const result = await markMessageAsRead(msgId, true);
@@ -209,7 +159,6 @@ export async function sendTypingIndicator(
     }
   }
 
-  // No messageId at all — cannot show typing without a message_id
   if (to) {
     console.log('⚠️ No messageId for typing indicator — typing requires a message_id per WhatsApp API');
   }
@@ -218,9 +167,6 @@ export async function sendTypingIndicator(
   return { success: false, error: 'No messageId or phone available' };
 }
 
-/**
- * Sends a text message via WhatsApp
- */
 export async function sendTextMessage(
   to: string,
   text: string,
@@ -236,9 +182,6 @@ export async function sendTextMessage(
   return sendMessageWithRetry(message);
 }
 
-/**
- * Sends an interactive message with buttons via WhatsApp
- */
 export async function sendInteractiveMessage(
   to: string,
   text: string,
@@ -258,9 +201,6 @@ export async function sendInteractiveMessage(
   return sendMessageWithRetry(message);
 }
 
-/**
- * Sends an image with caption via WhatsApp
- */
 export async function sendImageMessage(
   to: string,
   imageUrl: string,
@@ -280,9 +220,6 @@ export async function sendImageMessage(
   return sendMessageWithRetry(message);
 }
 
-/**
- * Sends an audio message via WhatsApp
- */
 export async function sendAudioMessage(
   to: string,
   audioUrl: string,
@@ -300,9 +237,6 @@ export async function sendAudioMessage(
   return sendMessageWithRetry(message);
 }
 
-/**
- * Sends a document (PDF, etc.) via WhatsApp with optional caption
- */
 export async function sendDocumentMessage(
   to: string,
   documentUrl: string,
@@ -324,16 +258,13 @@ export async function sendDocumentMessage(
   return sendMessageWithRetry(message);
 }
 
-/**
- * Sends a message with retry logic and exponential backoff
- */
 async function sendMessageWithRetry(
   message: WhatsAppOutboundMessage,
   attempt: number = 1
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {
     const result = await sendMessage(message);
-    
+
     if (result.success) {
       console.log('Message sent successfully:', {
         to: message.to,
@@ -344,22 +275,19 @@ async function sendMessageWithRetry(
       return result;
     }
 
-    // Message send returned an error (not an exception)
-    // Only retry if it's a retryable error
     const isRetryable = result.statusCode && (
-      result.statusCode >= 500 ||  // 5xx server errors
-      result.statusCode === 429     // Rate limiting
+      result.statusCode >= 500 ||  
+      result.statusCode === 429     
     );
 
     if (isRetryable && attempt < MAX_RETRY_ATTEMPTS) {
       const delay = calculateRetryDelay(attempt);
       console.log(`Message send failed, retrying in ${delay}ms (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
-      
+
       await sleep(delay);
       return sendMessageWithRetry(message, attempt + 1);
     }
 
-    // Non-retryable error or max retries exceeded
     if (attempt >= MAX_RETRY_ATTEMPTS) {
       return {
         success: false,
@@ -367,21 +295,18 @@ async function sendMessageWithRetry(
       };
     }
 
-    // Return the error as-is for non-retryable errors
     return result;
   } catch (error) {
     console.error('Error sending message:', error);
-    
-    // Retry on transient errors
+
     if (isRetryableError(error) && attempt < MAX_RETRY_ATTEMPTS) {
       const delay = calculateRetryDelay(attempt);
       console.log(`Retrying after error in ${delay}ms (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
-      
+
       await sleep(delay);
       return sendMessageWithRetry(message, attempt + 1);
     }
 
-    // Max retries exceeded or non-retryable error
     if (attempt >= MAX_RETRY_ATTEMPTS) {
       return {
         success: false,
@@ -396,66 +321,49 @@ async function sendMessageWithRetry(
   }
 }
 
-/**
- * Calculates retry delay with exponential backoff
- * Formula: min(INITIAL_DELAY * 2^(attempt-1), MAX_DELAY)
- */
 function calculateRetryDelay(attempt: number): number {
   const delay = INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
   return Math.min(delay, MAX_RETRY_DELAY_MS);
 }
 
-/**
- * Determines if an error is retryable
- */
 function isRetryableError(error: any): boolean {
-  // Retry on network errors, timeouts, and 5xx server errors
+
   if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
     return true;
   }
-  
+
   if (error.statusCode >= 500 && error.statusCode < 600) {
     return true;
   }
-  
-  // Retry on rate limiting (429)
+
   if (error.statusCode === 429) {
     return true;
   }
-  
+
   return false;
 }
 
-/**
- * Sleep utility for retry delays
- */
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Sends a message via AWS End User Messaging API
- * This is a placeholder implementation that will be replaced with actual AWS SDK calls
- */
 async function sendMessage(
   message: WhatsAppOutboundMessage
 ): Promise<{ success: boolean; messageId?: string; error?: string; statusCode?: number }> {
-  // Get configuration at runtime
+
   const config = getWhatsAppConfig();
-  
-  // Validate required configuration
+
   if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
     throw new Error('WhatsApp API configuration missing');
   }
 
-  // Construct the API payload based on message type
   const payload = constructWhatsAppPayload(message);
 
   try {
-    // Call WhatsApp Business API
+
     const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
     console.log('Calling WhatsApp API:', { url, to: message.to, type: message.type });
-    
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -489,9 +397,6 @@ async function sendMessage(
   }
 }
 
-/**
- * Constructs WhatsApp API payload based on message type
- */
 function constructWhatsAppPayload(message: WhatsAppOutboundMessage): any {
   const basePayload = {
     messaging_product: 'whatsapp',
@@ -523,7 +428,7 @@ function constructWhatsAppPayload(message: WhatsAppOutboundMessage): any {
               type: 'reply',
               reply: {
                 id: button.id,
-                title: button.title.substring(0, 20), // WhatsApp limit
+                title: button.title.substring(0, 20), 
               },
             })) || [],
           },
@@ -565,24 +470,19 @@ function constructWhatsAppPayload(message: WhatsAppOutboundMessage): any {
   }
 }
 
-/**
- * Lambda handler for sending WhatsApp messages
- * Can be invoked directly or via EventBridge
- */
 export async function handler(event: any): Promise<any> {
   console.log('WhatsApp message sender invoked:', JSON.stringify(event, null, 2));
 
   try {
-    // Check if this is an image request event
+
     if (event.detail && event['detail-type'] === 'voice.image_request.needed') {
       const { phone, language = 'hi-IN' } = event.detail;
       const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
-      
-      // Send bilingual image request message
+
       const hindiText = '📸 कृपया उत्पाद की फोटो भेजें';
       const englishText = '📸 Please send product photo';
       const bilingualText = `${hindiText}\n\n${englishText}`;
-      
+
       const result = await sendTextMessage(phone, bilingualText, langCode);
       return {
         statusCode: result.success ? 200 : 500,
@@ -590,7 +490,6 @@ export async function handler(event: any): Promise<any> {
       };
     }
 
-    // Extract message details from event (handle EventBridge format)
     const eventDetail = event.detail || event;
     const { to, type, content, language = 'en' } = eventDetail;
 
@@ -637,7 +536,7 @@ export async function handler(event: any): Promise<any> {
         break;
 
       case 'voice':
-        // voice type: generate Polly TTS and send as WhatsApp audio (no text bubble)
+
         if (!content?.text) {
           throw new Error('Text content is required for voice messages');
         }
@@ -665,101 +564,72 @@ export async function handler(event: any): Promise<any> {
   }
 }
 
-/**
- * Helper function to get message templates for a language
- */
 export function getMessageTemplates(language: 'hi' | 'mr' | 'en') {
   return MESSAGE_TEMPLATES[language];
 }
 
-/**
- * Clean text for voice synthesis and produce SSML output
- * - Remove emojis and special characters
- * - Use <prosody rate="slow"> for comfortable listening speed
- * - Use <say-as> for proper number/ID pronunciation
- * - Use <break> tags for natural pauses
- * - XML-escape text before wrapping in SSML
- */
 function cleanTextForVoice(text: string): string {
-  // Remove all emojis
+
   let cleaned = text.replace(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F000}-\u{1F02F}]|[\u{1F0A0}-\u{1F0FF}]|[\u{1F100}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{1FA00}-\u{1FA6F}]|[\u{1FA70}-\u{1FAFF}]|[\u{2300}-\u{23FF}]|[\u{2B50}]|[\u{2B55}]|[\u{231A}]|[\u{231B}]|[\u{23E9}-\u{23EC}]|[\u{23F0}]|[\u{23F3}]|[\u{25FD}]|[\u{25FE}]|[\u{2614}]|[\u{2615}]|[\u{2648}-\u{2653}]|[\u{267F}]|[\u{2693}]|[\u{26A1}]|[\u{26AA}]|[\u{26AB}]|[\u{26BD}]|[\u{26BE}]|[\u{26C4}]|[\u{26C5}]|[\u{26CE}]|[\u{26D4}]|[\u{26EA}]|[\u{26F2}]|[\u{26F3}]|[\u{26F5}]|[\u{26FA}]|[\u{26FD}]|[\u{2705}]|[\u{270A}]|[\u{270B}]|[\u{2728}]|[\u{274C}]|[\u{274E}]|[\u{2753}-\u{2755}]|[\u{2757}]|[\u{2795}-\u{2797}]|[\u{27B0}]|[\u{27BF}]|[\u{2B1B}]|[\u{2B1C}]|[\u{3030}]|[\u{303D}]|[\u{3297}]|[\u{3299}]/gu, '');
-  
-  // Remove special symbols that sound weird when read aloud
+
   cleaned = cleaned.replace(/[✅❌💡💰📸📋✏️⚠️•\*#_~`|]/g, '');
-  
-  // Remove markdown formatting (bold, italic)
+
   cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1');
   cleaned = cleaned.replace(/\*(.*?)\*/g, '$1');
-  
-  // Remove dashes used as list separators
+
   cleaned = cleaned.replace(/^[\s]*[-–—]+\s*/gm, '');
   cleaned = cleaned.replace(/\s[-–—]{2,}\s/g, ' ');
-  
-  // Replace currency symbols with spoken words
+
   cleaned = cleaned.replace(/₹\s*/g, 'रुपये ');
   cleaned = cleaned.replace(/\$/g, 'dollars ');
-  
-  // Replace colons and newlines with pause markers (will become <break> later)
+
   cleaned = cleaned.replace(/:\s*/g, '। ');
   cleaned = cleaned.replace(/\n\n+/g, '। ');
   cleaned = cleaned.replace(/\n/g, '। ');
-  
-  // Clean up multiple spaces and periods
+
   cleaned = cleaned.replace(/।\s*।/g, '।');
   cleaned = cleaned.replace(/\s+/g, ' ');
   cleaned = cleaned.trim();
-  
+
   if (!cleaned || cleaned.length < 2) {
     return '';
   }
-  
-  // XML-escape the text BEFORE adding SSML tags
+
   cleaned = cleaned
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
-  
-  // Replace PAN-like IDs (e.g., ABCDE1234F) with character-by-character reading
+
   cleaned = cleaned.replace(/\b([A-Z]{5}\d{4}[A-Z])\b/g, '<say-as interpret-as="characters">$1</say-as>');
-  
-  // Replace phone numbers (10+ digit sequences) with digit-by-digit reading
+
   cleaned = cleaned.replace(/\b(\d{10,})\b/g, '<say-as interpret-as="digits">$1</say-as>');
-  
-  // Replace UPI IDs with character reading (e.g., name@upi)
+
   cleaned = cleaned.replace(/(\S+@\S+)/g, '<say-as interpret-as="characters">$1</say-as>');
-  
-  // Add natural pauses at sentence boundaries (।)
+
   cleaned = cleaned.replace(/।\s*/g, '<break time="500ms"/>');
-  
-  // Add small pause after commas
+
   cleaned = cleaned.replace(/,\s*/g, '<break time="300ms"/>');
-  
-  // Wrap in SSML with slow prosody for comfortable listening
+
   return `<speak><prosody rate="slow">${cleaned}</prosody></speak>`;
 }
 
-/**
- * Send text message with voice response
- * Sends both text and voice audio for better accessibility
- */
 export async function sendTextWithVoice(
   to: string,
   text: string,
   language: 'hi' | 'mr' | 'en' = 'hi'
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // Send text message first
+
     const textResult = await sendTextMessage(to, text, language);
-    
+
     if (!textResult.success) {
       return textResult;
     }
 
-    // Generate and send voice
     await generateAndSendVoice(to, text, language);
-    
+
     return { success: true };
   } catch (error) {
     console.error('Error in sendTextWithVoice:', error);
@@ -770,10 +640,6 @@ export async function sendTextWithVoice(
   }
 }
 
-/**
- * Send voice-only message (no text) - keeps WhatsApp chat clean
- * Used for most agent responses. Text is only sent for visual confirmations.
- */
 export async function sendVoiceOnly(
   to: string,
   text: string,
@@ -782,14 +648,14 @@ export async function sendVoiceOnly(
   try {
     const sent = await generateAndSendVoice(to, text, language);
     if (!sent) {
-      // Fallback to text if voice generation fails
+
       console.warn('Voice generation failed, falling back to text');
       await sendTextMessage(to, text, language);
     }
     return { success: true };
   } catch (error) {
     console.error('Error in sendVoiceOnly:', error);
-    // Always fallback to text on error so user gets something
+
     try {
       await sendTextMessage(to, text, language);
       return { success: true };
@@ -802,9 +668,6 @@ export async function sendVoiceOnly(
   }
 }
 
-/**
- * Internal: Generate Polly audio and send as WhatsApp audio message
- */
 async function generateAndSendVoice(
   to: string,
   text: string,
@@ -815,19 +678,17 @@ async function generateAndSendVoice(
     const { PutObjectCommand, GetObjectCommand, HeadObjectCommand } = await import('@aws-sdk/client-s3');
     const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const { createHash } = await import('crypto');
-    
+
     const pollyClient = new PollyClient({ region: process.env.AWS_REGION || 'us-east-1' });
     const voiceId = language === 'mr' ? 'Aditi' : language === 'hi' ? 'Kajal' : 'Joanna';
     const languageCode = language === 'mr' ? 'hi-IN' : language === 'hi' ? 'hi-IN' : 'en-IN';
-    
-    // Clean text for voice synthesis
+
     const cleanedText = cleanTextForVoice(text);
-    
+
     if (!cleanedText || cleanedText.length < 2) {
       return false;
     }
-    
-    // Content-hash caching: SHA-256 of (text + voiceId + language) → reuse S3 object
+
     const cacheDigest = createHash('sha256').update(`${cleanedText}|${voiceId}|${languageCode}`).digest('hex').substring(0, 32);
     const { s3Client } = await import('../config/aws-clients');
     const bucketName = process.env.PRODUCTS_BUCKET_NAME;
@@ -835,20 +696,19 @@ async function generateAndSendVoice(
       console.warn('PRODUCTS_BUCKET_NAME not configured, skipping voice');
       return false;
     }
-    
+
     const cacheKey = `voice-responses/cache-${cacheDigest}.mp3`;
-    
-    // Check if this exact audio already exists in S3
+
     let audioExists = false;
     try {
       await s3Client.send(new HeadObjectCommand({ Bucket: bucketName, Key: cacheKey }));
       audioExists = true;
       console.log(`🔊 TTS cache hit: ${cacheKey}`);
     } catch {
-      // Object doesn't exist — need to synthesize
+
       audioExists = false;
     }
-    
+
     if (!audioExists) {
       const command = new SynthesizeSpeechCommand({
         Text: cleanedText,
@@ -858,18 +718,17 @@ async function generateAndSendVoice(
         LanguageCode: languageCode,
         TextType: 'ssml',
       });
-      
+
       const response = await pollyClient.send(command);
       if (!response.AudioStream) return false;
-      
+
       const chunks: Uint8Array[] = [];
       const stream = response.AudioStream as AsyncIterable<Uint8Array>;
       for await (const chunk of stream) {
         chunks.push(chunk);
       }
       const audioBuffer = Buffer.concat(chunks);
-      
-      // Upload to S3 with cache key
+
       await s3Client.send(new PutObjectCommand({
         Bucket: bucketName,
         Key: cacheKey,
@@ -878,15 +737,13 @@ async function generateAndSendVoice(
       }));
       console.log(`🔊 TTS cache miss — synthesized and stored: ${cacheKey}`);
     }
-    
-    // Generate presigned URL (always needed — URLs expire)
+
     const getObjectCommand = new GetObjectCommand({
       Bucket: bucketName,
       Key: cacheKey,
     });
     const voiceUrl = await getSignedUrl(s3Client, getObjectCommand, { expiresIn: 3600 });
-    
-    // Send voice message
+
     await sendAudioMessage(to, voiceUrl, language);
     return true;
   } catch (voiceError) {

@@ -1,13 +1,3 @@
-/**
- * Report Generator Service
- * 
- * Generates PDF business reports for sellers using pdfmake.
- * Supports weekly, monthly, and custom date-range reports.
- * Reports include: sales summary, top products, revenue trends,
- * market price comparison, and AI-powered recommendations.
- * 
- * Generated PDFs are uploaded to S3 and delivered via WhatsApp document message.
- */
 
 import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -17,29 +7,25 @@ import { getTopSellingProducts, getSalesSummary, getDateRangeAnalytics } from '.
 import type { ProductSalesStats, DateRangeAnalytics } from './analytics-service';
 import { getSellerByPhone } from './dynamodb-repository';
 
-// pdfmake uses CommonJS — import via require
-// In v0.3.5+, PdfPrinter class is at pdfmake/js/Printer (default export)
 const PdfPrinter = require('pdfmake/js/Printer').default;
 
 const NOVA_LITE_MODEL_ID = 'amazon.nova-lite-v1:0';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+type ReportType = 'weekly' | 'monthly' | 'custom';
 
-export type ReportType = 'weekly' | 'monthly' | 'custom';
-
-export interface ReportRequest {
+interface ReportRequest {
   phone: string;
   reportType: ReportType;
   language: 'hi' | 'mr' | 'en';
-  customStartDate?: string; // YYYY-MM-DD
-  customEndDate?: string;   // YYYY-MM-DD
+  customStartDate?: string; 
+  customEndDate?: string;   
 }
 
-export interface ReportResult {
+interface ReportResult {
   success: boolean;
-  pdfUrl?: string;        // Pre-signed S3 URL for WhatsApp delivery
-  s3Key?: string;         // S3 object key
-  voiceSummary?: string;  // Spoken summary for voice message
+  pdfUrl?: string;        
+  s3Key?: string;         
+  voiceSummary?: string;  
   error?: string;
 }
 
@@ -51,7 +37,13 @@ interface ReportData {
   startDate: string;
   endDate: string;
   totalOrders: number;
+  confirmedOrders: number;
+  pendingOrders: number;
+  rejectedOrders: number;
+  cancelledOrders: number;
   totalRevenue: number;
+  confirmedRevenue: number;
+  pendingRevenue: number;
   averageOrderValue: number;
   topProducts: ProductSalesStats[];
   dateRangeAnalytics: DateRangeAnalytics | null;
@@ -59,46 +51,32 @@ interface ReportData {
   generatedAt: string;
 }
 
-// ── Fonts (pdfmake built-in Roboto) ─────────────────────────────────────────
-// Loaded lazily inside buildPdf to avoid import errors in test environments
-
-// ── Main Export: Generate Report ────────────────────────────────────────────
-
-/**
- * Generate a PDF business report for a seller.
- * 
- * @param request - Report parameters (phone, type, language, custom dates)
- * @returns ReportResult with pre-signed URL and voice summary
- */
 export async function generateReport(request: ReportRequest): Promise<ReportResult> {
   const { phone, reportType, language, customStartDate, customEndDate } = request;
 
   try {
     console.log(`📊 Generating ${reportType} report for ${phone}`);
 
-    // 1. Look up seller
     const seller = await getSellerByPhone(phone);
     const sellerId = seller ? seller.PK.replace('SELLER#', '') : phone;
     const sellerName = seller?.name || 'Seller';
 
-    // 2. Calculate date range
     const { startDate, endDate, dateLabel, dateQuery } = getDateRange(reportType, customStartDate, customEndDate);
 
-    // 3. Fetch analytics data in parallel
     const [topProducts, salesSummary, dateRangeData] = await Promise.all([
       getTopSellingProducts(sellerId, 10, undefined, phone).catch(() => [] as ProductSalesStats[]),
       getSalesSummary(sellerId, undefined, phone).catch(() => ({
-        totalOrders: 0, totalRevenue: 0, averageOrderValue: 0, topProduct: null, timeRange: '30d',
+        totalOrders: 0, confirmedOrders: 0, pendingOrders: 0, rejectedOrders: 0, cancelledOrders: 0,
+        totalRevenue: 0, confirmedRevenue: 0, pendingRevenue: 0,
+        averageOrderValue: 0, topProduct: null, topProducts: [], timeRange: '30d',
       })),
       getDateRangeAnalytics(sellerId, dateQuery, phone).catch(() => null),
     ]);
 
-    // 4. Generate AI recommendations
     const recommendations = await generateRecommendations(
       sellerName, topProducts, salesSummary, dateRangeData, language
     );
 
-    // 5. Assemble report data
     const reportData: ReportData = {
       sellerName,
       sellerPhone: phone,
@@ -107,7 +85,13 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       startDate,
       endDate,
       totalOrders: dateRangeData?.totalOrders ?? salesSummary.totalOrders,
+      confirmedOrders: dateRangeData?.confirmedOrders ?? salesSummary.confirmedOrders,
+      pendingOrders: dateRangeData?.pendingOrders ?? salesSummary.pendingOrders,
+      rejectedOrders: dateRangeData?.rejectedOrders ?? salesSummary.rejectedOrders,
+      cancelledOrders: dateRangeData?.cancelledOrders ?? salesSummary.cancelledOrders,
       totalRevenue: dateRangeData?.totalRevenue ?? salesSummary.totalRevenue,
+      confirmedRevenue: dateRangeData?.confirmedRevenue ?? salesSummary.confirmedRevenue,
+      pendingRevenue: dateRangeData?.pendingRevenue ?? salesSummary.pendingRevenue,
       averageOrderValue: salesSummary.averageOrderValue,
       topProducts,
       dateRangeAnalytics: dateRangeData,
@@ -115,10 +99,8 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       generatedAt: new Date().toISOString(),
     };
 
-    // 6. Build PDF
     const pdfBuffer = await buildPdf(reportData, language);
 
-    // 7. Upload to S3
     const s3Key = `reports/${phone}/${reportType}-${startDate}-to-${endDate}.pdf`;
     await s3Client.send(new PutObjectCommand({
       Bucket: PRODUCTS_BUCKET_NAME,
@@ -132,14 +114,12 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       },
     }));
 
-    // 8. Generate pre-signed URL (valid 24 hours)
     const pdfUrl = await getSignedUrl(
       s3Client,
       new GetObjectCommand({ Bucket: PRODUCTS_BUCKET_NAME, Key: s3Key }),
       { expiresIn: 86400 }
     );
 
-    // 9. Generate voice summary
     const voiceSummary = buildVoiceSummary(reportData, language);
 
     console.log(`✅ Report generated: ${s3Key}`);
@@ -159,22 +139,20 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
   }
 }
 
-// ── Date Range Helper ───────────────────────────────────────────────────────
-
 function getDateRange(
   reportType: ReportType,
   customStart?: string,
   customEnd?: string
 ): { startDate: string; endDate: string; dateLabel: string; dateQuery: string } {
   const now = new Date();
-  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000)); // IST offset
+  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000)); 
 
   if (reportType === 'custom' && customStart && customEnd) {
     return {
       startDate: customStart,
       endDate: customEnd,
       dateLabel: `${customStart} to ${customEnd}`,
-      dateQuery: customStart, // getDateRangeAnalytics uses single date or keyword
+      dateQuery: customStart, 
     };
   }
 
@@ -190,7 +168,6 @@ function getDateRange(
     };
   }
 
-  // Default: weekly
   const weekAgo = new Date(ist);
   weekAgo.setDate(weekAgo.getDate() - 7);
   const startDate = weekAgo.toISOString().split('T')[0];
@@ -203,51 +180,32 @@ function getDateRange(
   };
 }
 
-// ── PDF Builder ─────────────────────────────────────────────────────────────
-
-async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise<Buffer> {
-  const isHindi = language === 'hi' || language === 'mr';
-
-  // Labels based on language
-  const labels = isHindi ? {
-    title: 'व्यापार वाणी — बिज़नेस रिपोर्ट',
-    seller: 'विक्रेता',
-    phone: 'फ़ोन',
-    period: 'अवधि',
-    generated: 'रिपोर्ट तैयार',
-    summary: 'सारांश',
-    totalOrders: 'कुल ऑर्डर',
-    totalRevenue: 'कुल रेवेन्यू',
-    avgOrder: 'औसत ऑर्डर वैल्यू',
-    topProducts: 'शीर्ष उत्पाद',
-    productName: 'उत्पाद',
-    orders: 'ऑर्डर',
-    quantity: 'मात्रा',
-    revenue: 'रेवेन्यू (₹)',
-    recommendations: 'सुझाव',
-    noData: 'इस अवधि में कोई डेटा उपलब्ध नहीं है।',
-    currency: '₹',
-  } : {
-    title: 'Vyapar Vaani — Business Report',
+async function buildPdf(data: ReportData, _language: 'hi' | 'mr' | 'en'): Promise<Buffer> {
+  const labels = {
+    title: 'Vyapar Vaani - Business Report',
     seller: 'Seller',
     phone: 'Phone',
     period: 'Period',
     generated: 'Generated',
-    summary: 'Summary',
-    totalOrders: 'Total Orders',
-    totalRevenue: 'Total Revenue',
+    orderSummary: 'Order Summary',
+    confirmedOrders: 'Confirmed Orders',
+    confirmedRevenue: 'Confirmed Revenue',
     avgOrder: 'Avg. Order Value',
-    topProducts: 'Top Products',
+    pendingOrders: 'Pending Orders',
+    pendingRevenue: 'Pending Revenue',
+    rejectedOrders: 'Rejected',
+    cancelledOrders: 'Cancelled',
+    totalOrders: 'Total Orders',
+    topProducts: 'Top Products (Confirmed Sales)',
     productName: 'Product',
     orders: 'Orders',
-    quantity: 'Quantity',
-    revenue: 'Revenue (₹)',
+    quantity: 'Qty Sold',
+    revenue: 'Revenue (Rs)',
     recommendations: 'Recommendations',
     noData: 'No data available for this period.',
-    currency: '₹',
+    currency: 'Rs ',
   };
 
-  // Build product table rows
   const productRows: any[][] = [
     [
       { text: '#', bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
@@ -272,18 +230,16 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
     productRows.push([{ text: labels.noData, colSpan: 5, alignment: 'center', italics: true }, {}, {}, {}, {}]);
   }
 
-  // Build recommendations list
   const recommendationItems = data.recommendations.length > 0
     ? data.recommendations.map((r, i) => `${i + 1}. ${r}`)
     : [labels.noData];
 
-  // pdfmake document definition
   const docDefinition: any = {
     pageSize: 'A4',
     pageMargins: [40, 60, 40, 60],
 
     content: [
-      // Header
+
       {
         text: labels.title,
         fontSize: 22,
@@ -297,7 +253,6 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
         margin: [0, 0, 0, 15],
       },
 
-      // Seller Info
       {
         columns: [
           {
@@ -341,45 +296,63 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
         margin: [0, 0, 0, 20],
       },
 
-      // Summary Box
       {
-        text: labels.summary,
+        text: labels.orderSummary,
         fontSize: 16,
         bold: true,
         color: '#2C3E50',
         margin: [0, 0, 0, 10],
       },
       {
-        columns: [
-          {
-            width: '*',
-            stack: [
-              { text: labels.totalOrders, fontSize: 10, color: '#7F8C8D' },
-              { text: `${data.totalOrders}`, fontSize: 24, bold: true, color: '#2C3E50' },
+        table: {
+          widths: ['*', '*', '*'],
+          body: [
+            [
+              { text: labels.confirmedOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+              { text: labels.confirmedRevenue, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+              { text: labels.avgOrder, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
             ],
-            alignment: 'center',
-          },
-          {
-            width: '*',
-            stack: [
-              { text: labels.totalRevenue, fontSize: 10, color: '#7F8C8D' },
-              { text: `${labels.currency}${data.totalRevenue.toFixed(0)}`, fontSize: 24, bold: true, color: '#27AE60' },
+            [
+              { text: `${data.confirmedOrders}`, fontSize: 22, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
+              { text: `${labels.currency}${data.confirmedRevenue.toFixed(0)}`, fontSize: 22, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
+              { text: `${labels.currency}${data.averageOrderValue.toFixed(0)}`, fontSize: 22, bold: true, color: '#2980B9', alignment: 'center', border: [false, false, false, false] },
             ],
-            alignment: 'center',
-          },
-          {
-            width: '*',
-            stack: [
-              { text: labels.avgOrder, fontSize: 10, color: '#7F8C8D' },
-              { text: `${labels.currency}${data.averageOrderValue.toFixed(0)}`, fontSize: 24, bold: true, color: '#2980B9' },
-            ],
-            alignment: 'center',
-          },
-        ],
-        margin: [0, 0, 0, 25],
+          ],
+        },
+        layout: 'noBorders',
+        margin: [0, 0, 0, 10],
       },
 
-      // Top Products Table
+      ...(data.pendingOrders > 0 || data.rejectedOrders > 0 || data.cancelledOrders > 0 ? [{
+        table: {
+          widths: ['*', '*', '*', '*'],
+          body: [
+            [
+              { text: labels.totalOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+              { text: labels.pendingOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+              { text: labels.rejectedOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+              { text: labels.cancelledOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+            ],
+            [
+              { text: `${data.totalOrders}`, fontSize: 16, bold: true, color: '#2C3E50', alignment: 'center', border: [false, false, false, false] },
+              { text: `${data.pendingOrders}`, fontSize: 16, bold: true, color: '#F39C12', alignment: 'center', border: [false, false, false, false] },
+              { text: `${data.rejectedOrders}`, fontSize: 16, bold: true, color: '#E74C3C', alignment: 'center', border: [false, false, false, false] },
+              { text: `${data.cancelledOrders}`, fontSize: 16, bold: true, color: '#95A5A6', alignment: 'center', border: [false, false, false, false] },
+            ],
+          ],
+        },
+        layout: 'noBorders',
+        margin: [0, 0, 0, 5] as [number, number, number, number],
+      }] : []),
+      ...(data.pendingRevenue > 0 ? [{
+        text: `Pending Revenue: ${labels.currency}${data.pendingRevenue.toFixed(0)} (awaiting confirmation)`,
+        fontSize: 10,
+        color: '#F39C12',
+        italics: true,
+        alignment: 'center' as const,
+        margin: [0, 0, 0, 15] as [number, number, number, number],
+      }] : [{ text: '', margin: [0, 0, 0, 15] as [number, number, number, number] }]),
+
       {
         text: labels.topProducts,
         fontSize: 16,
@@ -406,7 +379,6 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
         margin: [0, 0, 0, 25],
       },
 
-      // Recommendations
       {
         text: labels.recommendations,
         fontSize: 16,
@@ -422,7 +394,6 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
         lineHeight: 1.4,
       })),
 
-      // Footer
       {
         canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#DDDDDD' }],
         margin: [0, 25, 0, 10],
@@ -442,10 +413,8 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
     },
   };
 
-  // Generate PDF buffer
-  // pdfmake/build/vfs_fonts in npm exports font buffers directly (not under pdfMake.vfs)
   const vfsFonts = require('pdfmake/build/vfs_fonts');
-  
+
   const printer = new PdfPrinter({
     Roboto: {
       normal: Buffer.from(vfsFonts['Roboto-Regular.ttf'], 'base64'),
@@ -455,7 +424,6 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
     },
   });
 
-  // In pdfmake 0.3.5+, createPdfKitDocument returns a Promise
   const pdfDoc = await printer.createPdfKitDocument(docDefinition);
 
   return new Promise<Buffer>((resolve, reject) => {
@@ -467,24 +435,24 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
   });
 }
 
-// ── AI Recommendations ──────────────────────────────────────────────────────
-
 async function generateRecommendations(
   sellerName: string,
   topProducts: ProductSalesStats[],
-  salesSummary: { totalOrders: number; totalRevenue: number; averageOrderValue: number; topProduct: string | null },
+  salesSummary: { totalOrders: number; confirmedOrders: number; pendingOrders: number; confirmedRevenue: number; totalRevenue: number; averageOrderValue: number; topProduct: string | null },
   dateRangeData: DateRangeAnalytics | null,
   language: 'hi' | 'mr' | 'en'
 ): Promise<string[]> {
   try {
-    const productList = topProducts.map(p => `${p.productName}: ${p.totalOrders} orders, ₹${p.totalRevenue}`).join('\n');
+    const productList = topProducts.map(p => `${p.productName}: ${p.totalOrders} orders, Rs ${p.totalRevenue}`).join('\n');
     const langName = language === 'hi' ? 'Hindi' : language === 'mr' ? 'Marathi' : 'English';
 
     const prompt = `You are a rural Indian business advisor. Based on this seller's data, give exactly 4 short, actionable recommendations in ${langName} (use Devanagari script for Hindi/Marathi).
 
 Seller: ${sellerName}
+Confirmed Orders: ${salesSummary.confirmedOrders}
+Pending Orders: ${salesSummary.pendingOrders}
 Total Orders: ${salesSummary.totalOrders}
-Total Revenue: ₹${salesSummary.totalRevenue}
+Confirmed Revenue: Rs ${salesSummary.confirmedRevenue}
 Top Product: ${salesSummary.topProduct || 'None yet'}
 Products:
 ${productList || 'No products sold yet'}
@@ -537,42 +505,47 @@ function getDefaultRecommendations(language: 'hi' | 'mr' | 'en'): string[] {
   ];
 }
 
-// ── Voice Summary Builder ───────────────────────────────────────────────────
-
 function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): string {
   if (language === 'hi' || language === 'mr') {
     const parts: string[] = [];
-    
+
     if (data.reportType === 'weekly') {
-      parts.push(`${data.sellerName} जी, आपकी हफ्ते की रिपोर्ट तैयार है।`);
+      parts.push(`${data.sellerName} ji, aapki hafte ki report taiyaar hai.`);
     } else if (data.reportType === 'monthly') {
-      parts.push(`${data.sellerName} जी, आपकी महीने की रिपोर्ट तैयार है।`);
+      parts.push(`${data.sellerName} ji, aapki mahine ki report taiyaar hai.`);
     } else {
-      parts.push(`${data.sellerName} जी, आपकी रिपोर्ट तैयार है।`);
+      parts.push(`${data.sellerName} ji, aapki report taiyaar hai.`);
     }
 
-    if (data.totalOrders > 0) {
-      parts.push(`इस अवधि में आपके कुल ${data.totalOrders} ऑर्डर आए और कुल रेवेन्यू ${data.totalRevenue} रुपये रही।`);
-    } else {
-      parts.push('इस अवधि में अभी कोई ऑर्डर नहीं आया।');
+    if (data.confirmedOrders > 0) {
+      parts.push(`Confirmed orders: ${data.confirmedOrders}, revenue ${data.confirmedRevenue} rupaye.`);
+    }
+    if (data.pendingOrders > 0) {
+      parts.push(`Pending orders: ${data.pendingOrders}, ${data.pendingRevenue} rupaye pending hain.`);
+    }
+    if (data.totalOrders === 0) {
+      parts.push('Is samay mein abhi koi order nahi aaya.');
     }
 
     if (data.topProducts.length > 0) {
-      parts.push(`आपका सबसे ज़्यादा बिकने वाला उत्पाद ${data.topProducts[0].productName} रहा।`);
+      parts.push(`Sabse zyada bikne wala product ${data.topProducts[0].productName} raha.`);
     }
 
-    parts.push('PDF रिपोर्ट भेज रहा हूँ, इसमें पूरी डिटेल और सुझाव हैं।');
+    parts.push('PDF report bhej raha hoon, ismein poori detail aur suggestions hain.');
 
     return parts.join(' ');
   }
 
-  // English
   const parts: string[] = [];
   parts.push(`${data.sellerName}, your ${data.reportType} report is ready.`);
 
-  if (data.totalOrders > 0) {
-    parts.push(`You had ${data.totalOrders} orders with total revenue of ${data.totalRevenue} rupees.`);
-  } else {
+  if (data.confirmedOrders > 0) {
+    parts.push(`Confirmed: ${data.confirmedOrders} orders, ${data.confirmedRevenue} rupees revenue.`);
+  }
+  if (data.pendingOrders > 0) {
+    parts.push(`Pending: ${data.pendingOrders} orders (${data.pendingRevenue} rupees awaiting confirmation).`);
+  }
+  if (data.totalOrders === 0) {
     parts.push('No orders recorded for this period yet.');
   }
 
@@ -585,16 +558,9 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
   return parts.join(' ');
 }
 
-// ── Intent Detection ────────────────────────────────────────────────────────
-
-/**
- * Detect if a user message is requesting a business report.
- * Returns the report type if detected, null otherwise.
- */
 export function detectReportIntent(message: string): { reportType: ReportType; customStart?: string; customEnd?: string } | null {
   const lower = message.toLowerCase().trim();
 
-  // Hindi/Devanagari triggers
   const weeklyHindi = /हफ्ते\s*(का|की)\s*(हिसाब|रिपोर्ट|report)|weekly\s*report|सप्ताह\s*(का|की)\s*(हिसाब|रिपोर्ट)|पिछले\s*हफ्ते/i;
   const monthlyHindi = /महीने\s*(का|की)\s*(हिसाब|रिपोर्ट|report)|monthly\s*report|पिछले\s*महीने\s*(का|की)\s*(हिसाब|रिपोर्ट)|माह\s*(का|की)\s*(रिपोर्ट|हिसाब)/i;
   const genericReport = /रिपोर्ट|report|pdf|हिसाब|बिक्री\s*(की|का)\s*रिपोर्ट|business\s*report|sales\s*report|bikri\s*report/i;
@@ -607,13 +573,11 @@ export function detectReportIntent(message: string): { reportType: ReportType; c
     return { reportType: 'monthly' };
   }
 
-  // Custom date detection (YYYY-MM-DD to YYYY-MM-DD)
   const dateRange = message.match(/(\d{4}-\d{2}-\d{2})\s*(se|to|से|तक|-)\s*(\d{4}-\d{2}-\d{2})/i);
   if (dateRange && genericReport.test(lower)) {
     return { reportType: 'custom', customStart: dateRange[1], customEnd: dateRange[3] };
   }
 
-  // Generic report → default to weekly
   if (genericReport.test(lower) || genericReport.test(message)) {
     return { reportType: 'weekly' };
   }

@@ -1,24 +1,3 @@
-/**
- * Image Enhancement Lambda
- * 
- * This Lambda function enhances product photos using Amazon Titan Image Generator v2
- * with INPAINTING and maskPrompt to preserve exact product details while creating professional backgrounds.
- * 
- * Approach: INPAINTING with maskPrompt
- * - Uses maskPrompt to target ONLY the background
- * - Product remains 100% untouched (labels, text, colors, shape)
- * - Replaces background with solid professional color
- * - Improves lighting and overall presentation
- * 
- * Features:
- * - Downloads raw product photos from S3
- * - Uses maskPrompt to identify and modify only background
- * - Preserves ALL product details exactly as photographed
- * - Creates professional e-commerce product photography
- * - Uploads enhanced images to S3
- * 
- * Validates: Requirements 3.1, 3.2, 3.3, 3.4
- */
 
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
@@ -26,86 +5,49 @@ import { s3Client, bedrockClient, PRODUCTS_BUCKET_NAME } from '../config/aws-cli
 import { Readable } from 'stream';
 import * as zlib from 'zlib';
 
-/**
- * Titan Image Generator v2 model ID
- */
 const TITAN_IMAGE_MODEL_ID = 'amazon.titan-image-generator-v2:0';
 
-/**
- * Request to enhance a product image
- */
 export interface ImageEnhancementRequest {
-  /**
-   * S3 URL or key of the raw product photo
-   */
+
   rawImageUrl: string;
 
-  /**
-   * Product name for context in prompt generation
-   */
   productName: string;
 
-  /**
-   * Product category for context in prompt generation
-   */
   productCategory?: string;
 
-  /**
-   * Item ID for naming the enhanced image
-   */
   itemId: string;
 
-  /**
-   * Seller ID for organizing S3 storage
-   */
   sellerId: string;
 }
 
-/**
- * Response from image enhancement
- */
 export interface ImageEnhancementResponse {
-  /**
-   * Whether enhancement was successful
-   */
+
   success: boolean;
 
-  /**
-   * S3 URL of the enhanced image
-   */
   enhancedImageUrl?: string;
 
-  /**
-   * S3 key of the enhanced image
-   */
   enhancedImageKey?: string;
 
-  /**
-   * Error information (if failed)
-   */
   error?: {
     code: string;
     message: string;
   };
 }
 
-/**
- * Titan Image Generator v2 request structures
- */
 interface TitanBackgroundRemovalRequest {
   taskType: 'BACKGROUND_REMOVAL';
   backgroundRemovalParams: {
-    image: string; // Base64 encoded image
+    image: string; 
   };
 }
 
 interface TitanInpaintingRequest {
   taskType: 'INPAINTING';
   inPaintingParams: {
-    image: string; // Base64 encoded image
-    text: string; // What to generate in masked area
+    image: string; 
+    text: string; 
     negativeText?: string;
-    maskPrompt: string; // What to mask
+    maskPrompt: string; 
   };
   imageGenerationConfig: {
     quality: 'standard' | 'premium';
@@ -116,44 +58,30 @@ interface TitanInpaintingRequest {
   };
 }
 
-/**
- * Titan Image Generator v2 response structure
- */
 interface TitanImageResponse {
-  images: string[]; // Base64 encoded images
+  images: string[]; 
   error?: string;
 }
 
-/**
- * Lambda handler for image enhancement
- * 
- * Two-step process for clean white professional background:
- * Step 1: BACKGROUND_REMOVAL - isolates product with transparent background
- * Step 2: Composite onto pure white canvas for professional e-commerce look
- * Fallback: INPAINTING with aggressive white background prompt
- */
 export const handler = async (
   event: ImageEnhancementRequest
 ): Promise<ImageEnhancementResponse> => {
   console.log('Image enhancement request:', JSON.stringify(event, null, 2));
 
   try {
-    // Validate input
+
     validateImageEnhancementRequest(event);
 
-    // Download raw image from S3
     console.log('Downloading raw image from S3...');
     const rawImageBuffer = await downloadImageFromS3(event.rawImageUrl);
     console.log(`Downloaded image: ${rawImageBuffer.length} bytes`);
 
-    // Encode image to base64
     const base64Image = rawImageBuffer.toString('base64');
     console.log(`Encoded image to base64: ${base64Image.length} characters`);
 
     let enhancedImageBuffer: Buffer | undefined;
     let whiteBackgroundApplied = false;
 
-    // Step 1: Try BACKGROUND_REMOVAL for clean cutout + white composite
     try {
       console.log('Step 1: Removing background with Titan BACKGROUND_REMOVAL...');
       const bgRemovalRequest: TitanBackgroundRemovalRequest = {
@@ -166,24 +94,21 @@ export const handler = async (
       const cutoutBase64 = await invokeTitanImageGenerator(bgRemovalRequest);
       console.log('Background removed successfully, compositing on white canvas...');
 
-      // Step 2: Composite the cutout onto pure white background
       const cutoutBuffer = Buffer.from(cutoutBase64, 'base64');
       const compositedBuffer = compositeOnWhiteBackground(cutoutBuffer);
-      
-      // Check if compositing actually applied (returns NEW buffer when successful, same ref when skipped)
+
       if (compositedBuffer !== cutoutBuffer) {
         enhancedImageBuffer = compositedBuffer;
         whiteBackgroundApplied = true;
         console.log(`White background composite SUCCESS: ${enhancedImageBuffer.length} bytes`);
       } else {
         console.warn('White compositing skipped (non-RGBA format from Titan), falling through to INPAINTING...');
-        // Don't use the cutout as-is — it may look identical to original without white bg
+
       }
     } catch (bgRemovalError: any) {
       console.warn('BACKGROUND_REMOVAL failed, falling back to INPAINTING:', bgRemovalError.message);
     }
 
-    // Step 2 (Fallback): Use INPAINTING if BACKGROUND_REMOVAL didn't produce white background
     if (!whiteBackgroundApplied) {
       try {
         console.log('Step 2: Applying INPAINTING for white background...');
@@ -200,7 +125,7 @@ export const handler = async (
             numberOfImages: 1,
             height: 1024,
             width: 1024,
-            cfgScale: 10.0, // High CFG for strict white background adherence
+            cfgScale: 10.0, 
           },
         };
 
@@ -213,12 +138,10 @@ export const handler = async (
       }
     }
 
-    // Safety check — should never reach here with undefined buffer
     if (!enhancedImageBuffer) {
       throw new Error('No enhanced image produced (should not happen)');
     }
 
-    // Upload enhanced image to S3
     console.log('Uploading enhanced image to S3...');
     const enhancedImageKey = generateEnhancedImageKey(
       event.sellerId,
@@ -248,9 +171,6 @@ export const handler = async (
   }
 };
 
-/**
- * Validate image enhancement request
- */
 function validateImageEnhancementRequest(request: ImageEnhancementRequest): void {
   if (!request.rawImageUrl) {
     throw new Error('Raw image URL is required');
@@ -269,14 +189,10 @@ function validateImageEnhancementRequest(request: ImageEnhancementRequest): void
   }
 }
 
-/**
- * Download image from S3
- */
 async function downloadImageFromS3(imageUrl: string): Promise<Buffer> {
-  // Parse S3 location from URL
+
   const s3Location = parseS3Url(imageUrl);
 
-  // Get object from S3
   const command = new GetObjectCommand({
     Bucket: s3Location.bucket,
     Key: s3Location.key,
@@ -288,15 +204,11 @@ async function downloadImageFromS3(imageUrl: string): Promise<Buffer> {
     throw new Error('Empty response body from S3');
   }
 
-  // Convert stream to buffer
   return streamToBuffer(response.Body as Readable);
 }
 
-/**
- * Parse S3 URL to extract bucket and key
- */
 function parseS3Url(url: string): { bucket: string; key: string } {
-  // Handle s3:// URLs
+
   if (url.startsWith('s3://')) {
     const parts = url.replace('s3://', '').split('/');
     return {
@@ -305,15 +217,13 @@ function parseS3Url(url: string): { bucket: string; key: string } {
     };
   }
 
-  // Handle https://bucket.s3.region.amazonaws.com/key URLs
   if (url.includes('.s3.') && url.includes('.amazonaws.com/')) {
     const urlObj = new URL(url);
     const bucket = urlObj.hostname.split('.')[0];
-    const key = urlObj.pathname.substring(1); // Remove leading /
+    const key = urlObj.pathname.substring(1); 
     return { bucket, key };
   }
 
-  // Handle pre-signed URLs
   if (url.includes('X-Amz-Signature')) {
     const urlObj = new URL(url);
     const bucket = urlObj.hostname.split('.')[0];
@@ -321,7 +231,6 @@ function parseS3Url(url: string): { bucket: string; key: string } {
     return { bucket, key };
   }
 
-  // If it's just a key, use the products bucket
   if (!url.includes('://')) {
     return {
       bucket: PRODUCTS_BUCKET_NAME,
@@ -332,12 +241,9 @@ function parseS3Url(url: string): { bucket: string; key: string } {
   throw new Error(`Invalid S3 URL format: ${url}`);
 }
 
-/**
- * Convert stream to buffer
- */
 async function streamToBuffer(stream: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  
+
   return new Promise((resolve, reject) => {
     stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     stream.on('error', reject);
@@ -345,40 +251,28 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
   });
 }
 
-
-
-/**
- * Composite a PNG with transparent background onto pure white canvas
- * Processes raw PNG pixel data: alpha-blends each pixel onto white (255,255,255)
- * Result: RGBA PNG where all transparent areas are solid white, product colors preserved
- * 
- * Returns NEW buffer if processing succeeded, SAME buffer reference if skipped.
- * Caller uses reference equality to detect if compositing was applied.
- */
 function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
-  // Check if it's a PNG (starts with PNG signature: 137 80 78 71)
+
   const isPng = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && 
                 imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
-  
+
   if (!isPng) {
     console.log('Image is not PNG, returning as-is (same ref)');
     return imageBuffer;
   }
 
   try {
-    // Parse PNG chunks to extract image data
+
     const { width, height, bitDepth, colorType, rawPixels, bpp } = decodePng(imageBuffer);
-    
+
     if (bitDepth !== 8) {
       console.log(`PNG bitDepth=${bitDepth} (not 8) - cannot process, returning as-is`);
       return imageBuffer;
     }
-    
-    // Handle RGBA (colorType 6) — has alpha channel → composite on white
+
     if (colorType === 6) {
       console.log(`Compositing ${width}x${height} RGBA PNG onto white background`);
-      
-      // Convert to RGBA pixels for output
+
       const rgbaPixels = Buffer.alloc(width * height * 4);
       for (let i = 0; i < width * height; i++) {
         const srcIdx = i * 4;
@@ -387,15 +281,15 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
         const g = rawPixels[srcIdx + 1];
         const b = rawPixels[srcIdx + 2];
         const a = rawPixels[srcIdx + 3];
-        
+
         if (a === 0) {
-          // Fully transparent → white
+
           rgbaPixels[dstIdx] = 255;
           rgbaPixels[dstIdx + 1] = 255;
           rgbaPixels[dstIdx + 2] = 255;
           rgbaPixels[dstIdx + 3] = 255;
         } else if (a < 255) {
-          // Semi-transparent → blend with white
+
           const alpha = a / 255;
           const invAlpha = 1 - alpha;
           rgbaPixels[dstIdx] = Math.round(r * alpha + 255 * invAlpha);
@@ -403,21 +297,19 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
           rgbaPixels[dstIdx + 2] = Math.round(b * alpha + 255 * invAlpha);
           rgbaPixels[dstIdx + 3] = 255;
         } else {
-          // Fully opaque — keep as-is
+
           rgbaPixels[dstIdx] = r;
           rgbaPixels[dstIdx + 1] = g;
           rgbaPixels[dstIdx + 2] = b;
           rgbaPixels[dstIdx + 3] = 255;
         }
       }
-      
+
       const result = encodePng(width, height, rgbaPixels);
       console.log(`White background composite complete: ${result.length} bytes`);
       return result;
     }
-    
-    // Handle RGB (colorType 2) — no alpha channel, Titan bg removal already set bg color
-    // Convert RGB to RGBA and return as new buffer
+
     if (colorType === 2) {
       console.log(`Converting ${width}x${height} RGB PNG to RGBA with white bg check`);
       const rgbaPixels = Buffer.alloc(width * height * 4);
@@ -427,14 +319,13 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
         rgbaPixels[dstIdx] = rawPixels[srcIdx];
         rgbaPixels[dstIdx + 1] = rawPixels[srcIdx + 1];
         rgbaPixels[dstIdx + 2] = rawPixels[srcIdx + 2];
-        rgbaPixels[dstIdx + 3] = 255; // Fully opaque
+        rgbaPixels[dstIdx + 3] = 255; 
       }
       const result = encodePng(width, height, rgbaPixels);
       console.log(`RGB→RGBA conversion complete: ${result.length} bytes`);
       return result;
     }
-    
-    // Handle Grayscale+Alpha (colorType 4)
+
     if (colorType === 4) {
       console.log(`Converting ${width}x${height} Grayscale+Alpha PNG onto white background`);
       const rgbaPixels = Buffer.alloc(width * height * 4);
@@ -443,7 +334,7 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
         const dstIdx = i * 4;
         const gray = rawPixels[srcIdx];
         const a = rawPixels[srcIdx + 1];
-        
+
         if (a === 0) {
           rgbaPixels[dstIdx] = 255;
           rgbaPixels[dstIdx + 1] = 255;
@@ -467,7 +358,7 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
       console.log(`Grayscale+Alpha→RGBA conversion complete: ${result.length} bytes`);
       return result;
     }
-    
+
     console.log(`PNG colorType=${colorType} - unsupported, returning as-is`);
     return imageBuffer;
   } catch (error: any) {
@@ -476,25 +367,21 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
   }
 }
 
-/**
- * Minimal PNG decoder - extracts raw pixel data
- * Supports 8-bit RGBA (colorType 6), RGB (colorType 2), Grayscale+Alpha (colorType 4)
- */
 function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: number; colorType: number; rawPixels: Buffer; bpp: number } {
-  // Verify PNG signature
+
   if (buffer.readUInt32BE(0) !== 0x89504E47 || buffer.readUInt32BE(4) !== 0x0D0A1A0A) {
     throw new Error('Not a valid PNG');
   }
-  
+
   let offset = 8;
   let width = 0, height = 0, bitDepth = 0, colorType = 0;
   const idatChunks: Buffer[] = [];
-  
+
   while (offset < buffer.length) {
     const chunkLength = buffer.readUInt32BE(offset);
     const chunkType = buffer.toString('ascii', offset + 4, offset + 8);
     const chunkData = buffer.subarray(offset + 8, offset + 8 + chunkLength);
-    
+
     if (chunkType === 'IHDR') {
       width = chunkData.readUInt32BE(0);
       height = chunkData.readUInt32BE(4);
@@ -505,20 +392,17 @@ function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: n
     } else if (chunkType === 'IEND') {
       break;
     }
-    
-    offset += 12 + chunkLength; // 4 length + 4 type + data + 4 crc
+
+    offset += 12 + chunkLength; 
   }
-  
+
   if (!width || !height) {
     throw new Error('PNG IHDR not found');
   }
-  
-  // Decompress concatenated IDAT data
+
   const compressedData = Buffer.concat(idatChunks);
   const decompressed = zlib.inflateSync(compressedData);
-  
-  // Determine bytes per pixel based on color type
-  // colorType 0 = Grayscale (1 bpp), 2 = RGB (3 bpp), 4 = Grayscale+Alpha (2 bpp), 6 = RGBA (4 bpp)
+
   let bpp: number;
   switch (colorType) {
     case 0: bpp = 1; break;
@@ -527,47 +411,46 @@ function decodePng(buffer: Buffer): { width: number; height: number; bitDepth: n
     case 6: bpp = 4; break;
     default: throw new Error(`Unsupported PNG colorType: ${colorType}`);
   }
-  
-  // Un-filter scanlines (each row starts with a filter byte)
+
   const rowBytes = width * bpp;
   const rawPixels = Buffer.alloc(width * height * bpp);
-  
+
   for (let y = 0; y < height; y++) {
     const filterType = decompressed[y * (rowBytes + 1)];
     const scanlineStart = y * (rowBytes + 1) + 1;
     const outStart = y * rowBytes;
-    
+
     for (let x = 0; x < rowBytes; x++) {
       const raw = decompressed[scanlineStart + x];
       let val = raw;
-      
+
       switch (filterType) {
-        case 0: // None
+        case 0: 
           val = raw;
           break;
-        case 1: // Sub
+        case 1: 
           val = (raw + (x >= bpp ? rawPixels[outStart + x - bpp] : 0)) & 0xFF;
           break;
-        case 2: // Up
+        case 2: 
           val = (raw + (y > 0 ? rawPixels[outStart - rowBytes + x] : 0)) & 0xFF;
           break;
-        case 3: // Average
+        case 3: 
           const left = x >= bpp ? rawPixels[outStart + x - bpp] : 0;
           const up = y > 0 ? rawPixels[outStart - rowBytes + x] : 0;
           val = (raw + Math.floor((left + up) / 2)) & 0xFF;
           break;
-        case 4: // Paeth
+        case 4: 
           const pLeft = x >= bpp ? rawPixels[outStart + x - bpp] : 0;
           const pUp = y > 0 ? rawPixels[outStart - rowBytes + x] : 0;
           const pUpLeft = (x >= bpp && y > 0) ? rawPixels[outStart - rowBytes + x - bpp] : 0;
           val = (raw + paethPredictor(pLeft, pUp, pUpLeft)) & 0xFF;
           break;
       }
-      
+
       rawPixels[outStart + x] = val;
     }
   }
-  
+
   return { width, height, bitDepth, colorType, rawPixels, bpp };
 }
 
@@ -581,47 +464,36 @@ function paethPredictor(a: number, b: number, c: number): number {
   return c;
 }
 
-/**
- * Minimal PNG encoder - creates valid PNG from raw RGBA pixel data
- * Uses filter type 0 (None) for simplicity + best compression for processed images
- */
 function encodePng(width: number, height: number, rawPixels: Buffer): Buffer {
   const bpp = 4;
   const rowBytes = width * bpp;
-  
-  // Add filter byte (0 = None) to each scanline
+
   const filtered = Buffer.alloc(height * (rowBytes + 1));
   for (let y = 0; y < height; y++) {
-    filtered[y * (rowBytes + 1)] = 0; // filter type None
+    filtered[y * (rowBytes + 1)] = 0; 
     rawPixels.copy(filtered, y * (rowBytes + 1) + 1, y * rowBytes, (y + 1) * rowBytes);
   }
-  
-  // Compress with zlib
+
   const compressed = zlib.deflateSync(filtered, { level: 9 });
-  
-  // Build PNG file
+
   const chunks: Buffer[] = [];
-  
-  // Signature
+
   chunks.push(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]));
-  
-  // IHDR
+
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bitDepth
-  ihdr[9] = 6; // colorType RGBA
-  ihdr[10] = 0; // compression
-  ihdr[11] = 0; // filter
-  ihdr[12] = 0; // interlace
+  ihdr[8] = 8; 
+  ihdr[9] = 6; 
+  ihdr[10] = 0; 
+  ihdr[11] = 0; 
+  ihdr[12] = 0; 
   chunks.push(createPngChunk('IHDR', ihdr));
-  
-  // IDAT
+
   chunks.push(createPngChunk('IDAT', compressed));
-  
-  // IEND
+
   chunks.push(createPngChunk('IEND', Buffer.alloc(0)));
-  
+
   return Buffer.concat(chunks);
 }
 
@@ -629,19 +501,15 @@ function createPngChunk(type: string, data: Buffer): Buffer {
   const typeBuffer = Buffer.from(type, 'ascii');
   const length = Buffer.alloc(4);
   length.writeUInt32BE(data.length, 0);
-  
-  // CRC covers type + data
+
   const crcData = Buffer.concat([typeBuffer, data]);
   const crc = crc32(crcData);
   const crcBuffer = Buffer.alloc(4);
   crcBuffer.writeUInt32BE(crc, 0);
-  
+
   return Buffer.concat([length, typeBuffer, data, crcBuffer]);
 }
 
-/**
- * CRC-32 for PNG chunk verification
- */
 function crc32(buf: Buffer): number {
   let crc = 0xFFFFFFFF;
   for (let i = 0; i < buf.length; i++) {
@@ -653,19 +521,14 @@ function crc32(buf: Buffer): number {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-/**
- * Invoke Titan Image Generator v2 via Bedrock
- * Supports both BACKGROUND_REMOVAL and INPAINTING task types
- */
 async function invokeTitanImageGenerator(
   request: TitanBackgroundRemovalRequest | TitanInpaintingRequest
 ): Promise<string> {
-  // Prepare the request body
+
   const requestBody = JSON.stringify(request);
 
   console.log('Titan request:', { taskType: request.taskType, bodySize: requestBody.length });
 
-  // Create InvokeModel command
   const command = new InvokeModelCommand({
     modelId: TITAN_IMAGE_MODEL_ID,
     contentType: 'application/json',
@@ -673,25 +536,21 @@ async function invokeTitanImageGenerator(
     body: requestBody,
   });
 
-  // Invoke the model
   const response = await bedrockClient.send(command);
 
   if (!response.body) {
     throw new Error('Empty response body from Bedrock');
   }
 
-  // Parse response
   const responseBody = JSON.parse(new TextDecoder().decode(response.body));
   console.log('Titan response received for', request.taskType);
 
-  // Check for errors
   if (responseBody.error) {
     throw new Error(`Titan Image Generator error: ${responseBody.error}`);
   }
 
-  // Extract generated image
   const titanResponse = responseBody as TitanImageResponse;
-  
+
   if (!titanResponse.images || titanResponse.images.length === 0) {
     throw new Error('No images generated by Titan');
   }
@@ -699,25 +558,19 @@ async function invokeTitanImageGenerator(
   return titanResponse.images[0];
 }
 
-/**
- * Generate S3 key for enhanced image
- */
 function generateEnhancedImageKey(sellerId: string, itemId: string): string {
   const timestamp = Date.now();
   return `products/enhanced/${sellerId}/${itemId}_${timestamp}.png`;
 }
 
-/**
- * Upload image to S3
- */
 async function uploadImageToS3(
   imageBuffer: Buffer,
   key: string
 ): Promise<string> {
-  // Detect content type from buffer
+
   const isPng = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50;
   const contentType = isPng ? 'image/png' : 'image/jpeg';
-  
+
   const command = new PutObjectCommand({
     Bucket: PRODUCTS_BUCKET_NAME,
     Key: key,
@@ -727,7 +580,6 @@ async function uploadImageToS3(
 
   await s3Client.send(command);
 
-  // Return S3 URL
   const region = process.env.AWS_REGION || 'us-east-1';
   return `https://${PRODUCTS_BUCKET_NAME}.s3.${region}.amazonaws.com/${key}`;
 }

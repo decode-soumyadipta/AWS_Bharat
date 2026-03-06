@@ -1,21 +1,14 @@
-/**
- * Analytics Service
- * 
- * Provides analytics and insights for sellers:
- * - Top selling products
- * - Order statistics
- * - Revenue insights
- * - Product performance
- * - Date-specific analytics (yesterday, specific date, last week)
- */
 
 import { QueryCommand, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
 import { docClient, TABLE_NAME } from '../config/aws-clients';
 import { getOrdersBySeller } from './dynamodb-repository';
+import type { OrderStatus } from '../models/order';
 
-/**
- * Product sales statistics
- */
+const CONFIRMED_STATUSES: OrderStatus[] = ['ACCEPTED', 'PACKED', 'SHIPPED', 'DELIVERED'];
+const PENDING_STATUSES: OrderStatus[] = ['PENDING'];
+const REJECTED_STATUSES: OrderStatus[] = ['REJECTED'];
+const CANCELLED_STATUSES: OrderStatus[] = ['CANCELLED'];
+
 export interface ProductSalesStats {
   itemId: string;
   productName: string;
@@ -26,43 +19,40 @@ export interface ProductSalesStats {
   lastOrderDate: number;
 }
 
-/**
- * Date-range analytics result
- */
 export interface DateRangeAnalytics {
   dateLabel: string;
   totalOrders: number;
+  confirmedOrders: number;
+  pendingOrders: number;
+  rejectedOrders: number;
+  cancelledOrders: number;
   totalRevenue: number;
+  confirmedRevenue: number;
+  pendingRevenue: number;
   totalItemsSold: number;
   products: Array<{ name: string; quantity: number; revenue: number }>;
 }
 
-/**
- * Get top selling products for a seller
- * 
- * @param sellerId - Seller ID
- * @param limit - Number of top products to return (default: 5)
- * @param timeRangeMs - Time range in milliseconds (default: 30 days)
- * @returns Array of top selling products
- */
 export async function getTopSellingProducts(
   sellerId: string,
   limit: number = 5,
-  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000, // 30 days
-  sellerPhone?: string
+  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000,
+  sellerPhone?: string,
+  confirmedOnly: boolean = true
 ): Promise<ProductSalesStats[]> {
   console.log(`📊 Getting top selling products for seller: ${sellerId} (phone: ${sellerPhone || 'N/A'})`);
 
-  // Get all orders for the seller (queries both UUID and phone-based keys)
   const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
 
-  // Filter orders within time range
   const cutoffTime = Date.now() - timeRangeMs;
-  const recentOrders = allOrders.filter((order) => order.createdAt >= cutoffTime);
+  let recentOrders = allOrders.filter((order) => order.createdAt >= cutoffTime);
 
-  console.log(`Found ${recentOrders.length} orders in the last ${timeRangeMs / (24 * 60 * 60 * 1000)} days`);
+  if (confirmedOnly) {
+    recentOrders = recentOrders.filter((order) => CONFIRMED_STATUSES.includes(order.status));
+  }
 
-  // Aggregate sales by product
+  console.log(`Found ${recentOrders.length} orders (confirmedOnly=${confirmedOnly}) in the last ${timeRangeMs / (24 * 60 * 60 * 1000)} days`);
+
   const productStats = new Map<string, ProductSalesStats>();
 
   recentOrders.forEach((order) => {
@@ -88,12 +78,10 @@ export async function getTopSellingProducts(
     });
   });
 
-  // Calculate average order value
   productStats.forEach((stats) => {
     stats.averageOrderValue = stats.totalRevenue / stats.totalOrders;
   });
 
-  // Sort by total revenue (best selling)
   const sortedProducts = Array.from(productStats.values()).sort(
     (a, b) => b.totalRevenue - a.totalRevenue
   );
@@ -103,37 +91,45 @@ export async function getTopSellingProducts(
   return sortedProducts.slice(0, limit);
 }
 
-/**
- * Get sales summary for a seller
- * 
- * @param sellerId - Seller ID
- * @param timeRangeMs - Time range in milliseconds (default: 30 days)
- * @returns Sales summary
- */
-export async function getSalesSummary(
-  sellerId: string,
-  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000, // 30 days
-  sellerPhone?: string
-): Promise<{
+interface SalesSummary {
   totalOrders: number;
+  confirmedOrders: number;
+  pendingOrders: number;
+  rejectedOrders: number;
+  cancelledOrders: number;
   totalRevenue: number;
+  confirmedRevenue: number;
+  pendingRevenue: number;
   averageOrderValue: number;
   topProduct: string | null;
   topProducts: Array<{ name: string; quantity: number; revenue: number }>;
   timeRange: string;
-}> {
+}
+
+export async function getSalesSummary(
+  sellerId: string,
+  timeRangeMs: number = 30 * 24 * 60 * 60 * 1000,
+  sellerPhone?: string
+): Promise<SalesSummary> {
   const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
   const cutoffTime = Date.now() - timeRangeMs;
   const recentOrders = allOrders.filter((order) => order.createdAt >= cutoffTime);
 
-  const totalOrders = recentOrders.length;
-  const totalRevenue = recentOrders.reduce((sum, order) => {
-    return sum + order.items.reduce((itemSum, item) => itemSum + item.price * item.quantity, 0);
-  }, 0);
-  const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+  const confirmed = recentOrders.filter(o => CONFIRMED_STATUSES.includes(o.status));
+  const pending = recentOrders.filter(o => PENDING_STATUSES.includes(o.status));
+  const rejected = recentOrders.filter(o => REJECTED_STATUSES.includes(o.status));
+  const cancelled = recentOrders.filter(o => CANCELLED_STATUSES.includes(o.status));
 
-  // Get ALL top products (up to 50) so summary includes every product
-  const topProductsList = await getTopSellingProducts(sellerId, 50, timeRangeMs, sellerPhone);
+  const calcRevenue = (orders: typeof recentOrders) =>
+    orders.reduce((sum, order) =>
+      sum + order.items.reduce((s, item) => s + item.price * item.quantity, 0), 0);
+
+  const confirmedRevenue = calcRevenue(confirmed);
+  const pendingRevenue = calcRevenue(pending);
+  const totalRevenue = calcRevenue(recentOrders);
+  const averageOrderValue = confirmed.length > 0 ? confirmedRevenue / confirmed.length : 0;
+
+  const topProductsList = await getTopSellingProducts(sellerId, 50, timeRangeMs, sellerPhone, true);
   const topProduct = topProductsList.length > 0 ? topProductsList[0].productName : null;
   const topProducts = topProductsList.map(p => ({
     name: p.productName,
@@ -144,8 +140,14 @@ export async function getSalesSummary(
   const timeRangeDays = Math.floor(timeRangeMs / (24 * 60 * 60 * 1000));
 
   return {
-    totalOrders,
+    totalOrders: recentOrders.length,
+    confirmedOrders: confirmed.length,
+    pendingOrders: pending.length,
+    rejectedOrders: rejected.length,
+    cancelledOrders: cancelled.length,
     totalRevenue,
+    confirmedRevenue,
+    pendingRevenue,
     averageOrderValue,
     topProduct,
     topProducts,
@@ -153,13 +155,6 @@ export async function getSalesSummary(
   };
 }
 
-/**
- * Format top selling products for display
- * 
- * @param products - Array of product sales stats
- * @param language - Language code
- * @returns Formatted message
- */
 export function formatTopSellingProducts(
   products: ProductSalesStats[],
   language: 'hi' | 'en' | 'mr' = 'hi'
@@ -199,10 +194,6 @@ export function formatTopSellingProducts(
   return message.trim();
 }
 
-/**
- * Get analytics for a specific date range
- * Supports: 'yesterday', 'today', 'last_week', 'last_month', or specific date string 'YYYY-MM-DD'
- */
 export async function getDateRangeAnalytics(
   sellerId: string,
   dateQuery: string,
@@ -253,7 +244,7 @@ export async function getDateRangeAnalytics(
       break;
     }
     default: {
-      // Try to parse as YYYY-MM-DD
+
       const parsed = new Date(dateQuery);
       if (!isNaN(parsed.getTime())) {
         parsed.setHours(0, 0, 0, 0);
@@ -263,7 +254,7 @@ export async function getDateRangeAnalytics(
         endTime = dayEnd.getTime();
         dateLabel = dateQuery;
       } else {
-        // Default to last 7 days
+
         const weekAgo = new Date(now);
         weekAgo.setDate(now.getDate() - 7);
         weekAgo.setHours(0, 0, 0, 0);
@@ -279,11 +270,15 @@ export async function getDateRangeAnalytics(
     (order) => order.createdAt >= startTime && order.createdAt <= endTime
   );
 
-  // Aggregate by product
+  const confirmed = filteredOrders.filter(o => CONFIRMED_STATUSES.includes(o.status));
+  const pending = filteredOrders.filter(o => PENDING_STATUSES.includes(o.status));
+  const rejected = filteredOrders.filter(o => REJECTED_STATUSES.includes(o.status));
+  const cancelled = filteredOrders.filter(o => CANCELLED_STATUSES.includes(o.status));
+
   const productMap = new Map<string, { name: string; quantity: number; revenue: number }>();
   let totalItemsSold = 0;
 
-  filteredOrders.forEach((order) => {
+  confirmed.forEach((order) => {
     order.items.forEach((item) => {
       totalItemsSold += item.quantity;
       const name = (item as any).productName || (item as any).name || item.itemId;
@@ -301,22 +296,29 @@ export async function getDateRangeAnalytics(
     });
   });
 
-  const totalRevenue = filteredOrders.reduce((sum, order) => {
-    return sum + order.items.reduce((itemSum, item) => itemSum + item.price * item.quantity, 0);
-  }, 0);
+  const calcRevenue = (orders: typeof filteredOrders) =>
+    orders.reduce((sum, order) =>
+      sum + order.items.reduce((s, item) => s + item.price * item.quantity, 0), 0);
+
+  const confirmedRevenue = calcRevenue(confirmed);
+  const pendingRevenue = calcRevenue(pending);
+  const totalRevenue = calcRevenue(filteredOrders);
 
   return {
     dateLabel,
     totalOrders: filteredOrders.length,
+    confirmedOrders: confirmed.length,
+    pendingOrders: pending.length,
+    rejectedOrders: rejected.length,
+    cancelledOrders: cancelled.length,
     totalRevenue,
+    confirmedRevenue,
+    pendingRevenue,
     totalItemsSold,
     products: Array.from(productMap.values()).sort((a, b) => b.revenue - a.revenue),
   };
 }
 
-/**
- * Format date range analytics concisely for voice
- */
 export function formatDateRangeAnalytics(
   analytics: DateRangeAnalytics,
   language: 'hi' | 'en' | 'mr' = 'hi'
@@ -328,7 +330,12 @@ export function formatDateRangeAnalytics(
   }
 
   if (language === 'hi') {
-    let msg = `${analytics.dateLabel} की बिक्री: ${analytics.totalOrders} ऑर्डर, कुल ₹${analytics.totalRevenue.toFixed(0)} कमाई, ${analytics.totalItemsSold} आइटम बिके।`;
+    let msg = `${analytics.dateLabel} की बिक्री: कुल ${analytics.totalOrders} ऑर्डर।`;
+    msg += ` कन्फर्म: ${analytics.confirmedOrders} ऑर्डर, ₹${analytics.confirmedRevenue.toFixed(0)} कमाई।`;
+    if (analytics.pendingOrders > 0) msg += ` पेंडिंग: ${analytics.pendingOrders} ऑर्डर (₹${analytics.pendingRevenue.toFixed(0)})।`;
+    if (analytics.rejectedOrders > 0) msg += ` रिजेक्ट: ${analytics.rejectedOrders}।`;
+    if (analytics.cancelledOrders > 0) msg += ` कैंसल: ${analytics.cancelledOrders}।`;
+    msg += ` ${analytics.totalItemsSold} आइटम बिके।`;
     if (analytics.products.length > 0) {
       const top = analytics.products.slice(0, 3);
       msg += ' सबसे ज़्यादा बिके: ' + top.map(p => `${p.name} ${p.quantity} यूनिट ₹${p.revenue.toFixed(0)}`).join(', ') + '।';
@@ -337,7 +344,12 @@ export function formatDateRangeAnalytics(
   }
 
   if (language === 'mr') {
-    let msg = `${analytics.dateLabel} ची विक्री: ${analytics.totalOrders} ऑर्डर, एकूण ₹${analytics.totalRevenue.toFixed(0)} कमाई, ${analytics.totalItemsSold} वस्तू विकल्या.`;
+    let msg = `${analytics.dateLabel} ची विक्री: एकूण ${analytics.totalOrders} ऑर्डर.`;
+    msg += ` कन्फर्म: ${analytics.confirmedOrders} ऑर्डर, ₹${analytics.confirmedRevenue.toFixed(0)} कमाई.`;
+    if (analytics.pendingOrders > 0) msg += ` पेंडिंग: ${analytics.pendingOrders} ऑर्डर (₹${analytics.pendingRevenue.toFixed(0)}).`;
+    if (analytics.rejectedOrders > 0) msg += ` नाकारले: ${analytics.rejectedOrders}.`;
+    if (analytics.cancelledOrders > 0) msg += ` रद्द: ${analytics.cancelledOrders}.`;
+    msg += ` ${analytics.totalItemsSold} वस्तू विकल्या.`;
     if (analytics.products.length > 0) {
       const top = analytics.products.slice(0, 3);
       msg += ' सर्वात जास्त विकले: ' + top.map(p => `${p.name} ${p.quantity} युनिट ₹${p.revenue.toFixed(0)}`).join(', ') + '.';
@@ -345,10 +357,15 @@ export function formatDateRangeAnalytics(
     return msg;
   }
 
-  let msg = `Sales for ${analytics.dateLabel}: ${analytics.totalOrders} orders, ₹${analytics.totalRevenue.toFixed(0)} revenue, ${analytics.totalItemsSold} items sold.`;
+  let msg = `Sales for ${analytics.dateLabel}: ${analytics.totalOrders} total orders.`;
+  msg += ` Confirmed: ${analytics.confirmedOrders} orders, Rs ${analytics.confirmedRevenue.toFixed(0)} revenue.`;
+  if (analytics.pendingOrders > 0) msg += ` Pending: ${analytics.pendingOrders} orders (Rs ${analytics.pendingRevenue.toFixed(0)}).`;
+  if (analytics.rejectedOrders > 0) msg += ` Rejected: ${analytics.rejectedOrders}.`;
+  if (analytics.cancelledOrders > 0) msg += ` Cancelled: ${analytics.cancelledOrders}.`;
+  msg += ` ${analytics.totalItemsSold} items sold.`;
   if (analytics.products.length > 0) {
     const top = analytics.products.slice(0, 3);
-    msg += ' Top: ' + top.map(p => `${p.name} ${p.quantity} units ₹${p.revenue.toFixed(0)}`).join(', ') + '.';
+    msg += ' Top: ' + top.map(p => `${p.name} ${p.quantity} units Rs ${p.revenue.toFixed(0)}`).join(', ') + '.';
   }
   return msg;
 }

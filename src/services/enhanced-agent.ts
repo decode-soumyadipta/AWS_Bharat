@@ -1,15 +1,3 @@
-/**
- * Enhanced Personal AI Agent
- * 
- * Features:
- * - Extremely interactive and personal
- * - Dynamic language switching (Hindi/English/Marathi/Bengali)
- * - Web search for market prices
- * - WhatsApp typing indicator
- * - Zero hardcoded templates
- * - Careful order tracking
- * - Real-time market information
- */
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
@@ -40,25 +28,17 @@ const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION 
 const agentRuntimeClient = new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const ddbDocClient = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' }));
 const NOVA_PRO_MODEL_ID = 'amazon.nova-pro-v1:0';
-const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0'; // Fallback model
+const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0'; 
 const BEDROCK_AGENT_ID = process.env.BEDROCK_AGENT_ID || '';
 const BEDROCK_AGENT_ALIAS_ID = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
 const DDB_TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
 const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
 
-// ── Module-level messageId for typing indicator ─────────────────────────────
-// Lambda is single-threaded (Node.js), so a module-level variable is safe.
-// Set at the start of processWithEnhancedAgent / sendEnhancedAgentMessage,
-// consumed by showTypingIndicator so every typing call has a real messageId.
 let _currentMessageId: string | undefined;
 
-// Language codes
 type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
 
-/**
- * Enhanced agent response
- */
-export interface EnhancedAgentResponse {
+interface EnhancedAgentResponse {
   message: string;
   actions?: AgentAction[];
   needsWebSearch?: boolean;
@@ -66,18 +46,15 @@ export interface EnhancedAgentResponse {
   languageSwitch?: LanguageCode;
   confidence: number;
   reasoning: string;
-  /** 'voice' = voice-only, 'text' = text-only, 'both' = text + voice */
+
   responseMode: 'voice' | 'text' | 'both';
 }
 
-export interface AgentAction {
+interface AgentAction {
   type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI' | 'SKIP_KYC';
   data?: any;
 }
 
-/**
- * Main enhanced agent processor
- */
 export async function processWithEnhancedAgent(
   phone: string,
   userMessage: string,
@@ -87,22 +64,15 @@ export async function processWithEnhancedAgent(
 ): Promise<EnhancedAgentResponse> {
   console.log('🤖 Enhanced Agent processing:', { phone, messageType, currentLanguage, messageId: messageId ? '✓' : '✗' });
 
-  // Store messageId so every showTypingIndicator call can forward it
   if (messageId) { _currentMessageId = messageId; }
 
-  // Show typing indicator immediately
   await showTypingIndicator(phone);
 
-  // Get full context
   const conversationContext = await getConversationContext(phone);
   const partialData = await getPartialData(phone);
   const userState = await getUserState(phone);
   const currentUserState = userState?.state || 'UNKNOWN';
 
-  // ── PRE-LLM SKIP-KYC SHORTCUT ─────────────────────────────────────────────
-  // When user says skip/guest/later in KYC state, detect it from keywords alone.
-  // Audio transcripts may contain the skip keyword alongside other words —
-  // read every word to find skip intent, then act immediately without LLM.
   if (detectSkipKycIntent(userMessage, currentUserState)) {
     console.log('⚡ Pre-LLM skip KYC detected — bypassing model call');
     await addConversationMessage(phone, { timestamp: Date.now(), role: 'user', content: userMessage, messageType });
@@ -122,9 +92,7 @@ export async function processWithEnhancedAgent(
       reasoning: 'Pre-LLM keyword-detected skip/guest intent',
     };
   }
-  // ── END PRE-LLM SKIP-KYC ──────────────────────────────────────────────────
 
-  // Detect language switch request
   const detectedLanguage = detectLanguageSwitch(userMessage, currentLanguage);
   if (detectedLanguage !== currentLanguage) {
     console.log(`🌐 Language switch detected: ${currentLanguage} → ${detectedLanguage}`);
@@ -132,7 +100,6 @@ export async function processWithEnhancedAgent(
     currentLanguage = detectedLanguage;
   }
 
-  // Track user message
   await addConversationMessage(phone, {
     timestamp: Date.now(),
     role: 'user',
@@ -140,18 +107,16 @@ export async function processWithEnhancedAgent(
     messageType,
   });
 
-  // Check if this is a market price query
   const priceQuery = detectPriceQuery(userMessage, currentLanguage);
   let marketInfo = '';
-  
+
   if (priceQuery) {
     console.log('💰 Market price query detected:', priceQuery);
-    await showTypingIndicator(phone); // Keep typing active while searching
+    await showTypingIndicator(phone); 
     marketInfo = await searchMarketPrice(priceQuery, currentLanguage);
-    await showTypingIndicator(phone); // Refresh after search
+    await showTypingIndicator(phone); 
   }
 
-  // Auto-fetch LIVE market price if user is adding a product (has partial data with product name)
   if (!priceQuery && partialData?.productName && !partialData.price) {
     console.log('💰 Auto-fetching LIVE market price for product being added:', partialData.productName);
     try {
@@ -169,17 +134,14 @@ export async function processWithEnhancedAgent(
     }
   }
 
-  // Check if this is an analytics query
   const analyticsQuery = detectAnalyticsQuery(userMessage, currentLanguage);
   let analyticsInfo = '';
-  
+
   if (analyticsQuery) {
     console.log('📊 Analytics query detected:', analyticsQuery);
     await showTypingIndicator(phone);
     analyticsInfo = await getAnalyticsInfo(phone, analyticsQuery, currentLanguage);
 
-    // For strategy/recommendation questions, also fetch current market prices for seller's products
-    // so the model can cross-reference sales data with market rates
     if (!marketInfo && analyticsQuery.type === 'top_selling') {
       try {
         const { getSellerByPhone } = await import('./dynamodb-repository');
@@ -192,7 +154,7 @@ export async function processWithEnhancedAgent(
               if (livePrice.found) {
                 priceLines.push(`${crop}: ${livePrice.priceInfo}`);
               }
-            } catch { /* skip */ }
+            } catch {  }
           }
           if (priceLines.length > 0) {
             marketInfo = `आज के बाज़ार भाव (seller के products): ${priceLines.join('; ')}`;
@@ -205,12 +167,10 @@ export async function processWithEnhancedAgent(
     }
   }
 
-  // ── INLINE TOOL EXECUTION — works for ALL states including GUEST_ACTIVE ──
   let stockUpdateResult = '';
   let orderInfo = '';
   let catalogInfo = '';
 
-  // Stock update detection & execution
   const stockIntent = detectStockUpdateIntent(userMessage);
   if (stockIntent) {
     console.log('📦 Stock update intent detected:', stockIntent);
@@ -219,7 +179,6 @@ export async function processWithEnhancedAgent(
     console.log('📦 Stock update result:', stockUpdateResult);
   }
 
-  // Order query detection & execution
   const orderQuery = detectOrderQuery(userMessage);
   if (orderQuery) {
     console.log('📋 Order query detected:', orderQuery);
@@ -228,7 +187,6 @@ export async function processWithEnhancedAgent(
     console.log('📋 Order lookup result:', orderInfo);
   }
 
-  // Catalog query detection & execution
   const catalogQuery = detectCatalogQuery(userMessage);
   if (catalogQuery !== null) {
     console.log('🗂️ Catalog query detected:', catalogQuery);
@@ -236,9 +194,7 @@ export async function processWithEnhancedAgent(
     catalogInfo = await executeCatalogLookup(phone, catalogQuery.query);
     console.log('🗂️ Catalog lookup result:', catalogInfo);
   }
-  // ── END INLINE TOOL EXECUTION ─────────────────────────────────────────────
 
-  // Fetch seller profile for UPI status
   let sellerInfo: { upiId?: string; name?: string; location?: any; cropsGrown?: string[]; language?: string } = {};
   try {
     const { getSellerByPhone } = await import('./dynamodb-repository');
@@ -250,8 +206,6 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch seller info for prompt:', e);
   }
 
-  // ── ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────────
-  // Detect "mausam batao", "update do", "aaj ka bhav" etc. and generate comprehensive update
   if (detectDailyUpdateQuery(userMessage) && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
     console.log('📢 On-demand daily update query detected');
     await showTypingIndicator(phone);
@@ -268,7 +222,6 @@ export async function processWithEnhancedAgent(
     if (updateMessage) {
       await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: updateMessage, messageType: 'text' });
 
-      // Store as system alert so future conversations reference it
       try {
         await addConversationMessage(phone, {
           timestamp: Date.now(),
@@ -276,7 +229,7 @@ export async function processWithEnhancedAgent(
           content: updateMessage,
           metadata: { event: 'background_alert', alertType: 'on_demand', source: 'on-demand-update' },
         });
-      } catch (e) { /* ignore */ }
+      } catch (e) {  }
 
       return {
         message: updateMessage,
@@ -287,7 +240,6 @@ export async function processWithEnhancedAgent(
       };
     }
 
-    // Fallback: if updateMessage is null (Bedrock call failed), tell user
     const weatherErrorMsg = currentLanguage.startsWith('hi')
       ? 'माफ़ करें, अभी मौसम और बाज़ार की जानकारी लाने में दिक्कत हुई। कृपया थोड़ी देर बाद पूछें।'
       : currentLanguage.startsWith('mr')
@@ -301,10 +253,7 @@ export async function processWithEnhancedAgent(
       reasoning: 'On-demand daily update failed — generateOnDemandUpdate returned null',
     };
   }
-  // ── END ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────
 
-  // ── REPORT GENERATION ─────────────────────────────────────────────────────
-  // Detect report intent and generate PDF report
   const { detectReportIntent, generateReport } = await import('./report-generator');
   const reportIntent = detectReportIntent(userMessage);
   if (reportIntent && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
@@ -313,7 +262,6 @@ export async function processWithEnhancedAgent(
 
     const lang = (currentLanguage.split('-')[0] as 'hi' | 'mr' | 'en') || 'hi';
 
-    // Send immediate "generating" voice message
     const generatingMsg: Record<string, string> = {
       'hi': 'रिपोर्ट बना रहा हूँ, एक मिनट रुकिए।',
       'mr': 'रिपोर्ट तयार करतोय, एक मिनिट थांबा.',
@@ -330,7 +278,7 @@ export async function processWithEnhancedAgent(
     });
 
     if (result.success && result.pdfUrl && result.voiceSummary) {
-      // Send PDF document via WhatsApp
+
       const { sendDocumentMessage } = await import('../lambdas/whatsapp-message-sender');
       const filename = `vyapar-vaani-${reportIntent.reportType}-report.pdf`;
       const captionMsg: Record<string, string> = {
@@ -340,7 +288,6 @@ export async function processWithEnhancedAgent(
       };
       await sendDocumentMessage(phone, result.pdfUrl, filename, captionMsg[lang] || captionMsg['en'], lang);
 
-      // Send voice summary
       await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: result.voiceSummary, messageType: 'text' });
 
       return {
@@ -351,7 +298,7 @@ export async function processWithEnhancedAgent(
         reasoning: `Generated ${reportIntent.reportType} PDF report and sent via WhatsApp`,
       };
     } else {
-      // Report failed — send apology
+
       const errorMsg: Record<string, string> = {
         'hi': 'माफ़ करें, रिपोर्ट बनाने में दिक्कत आई। कृपया थोड़ी देर बाद फिर से कोशिश करें।',
         'mr': 'माफ करा, रिपोर्ट तयार करण्यात अडचण आली. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.',
@@ -368,9 +315,7 @@ export async function processWithEnhancedAgent(
       };
     }
   }
-  // ── END REPORT GENERATION ──────────────────────────────────────────────────
 
-  // Get conversation summary for richer context
   let conversationSummary = '';
   try {
     conversationSummary = await getConversationSummary(phone);
@@ -378,13 +323,12 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch conversation summary:', e);
   }
 
-  // Extract recent background agent alerts from conversation history
   let recentAlerts = '';
   try {
     const history = await getConversationHistory(phone, 50);
     const alerts = history.filter(m => m.role === 'system' && m.metadata?.event === 'background_alert');
     if (alerts.length > 0) {
-      const latest = alerts.slice(0, 3); // Last 3 alerts
+      const latest = alerts.slice(0, 3); 
       recentAlerts = latest.map(a => {
         const ago = Math.floor((Date.now() - a.timestamp) / (1000 * 60 * 60));
         const timeLabel = ago < 1 ? 'just now' : ago < 24 ? `${ago}h ago` : `${Math.floor(ago / 24)}d ago`;
@@ -395,7 +339,6 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch recent alerts:', e);
   }
 
-  // Build enhanced agent prompt
   const agentPrompt = buildEnhancedPrompt(
     userMessage,
     messageType,
@@ -413,19 +356,12 @@ export async function processWithEnhancedAgent(
     recentAlerts
   );
 
-  // Keep typing active while model thinks
   await showTypingIndicator(phone);
 
   let response: string;
 
-  // Bedrock Agent only has catalog-search/market tools — it CANNOT do STORE_DATA, SKIP_KYC, etc.
-  // Use enhanced prompt (with full STORE_DATA logic) for all product-adding states.
-  // Only use Bedrock Agent for ACTIVE users who have products and need catalog queries.
-  // Onboarding states need STORE_DATA/SKIP_KYC logic that only the enhanced prompt supports.
   const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'];
 
-  // For ACTIVE users, also skip Bedrock Agent if the user is trying to ADD a NEW product.
-  // Bedrock Agent would incorrectly call update_stock (existing product) instead of STORE_DATA (new product).
   const isNewProductIntent = detectNewProductIntent(userMessage);
 
   if (skipBedrockAgentStates.includes(currentUserState) || isNewProductIntent) {
@@ -436,8 +372,7 @@ export async function processWithEnhancedAgent(
     }
     response = await callAgentModel(agentPrompt);
   } else {
-    // ACTIVE users — try Bedrock Agent for dynamic tool-use (catalog queries, analytics)
-    // Falls back to enhanced prompt if agent unavailable or returns empty
+
     const agentResult = await callBedrockAgentIfAvailable(
       userMessage,
       phone,
@@ -457,10 +392,8 @@ export async function processWithEnhancedAgent(
     }
   }
 
-  // Parse response
   const agentResponse = parseEnhancedResponse(response, currentLanguage);
 
-  // Track agent message
   await addConversationMessage(phone, {
     timestamp: Date.now(),
     role: 'assistant',
@@ -473,101 +406,69 @@ export async function processWithEnhancedAgent(
   return agentResponse;
 }
 
-/**
- * Pre-LLM skip-KYC intent detection.
- * Detects when a user (in NEW or KYC_PENDING state) says something containing
- * a clear skip/guest/decline keyword — even when mixed with other words in audio.
- * Returns true if SKIP_KYC should be executed immediately, bypassing the LLM.
- */
 function detectSkipKycIntent(message: string, userState: string): boolean {
   if (userState !== 'NEW' && userState !== 'KYC_PENDING') return false;
 
   const m = message.toLowerCase();
 
-  // English / Romanized: skip, guest, later, don't want, not now
   const romanized = /\b(skip|guest|baad\s*mein|baadme|abhi\s*nahi|nahi\s*chahiye|nahi\s*hai\s*pan|pan\s*nahi\s*hai|chhod[oa]|chod[oa]|mat\s*karo|nahi\s*karna|bina\s*(pan|kyc)|not\s*now|don[t']?\s*want|no\s*(pan|kyc)|start\s*without)\b/i;
   if (romanized.test(m)) return true;
 
-  // Hindi Devanagari: छोड़, स्किप, बाद में, पैन नहीं, अभी नहीं, गेस्ट
   const hindi = /छोड़|स्किप|बाद\s*में|अभी\s*नहीं|पैन\s*नहीं|PAN\s*नहीं|नहीं\s*है|गेस्ट|बिना\s*(पैन|PAN|KYC)/;
   if (hindi.test(message)) return true;
 
-  // Marathi: स्किप, नंतर, नाही, सोड
   const marathi = /स्किप|नंतर|सोड|नको|आत्ता\s*नाही/;
   if (marathi.test(message)) return true;
 
   return false;
 }
 
-/**
- * Detect if user in ACTIVE state is trying to ADD a NEW product (not query existing ones).
- * When true, skip Bedrock Agent (which only knows update_stock/catalog-search) and
- * use enhanced prompt so STORE_DATA action is triggered for the proper catalog creation flow.
- */
 function detectNewProductIntent(message: string): boolean {
   const m = message.toLowerCase();
 
-  // Hindi script: "बेचना", "बेचूँगा", "जोड़ना", "नया उत्पाद", "नया सामान", etc.
   const hindiNewProduct = /बेचना\s*चाहत|बेचूँगा|बेचेंगे|नया\s*(उत्पाद|सामान|प्रोडक्ट)|उत्पाद\s*जोड़|सामान\s*जोड़|नया\s*आइटम|लिस्ट\s*करना/;
   if (hindiNewProduct.test(message)) return true;
 
-  // Romanized Hindi: "bechna chahta", "bechuga", "naya product", "add karna", "jodna"
   const romanizedNewProduct = /\b(bech(na|uga|unga|enge|na\s*chahta?|na\s*chahti?)|naya?\s*(product|saman|aaitem|item|product)|add\s*karna?|jodna?|list\s*karna?|nayi?\s*cheez)\b/i;
   if (romanizedNewProduct.test(m)) return true;
 
-  // English: "want to sell", "add a new", "new product", "list a product", "I want to sell"
   const englishNewProduct = /\b(want\s+to\s+sell|i\s+want\s+to\s+add|add\s+a\s+new|new\s+product|list\s+(a|my|new)|i\s+will\s+sell|i\s+want\s+to\s+list)\b/i;
   if (englishNewProduct.test(m)) return true;
 
   return false;
 }
 
-/**
- * Detect daily update / weather / price update intent — "mausam batao", "update do", "aaj ka bhav",
- * "daily update", "saara update do", "kya chal raha hai", etc.
- * Returns true if user is asking for an on-demand comprehensive update.
- */
 function detectDailyUpdateQuery(message: string): boolean {
   const m = message.toLowerCase();
 
-  // Romanized Hindi: "mausam batao", "update do", "aaj ka update", "saara update", "kya chal raha"
   const romanized = /\b(mausam\s*(batao|bata|do|kya|kaisa)|update\s*(do|de|batao|chahiye)|aaj\s*ka\s*(update|bhav|mausam|haal)|saara?\s*update|daily\s*update|kya\s*chal\s*raha|haal\s*kya\s*hai|sabhi?\s*update|weather\s*(batao|bata|update|report|kaisa)|price\s*(update|batao|bata|check|kya)|crop\s*(update|advisory|bhav)|sab\s*batao|bhav\s*batao|bhav\s*(kya|kaisa|kitna)|mandee?\s*(bhav|rate|price|update)|faslon?\s*ka\s*(bhav|rate|haal)|pura\s*update)\b/i;
   if (romanized.test(m)) return true;
 
-  // Hindi Devanagari: "मौसम बताओ", "अपडेट दो", "आज का भाव", "सब बताओ", "मंडी भाव"
   const hindi = /मौसम\s*(बताओ|बता|दो|कैसा|क्या)|अपडेट\s*(दो|दे|बताओ|चाहिए)|आज\s*का\s*(अपडेट|भाव|मौसम|हाल)|सारा?\s*अपडेट|डेली\s*अपडेट|क्या\s*चल\s*रहा|सब\s*(बताओ|अपडेट)|भाव\s*(बताओ|क्या|कैसा|कितना)|मंडी\s*(भाव|रेट|दर)|फसल\s*का\s*(भाव|रेट|हाल)|पूरा\s*अपडेट|बाज़ार\s*(भाव|रेट|दर)|मार्केट\s*(रेट|भाव)/;
   if (hindi.test(message)) return true;
 
-  // English: "weather update", "daily update", "market prices", "give me update", "what's the weather"
   const english = /\b(weather\s*update|daily\s*update|market\s*price|give\s*me\s*(update|report)|what.?s?\s*the\s*weather|today.?s?\s*update|price\s*update|all\s*update|crop\s*price|evening\s*update|morning\s*update)\b/i;
   if (english.test(m)) return true;
 
-  // Marathi: "हवामान", "अपडेट", "बाजारभाव"
   const marathi = /हवामान\s*(सांगा|बघा|काय)|अपडेट\s*(द्या|सांगा)|बाजारभाव|आजचा\s*(भाव|अपडेट)/;
   if (marathi.test(message)) return true;
 
   return false;
 }
 
-/**
- * Detect stock update intent — "mera tamatar ka stock 50 kilo karo", "stock update 30 kg", etc.
- * Returns { productName, quantity, unit } or null.
- */
 function detectStockUpdateIntent(message: string): { productName: string; quantity: number; unit?: string } | null {
   const m = message.toLowerCase();
 
-  // Must mention stock-related keyword
   const stockKeyword = /\b(stock|stok|स्टॉक|inventory)\b/i;
   const stockAction = /\b(update|change|set|badh[ao]|kam\s*kar|kar\s*do|karo|badlo|rakh|रख|बदल|कर\s*दो|बढ़ा|कम\s*कर|अपडेट)\b/i;
-  
+
   if (!stockKeyword.test(message) && !stockKeyword.test(m)) return null;
   if (!stockAction.test(message) && !stockAction.test(m)) return null;
 
-  // Extract quantity + unit
   const qtyPatterns = [
-    // "50 kg", "50 kilo", "50 piece", "50 dozen", "50 liter"
+
     /(\d+)\s*(kg|kilo|किलो|piece|pcs|पीस|dozen|दर्जन|liter|लीटर|packet|पैकेट|quintal|क्विंटल)/i,
-    // Just a number when stock context is clear
+
     /\b(\d+)\b/,
   ];
 
@@ -593,13 +494,12 @@ function detectStockUpdateIntent(message: string): { productName: string; quanti
 
   if (quantity === null || quantity < 0) return null;
 
-  // Extract product name — look for patterns like "X ka stock", "stock X", etc.
   const namePatterns = [
-    // "tamatar ka stock" / "आलू का स्टॉक"
+
     /([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का|की|के)\s*(?:stock|stok|स्टॉक)/i,
-    // "stock mein tamatar" / "stock of tomato"
+
     /(?:stock|stok|स्टॉक)\s*(?:mein|me|of|में)?\s*([\w\u0900-\u097F\u0980-\u09FF]+)/i,
-    // "mera X stock update"
+
     /(?:mera|meri|mere|मेरा|मेरी|मेरे)\s+([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का)?\s*(?:stock|stok|स्टॉक)/i,
   ];
 
@@ -619,18 +519,12 @@ function detectStockUpdateIntent(message: string): { productName: string; quanti
   return { productName, quantity, unit };
 }
 
-/**
- * Detect order query intent — "order #ABC123 ka status", "mera order dikhao"
- * Returns { orderId, type } or null.
- */
 function detectOrderQuery(message: string): { orderId?: string; type: 'specific' | 'recent' } | null {
   const m = message.toLowerCase();
 
-  // Check for order-related keywords
   const orderKeyword = /\b(order|ऑर्डर|ord)\b/i;
   if (!orderKeyword.test(message) && !orderKeyword.test(m)) return null;
 
-  // Try to extract specific order ID
   const orderIdPatterns = [
     /(?:order|ऑर्डर|ord)[\s#\-]*([A-Za-z0-9\-]{6,})/i,
     /#([A-Za-z0-9\-]{6,})/,
@@ -644,7 +538,6 @@ function detectOrderQuery(message: string): { orderId?: string; type: 'specific'
     }
   }
 
-  // General order query: "mera order", "order status", "order dikhao"
   const generalOrderQuery = /\b(order\s*(status|dikhao|batao|kahan|kaha|details|info)|mera\s*order|mere\s*order|show\s*order|ऑर्डर\s*(दिखाओ|बताओ|कहाँ|स्टेटस))\b/i;
   if (generalOrderQuery.test(message) || generalOrderQuery.test(m)) {
     return { type: 'recent' };
@@ -653,10 +546,6 @@ function detectOrderQuery(message: string): { orderId?: string; type: 'specific'
   return null;
 }
 
-/**
- * Detect catalog query intent — "mere products dikhao", "catalog mein kya hai", "kitne products hain"
- * Returns { query } or null.
- */
 function detectCatalogQuery(message: string): { query?: string } | null {
   const m = message.toLowerCase();
 
@@ -664,7 +553,6 @@ function detectCatalogQuery(message: string): { query?: string } | null {
 
   if (!catalogPatterns.test(message) && !catalogPatterns.test(m)) return null;
 
-  // Try to extract a specific product search within catalog
   const searchPatterns = [
     /(?:catalog|products?)\s*(?:mein|me|in)\s+([\w\u0900-\u097F]+)/i,
     /(?:mere?|my)\s+([\w\u0900-\u097F]+)\s+(?:product|saman|item)/i,
@@ -680,29 +568,22 @@ function detectCatalogQuery(message: string): { query?: string } | null {
   return {};
 }
 
-/**
- * Detect language switch request
- */
 function detectLanguageSwitch(message: string, currentLang: LanguageCode): LanguageCode {
   const lower = message.toLowerCase();
 
-  // English requests
   if (lower.includes('english') || lower.includes('angrezi') || lower.includes('इंग्लिश') || 
       lower.includes('ইংরেজি') || lower.includes('इंग्रेजी')) {
     return 'en-IN';
   }
 
-  // Hindi requests
   if (lower.includes('hindi') || lower.includes('हिंदी') || lower.includes('हिन्दी')) {
     return 'hi-IN';
   }
 
-  // Marathi requests
   if (lower.includes('marathi') || lower.includes('मराठी')) {
     return 'mr-IN';
   }
 
-  // Bengali requests
   if (lower.includes('bengali') || lower.includes('bangla') || lower.includes('বাংলা') || 
       lower.includes('बंगाली')) {
     return 'bn-IN';
@@ -711,22 +592,16 @@ function detectLanguageSwitch(message: string, currentLang: LanguageCode): Langu
   return currentLang;
 }
 
-/**
- * Detect analytics query - extremely broad pattern matching
- * Returns { type: 'yesterday'|'today'|'last_week'|'last_month'|'top_selling'|'sales_summary', product?: string }
- */
 function detectAnalyticsQuery(message: string, language: LanguageCode): { type: string; product?: string } | null {
   const lower = message.toLowerCase();
 
-  // Romanized Hindi (most common for voice transcription)
   const romanizedYesterday = /\b(kal|yesterday|parso|beeta\s*kal|pichhla\s*din)\b/i;
   const romanizedToday = /\b(aaj|today|abhi)\b/i;
   const romanizedWeek = /\b(hafta|hafte|week|pichh?le?\s*(hafta|hafte|week)|last\s*week|saptah)\b/i;
   const romanizedMonth = /\b(mahina|mahine|month|pichh?le?\s*(mahina|mahine|month)|last\s*month)\b/i;
   const romanizedSoldPatterns = /\b(bik[ae]|bech[ae]|sol[de]|kitna|kitne|kitni|bikri|sell|sales|revenue|kamai|earning|order|hisab)\b/i;
   const romanizedTopSelling = /\b(sabse\s*(zyada|jyada|acch[ha])|top\s*sell|best\s*sell|konsa\s*(acch[ha]|zyada|sabse)|kya\s*(acch[ha]|zyada).*bik|popular|faayda|fayda|profit|recommend|suggest|kya\s*jod[uo]n|kya\s*bech[uo]n|maximize|zyada\s*kamai|jyada\s*kamai|strategy|business\s*advice|acch[ha]\s*product|best\s*product)\b/i;
-  
-  // Hindi script patterns
+
   const hindiYesterday = /कल|बीता\s*कल|पिछला\s*दिन|परसों/;
   const hindiToday = /आज/;
   const hindiWeek = /हफ्त[ाे]|सप्ताह|पिछल[ेा]\s*हफ्त[ाे]/;
@@ -734,29 +609,25 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
   const hindiSoldPatterns = /बिक[ाी]|बेच[ाी]|कितन[ाीे]|बिक्री|ऑर्डर|कमाई|हिसाब/;
   const hindiTopSelling = /सबसे\s*(ज़्यादा|ज्यादा|अच्छ[ाी])|कौन\s*सा.*(अच्छ|ज़्यादा|बिक|फायद|जोड़)|क्या.*बिक|टॉप\s*सेलिंग|बेस्ट\s*सेलिंग|फायद[ाे]|मुनाफ|ज़्यादा\s*कमाई|कौन.*जोड़|क्या\s*जोड़|कौन.*बेच|सबसे.*फायद/;
 
-  // Marathi patterns
   const marathiYesterday = /काल|कालच[ाीे]/;
   const marathiToday = /आज|आजच[ाीे]/;
   const marathiSold = /विक[ले]|किती|विक्री|ऑर्डर|कमाई/;
   const marathiTopSelling = /सर्वात\s*जास्त|चांगल[ेाी].*विक|टॉप|फायदा|नफा/;
 
-  // Also detect strategy/recommendation questions (English)
   const englishStrategy = /\b(what\s*should\s*i\s*(sell|add|stock)|which\s*product|most\s*profit|max(imize|imum)?\s*profit|recommend|suggest|best\s*to\s*sell|should\s*i\s*add)\b/i;
 
-  // Check if message is asking about sales/analytics
   const isSalesQuery = romanizedSoldPatterns.test(lower) || hindiSoldPatterns.test(message) || marathiSold.test(message);
   const isTopSellingQuery = romanizedTopSelling.test(lower) || hindiTopSelling.test(message) || marathiTopSelling.test(message) || englishStrategy.test(lower);
 
-  // Extract product name if mentioned (e.g., "kal tamatar kitna bika")
   let product: string | undefined;
   const productPatterns = [
-    // "kal X kitna bika" / "X kitna bika kal"
+
     /(?:kal|yesterday|aaj|today)\s+(\w+)\s+(?:kitna|kitne|kitni|how\s*much|how\s*many)/i,
     /(\w+)\s+(?:kitna|kitne|kitni|how\s*much|how\s*many)\s+(?:bik[ae]|sell|sol[de])/i,
     /([\u0900-\u097F]+)\s+(?:कितन[ाीे]|की)\s+(?:बिक[ाी]|बेच[ाी])/,
     /(?:कल|आज)\s+([\u0900-\u097F]+)\s+(?:कितन[ाीे])/,
   ];
-  
+
   for (const pattern of productPatterns) {
     const match = message.match(pattern);
     if (match && match[1]) {
@@ -771,7 +642,6 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
 
   if (!isSalesQuery) return null;
 
-  // Determine time range
   if (romanizedYesterday.test(lower) || hindiYesterday.test(message) || marathiYesterday.test(message)) {
     return { type: 'yesterday', product };
   }
@@ -785,18 +655,9 @@ function detectAnalyticsQuery(message: string, language: LanguageCode): { type: 
     return { type: 'last_month', product };
   }
 
-  // Generic sales query without specific time → sales summary
   return { type: 'sales_summary', product };
 }
 
-// detectOrderQuery was removed - detectAnalyticsQuery covers all query types
-
-/**
- * Get analytics information using date-range or top-selling queries
- * 
- * Passes both sellerId (UUID) and phone number to analytics functions
- * because marketplace orders use phone as seller key while ONDC uses UUID.
- */
 async function getAnalyticsInfo(
   phone: string,
   query: { type: string; product?: string },
@@ -806,7 +667,6 @@ async function getAnalyticsInfo(
     const userState = await getUserState(phone);
     let sellerId = userState?.sellerId;
 
-    // Fallback: if no sellerId in state, try fetching from seller profile
     if (!sellerId) {
       try {
         const { getSellerByPhone } = await import('./dynamodb-repository');
@@ -844,28 +704,38 @@ async function getAnalyticsInfo(
 
     if (query.type === 'sales_summary') {
       const summary = await getSalesSummary(sellerId, undefined, phone);
-      // Build per-product breakdown
       const productBreakdown = summary.topProducts.length > 0
-        ? summary.topProducts.map(p => `${p.name}: ${p.quantity} units, ₹${p.revenue.toFixed(0)}`).join('; ')
+        ? summary.topProducts.map(p => `${p.name}: ${p.quantity} units, Rs ${p.revenue.toFixed(0)}`).join('; ')
         : null;
       if (lang === 'hi') {
         const productsInfo = productBreakdown
-          ? `\nसभी प्रोडक्ट: ${productBreakdown}`
+          ? `\nसभी प्रोडक्ट (confirmed): ${productBreakdown}`
           : '';
-        return `बिक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई।${productsInfo}`;
+        let msg = `बिक्री सारांश (${summary.timeRange}): कन्फर्म ${summary.confirmedOrders} ऑर्डर, ₹${summary.confirmedRevenue.toFixed(0)} कमाई।`;
+        if (summary.pendingOrders > 0) msg += ` पेंडिंग: ${summary.pendingOrders} ऑर्डर (₹${summary.pendingRevenue.toFixed(0)})।`;
+        if (summary.rejectedOrders > 0) msg += ` रिजेक्ट: ${summary.rejectedOrders}।`;
+        if (summary.cancelledOrders > 0) msg += ` कैंसल: ${summary.cancelledOrders}।`;
+        return msg + productsInfo;
       } else if (lang === 'mr') {
         const productsInfo = productBreakdown
-          ? `\nसर्व उत्पादने: ${productBreakdown}`
+          ? `\nसर्व उत्पादने (confirmed): ${productBreakdown}`
           : '';
-        return `विक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई.${productsInfo}`;
+        let msg = `विक्री सारांश (${summary.timeRange}): कन्फर्म ${summary.confirmedOrders} ऑर्डर, ₹${summary.confirmedRevenue.toFixed(0)} कमाई.`;
+        if (summary.pendingOrders > 0) msg += ` पेंडिंग: ${summary.pendingOrders} ऑर्डर (₹${summary.pendingRevenue.toFixed(0)}).`;
+        if (summary.rejectedOrders > 0) msg += ` नाकारले: ${summary.rejectedOrders}.`;
+        if (summary.cancelledOrders > 0) msg += ` रद्द: ${summary.cancelledOrders}.`;
+        return msg + productsInfo;
       }
       const productsInfo = productBreakdown
-        ? `\nAll products: ${productBreakdown}`
+        ? `\nAll products (confirmed): ${productBreakdown}`
         : '';
-      return `Sales summary (${summary.timeRange}): ${summary.totalOrders} orders, ₹${summary.totalRevenue.toFixed(0)} revenue.${productsInfo}`;
+      let msg = `Sales summary (${summary.timeRange}): Confirmed ${summary.confirmedOrders} orders, Rs ${summary.confirmedRevenue.toFixed(0)} revenue.`;
+      if (summary.pendingOrders > 0) msg += ` Pending: ${summary.pendingOrders} orders (Rs ${summary.pendingRevenue.toFixed(0)}).`;
+      if (summary.rejectedOrders > 0) msg += ` Rejected: ${summary.rejectedOrders}.`;
+      if (summary.cancelledOrders > 0) msg += ` Cancelled: ${summary.cancelledOrders}.`;
+      return msg + productsInfo;
     }
 
-    // Date-range queries: yesterday, today, last_week, last_month  
     const analytics = await getDateRangeAnalytics(sellerId, query.type, phone);
     return formatDateRangeAnalytics(analytics, lang);
   } catch (error) {
@@ -878,13 +748,9 @@ async function getAnalyticsInfo(
   }
 }
 
-/**
- * Detect market price query - works with romanized Hindi, Devanagari, English
- */
 function detectPriceQuery(message: string, language: LanguageCode): string | null {
   const lower = message.toLowerCase();
 
-  // Romanized Hindi patterns (most common for voice transcription)
   const romanizedPricePatterns = [
     /(\w+)\s*(?:ka|ki|ke)\s*(?:bhav|keemat|rate|price|daam|dam)/i,
     /(?:bhav|keemat|rate|price|daam|dam)\s*(?:kya|kitna|kitni)?\s*(?:hai|he)?\s*(?:of\s+)?(\w+)/i,
@@ -901,40 +767,34 @@ function detectPriceQuery(message: string, language: LanguageCode): string | nul
     const match = lower.match(pattern);
     if (match) {
       const product = (match[1] || match[2])?.trim();
-      // Filter out noise words
+
       if (product && !['kya', 'hai', 'he', 'aaj', 'kal', 'the', 'what', 'is', 'of', 'ka', 'ki', 'ke', 'real', 'asli', 'live'].includes(product)) {
         return product;
       }
     }
   }
 
-  // Hindi Devanagari patterns — broad coverage
   const hindiMatch = message.match(/([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|रेट|दाम)/);
   if (hindiMatch) return hindiMatch[1];
 
-  // "आज [product] का भाव" or "आज का भाव [product]"
   const hindiAajMatch = message.match(/आज\s+([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|दाम)/);
   if (hindiAajMatch) return hindiAajMatch[1];
 
   const hindiAajMatch2 = message.match(/आज\s*(का|की|के)?\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
   if (hindiAajMatch2) return hindiAajMatch2[3];
 
-  // "असली/लाइव भाव [product]" pattern
   const hindiLiveMatch = message.match(/(असली|लाइव|रियल)\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
   if (hindiLiveMatch) return hindiLiveMatch[3];
-  
+
   const hindiMatch2 = message.match(/(भाव|कीमत|दाम)\s*(क्या|कितन[ाीे])?\s*(है)?\s*([\u0900-\u097F]+)/);
   if (hindiMatch2) return hindiMatch2[4];
 
-  // Marathi patterns
   const marathiMatch = message.match(/([\u0900-\u097F]+)\s*(चा|ची|चे)?\s*(भाव|किंमत)/);
   if (marathiMatch) return marathiMatch[1];
 
-  // Bengali patterns
   const bengaliMatch = message.match(/([\u0980-\u09FF]+)\s*(এর)?\s*(দাম|মূল্য)/);
   if (bengaliMatch) return bengaliMatch[1];
 
-  // English patterns
   if (lower.includes('price') || lower.includes('rate') || lower.includes('market')) {
     const engMatch = message.match(/price\s+of\s+(\w+)|(\w+)\s+price|market\s+(?:price|rate)\s+(?:of\s+)?(\w+)/i);
     if (engMatch) return engMatch[1] || engMatch[2] || engMatch[3];
@@ -943,14 +803,6 @@ function detectPriceQuery(message: string, language: LanguageCode): string | nul
   return null;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// INLINE TOOL EXECUTION — Available for ALL user states (including GUEST_ACTIVE)
-// These bypass Bedrock Agent and directly query DynamoDB for tool functionality.
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Execute stock update: resolve product name → productId via fuzzy match, then update quantity.
- */
 async function executeStockUpdate(
   phone: string,
   productName: string,
@@ -958,7 +810,7 @@ async function executeStockUpdate(
   unit?: string
 ): Promise<string> {
   try {
-    // 1. Fetch seller catalog
+
     const catalogResult = await ddbDocClient.send(new QueryCommand({
       TableName: DDB_TABLE_NAME,
       KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -973,7 +825,6 @@ async function executeStockUpdate(
       return 'STOCK_UPDATE_RESULT: No products found in your catalog. Add products first before updating stock.';
     }
 
-    // 2. Fuzzy match product name
     const searchName = productName.toLowerCase();
     let bestMatch: any = null;
     let bestScore = 0;
@@ -981,15 +832,14 @@ async function executeStockUpdate(
     for (const item of items) {
       const itemName = (item.becknItem?.descriptor?.name || item.productName || '').toLowerCase();
       const itemCategory = (item.category || '').toLowerCase();
-      
-      // Exact match
+
       if (itemName === searchName) { bestMatch = item; bestScore = 100; break; }
-      // Contains match
+
       if (itemName.includes(searchName) || searchName.includes(itemName)) {
         const score = 80;
         if (score > bestScore) { bestMatch = item; bestScore = score; }
       }
-      // Category match
+
       if (itemCategory.includes(searchName)) {
         const score = 50;
         if (score > bestScore) { bestMatch = item; bestScore = score; }
@@ -1005,7 +855,6 @@ async function executeStockUpdate(
     const matchedName = bestMatch.becknItem?.descriptor?.name || bestMatch.productName || productName;
     const oldQuantity = bestMatch.quantity || bestMatch.becknItem?.quantity?.available?.count || 0;
 
-    // 3. Update in main catalog
     await ddbDocClient.send(new UpdateCommand({
       TableName: DDB_TABLE_NAME,
       Key: { PK: `SELLER#${phone}`, SK: `ITEM#${productId}` },
@@ -1017,7 +866,6 @@ async function executeStockUpdate(
       },
     }));
 
-    // 4. Update marketplace table
     try {
       await ddbDocClient.send(new UpdateCommand({
         TableName: MARKETPLACE_TABLE,
@@ -1039,7 +887,6 @@ async function executeStockUpdate(
 
     const unitLabel = unit || bestMatch.unit || 'units';
 
-    // Track stock update in conversation memory
     try {
       await addConversationMessage(phone, {
         timestamp: Date.now(),
@@ -1064,16 +911,13 @@ async function executeStockUpdate(
   }
 }
 
-/**
- * Execute order lookup: fetch order by ID or recent orders for seller.
- */
 async function executeOrderLookup(
   phone: string,
   orderId?: string
 ): Promise<string> {
   try {
     if (orderId) {
-      // Specific order lookup
+
       const result = await ddbDocClient.send(new GetCommand({
         TableName: DDB_TABLE_NAME,
         Key: { PK: `ORDER#${orderId}`, SK: 'METADATA' },
@@ -1088,7 +932,6 @@ async function executeOrderLookup(
       return `ORDER_INFO: Order ${orderId} | Status: ${order.status} | Items: ${items} | Amount: ${order.payment?.amount || 0} | Payment: ${order.payment?.method || 'N/A'} (${order.payment?.status || 'pending'}) | Buyer: ${order.buyer?.name || 'N/A'} | Created: ${order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-IN') : 'N/A'}`;
     }
 
-    // Recent orders for this seller (via GSI2)
     const ordersResult = await ddbDocClient.send(new QueryCommand({
       TableName: DDB_TABLE_NAME,
       IndexName: 'GSI2',
@@ -1117,9 +960,6 @@ async function executeOrderLookup(
   }
 }
 
-/**
- * Execute catalog lookup: fetch seller's products from DynamoDB.
- */
 async function executeCatalogLookup(
   phone: string,
   query?: string
@@ -1143,7 +983,6 @@ async function executeCatalogLookup(
       status: item.status || 'active',
     }));
 
-    // Apply search filter
     if (query) {
       const q = query.toLowerCase();
       items = items.filter((i: any) => i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q));
@@ -1163,22 +1002,18 @@ async function executeCatalogLookup(
   }
 }
 
-/**
- * Search market price using local knowledge + web search with source attribution
- */
 async function searchMarketPrice(product: string, language: LanguageCode): Promise<string> {
   try {
-    // Primary: Fetch LIVE price from data.gov.in
+
     const livePrice = await fetchLiveMarketPrice(product);
-    
+
     if (livePrice.found) {
       const liveTag = livePrice.isLive ? '🟢 LIVE मंडी भाव' : '📋 अनुमानित भाव';
       const dateInfo = livePrice.isLive ? `(${livePrice.arrivalDate})` : '';
       const marketInfo = livePrice.market ? `${livePrice.market}, ${livePrice.state}` : '';
-      
+
       let result = `${liveTag}: ${livePrice.commodity}\n💰 ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
-      
-      // Also try web search for additional context
+
       const searchQuery = `${product} mandi bhav price today India ${new Date().toISOString().split('T')[0]}`;
       try {
         const searchResults = await remote_web_search({ query: searchQuery });
@@ -1186,13 +1021,12 @@ async function searchMarketPrice(product: string, language: LanguageCode): Promi
           result += `\n📌 और जानकारी: ${searchResults[0].url}`;
         }
       } catch (e) {
-        // web search is supplementary, don't fail
+
       }
-      
+
       return result;
     }
 
-    // Fallback: web search only
     const searchQuery = `${product} mandi bhav price today India ${new Date().toISOString().split('T')[0]}`;
     const searchResults = await remote_web_search({ query: searchQuery });
 
@@ -1208,9 +1042,6 @@ async function searchMarketPrice(product: string, language: LanguageCode): Promi
   }
 }
 
-/**
- * Show typing indicator
- */
 async function showTypingIndicator(phone: string): Promise<void> {
   try {
     await sendTypingIndicator(phone, _currentMessageId);
@@ -1219,9 +1050,6 @@ async function showTypingIndicator(phone: string): Promise<void> {
   }
 }
 
-/**
- * Build enhanced agent prompt
- */
 function buildEnhancedPrompt(
   userMessage: string,
   messageType: string,
@@ -1247,7 +1075,6 @@ function buildEnhancedPrompt(
 
   let prompt = '';
 
-  // Agent identity based on language
   if (language === 'hi-IN') {
     prompt = `तुम "व्यापार वाणी" हो — ग्रामीण भारतीय विक्रेताओं का सबसे भरोसेमंद AI व्यापार सहायक।
 
@@ -1299,7 +1126,7 @@ Your responsibilities:
 - कधीही रिकामे किंवा सामान्य उत्तर देऊ नकोस
 - इमोजी अजिबात वापरू नकोस — ते व्हॉइसमध्ये ऐकू येतात
 - विशेष चिन्हे (*, #, --, :, ...) कधी वापरू नकोस`;
-  } else { // Bengali
+  } else { 
     prompt = `তুমি "ব্যাপার বাণী" — গ্রামীণ ভারতীয় বিক্রেতাদের সবচেয়ে বিশ্বস্ত AI ব্যবসা সহায়ক।
 
 তোমার ব্যক্তিত্ব:
@@ -1311,7 +1138,6 @@ Your responsibilities:
 - বিশেষ চিহ্ন (*, #, --, :, ...) কখনও ব্যবহার করো না`;
   }
 
-  // --- SELLER IDENTITY (used throughout every message) ---
   const sellerName = sellerInfo.name || userState?.metadata?.profileName || '';
   const phoneLast4 = (userState?.phone || '').slice(-4);
   if (sellerName) {
@@ -1320,9 +1146,8 @@ Your responsibilities:
     prompt += `\n\nSELLER IDENTITY: Phone ending in ${phoneLast4}. No name on file yet. If you learn their name from the conversation, use it with "ji".`;
   }
 
-  // --- ONBOARDING STATE AWARENESS ---
   if (userState?.state === 'NEW') {
-    // Language-specific onboarding instructions with proper script
+
     const onboardingInstructions: Record<string, string> = {
       'hi-IN': `\n\nONBOARDING STATE: बिल्कुल नया यूज़र (पहला संपर्क)
 यह यूज़र का पहला मैसेज है। गर्मजोशी से स्वागत करो।
@@ -1392,8 +1217,7 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
 - Do NOT use STORE_DATA for KYC_PENDING users — onboarding must finish first.
 - If they ask "kya ho raha hai" / "ab kya karna hai" → tell them: "Aap PAN card ki photo bhej sakte hain verification ke liye, ya 'skip' bol ke guest mode mein shuru kar sakte hain."`;
   } else {
-    // ALL other states: ACTIVE, KYC_VERIFIED, VOICE_RECEIVED, IMAGE_PENDING, CONFIRMATION_PENDING
-    // PAN is already handled — NEVER ask about it again
+
     prompt += `\n\nONBOARDING STATE: FULLY ONBOARDED (PAN already handled)
 - This user has ALREADY completed or skipped PAN verification. NEVER ask about PAN, KYC, or verification again.
 - Do NOT mention PAN card, KYC, verification, or onboarding in any response.
@@ -1402,7 +1226,6 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
 - Treat this user as a fully active seller with all features available.`;
   }
 
-  // Add conversation history (filter out PAN/KYC related messages to prevent LLM from re-initiating)
   if (conversationContext && conversationContext.messages.length > 0) {
     const recentMessages = conversationContext.messages.slice(-20);
     const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
@@ -1416,7 +1239,6 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
     }
   }
 
-  // Add user patterns and personalization context
   if (conversationContext && conversationContext.patterns.totalInteractions > 0) {
     const { patterns, preferences } = conversationContext;
     prompt += `\n\nUser personalization context:`;
@@ -1433,7 +1255,6 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
     }
   }
 
-  // Add current order + CONFIRMATION_PENDING awareness
   if (partialData) {
     prompt += `\n\nCurrent order being tracked:
 Product: ${partialData.productName || 'Unknown'}
@@ -1442,7 +1263,7 @@ Quantity: ${partialData.quantity ? `${partialData.quantity} ${partialData.unit}`
 Category: ${partialData.category || 'Unknown'}
 Photo: ${partialData.originalImageUrl ? 'Received' : 'Not received'}
 Missing fields: ${partialData.missingFields?.length ? partialData.missingFields.join(', ') : 'NONE - all fields complete'}`;
-    
+
     if (userState?.state === 'CONFIRMATION_PENDING') {
       prompt += `\n\nSTATE: CONFIRMATION_PENDING — User is reviewing the product shown above.
 CRITICAL RULES for this state (follow exactly, no exceptions):
@@ -1470,16 +1291,13 @@ CRITICAL CONTEXT-SWITCHING RULE:
     }
   }
 
-  // Add UPI status
   prompt += `\n\nSeller UPI Status: ${sellerInfo.upiId ? `Registered: ${sellerInfo.upiId}` : 'Not registered'}`;
   prompt += `\nUser State: ${userState?.state || 'UNKNOWN'}`;
 
-  // Add market info if available
   if (marketInfo) {
     prompt += `\n\n${marketInfo}`;
   }
 
-  // Add analytics info if available
   if (analyticsInfo) {
     prompt += `\n\nAnalytics data:\n${analyticsInfo}`;
     prompt += `\n\nANALYTICAL REASONING RULES (when user asks strategy/profit/recommendation questions):
@@ -1495,7 +1313,6 @@ When the user asks questions like "kya jodun", "kya bechun", "sabse zyada faayda
 9. NEVER hallucinate numbers. ONLY use data that appears above. If no analytics/market data exists, say honestly you need more sales history to give recommendations.`;
   }
 
-  // Add inline tool results — these were pre-executed before the LLM call
   if (stockUpdateResult) {
     prompt += `\n\n${stockUpdateResult}
 IMPORTANT: The stock has ALREADY been updated. Do NOT try to do STORE_DATA or any action. Just confirm the result to the user in a friendly way. ACTION: NONE.`;
@@ -1511,19 +1328,16 @@ IMPORTANT: Order data above was fetched from the database. Present it clearly to
 IMPORTANT: Catalog data above was fetched from the database. Present it clearly to the user. ACTION: NONE.`;
   }
 
-  // Conversation summary for richer context
   if (conversationSummary) {
     prompt += `\n\nSeller history summary: ${conversationSummary}`;
   }
 
-  // Recent proactive alerts from background agent (weather, prices, advisories)
   if (recentAlerts) {
     prompt += `\n\nRecent proactive alerts sent to this seller by our background system:
 ${recentAlerts}
 If the seller asks about weather, prices, alerts, or "what was that message?" — reference this data. You sent these alerts proactively. Own them as your own updates.`;
   }
 
-  // Proactive price recommendation — when seller is setting price and market data exists
   if (partialData?.price && marketInfo) {
     prompt += `\n\nPROACTIVE PRICE CHECK:
 Seller's current price for ${partialData.productName || 'this product'}: ${partialData.price} per ${partialData.unit || 'unit'}
@@ -1534,7 +1348,6 @@ IF reasonably close, acknowledge it positively.
 Keep this brief, do not overwhelm. RESPONSE_MODE should be "voice" for price recommendations.`;
   }
 
-  // Add current message
   prompt += `\n\nUser's new message (${messageType}):
 "${userMessage}"
 
@@ -1724,11 +1537,6 @@ Respond now in ${langName}:`;
   return prompt;
 }
 
-
-/**
- * Call agent model with timeout protection, retry, and model fallback.
- * Strategy: Nova Pro (12s) → retry Nova Pro (8s) → fallback Nova Lite (10s) → hardcoded fallback
- */
 async function callAgentModel(prompt: string): Promise<string> {
   const buildRequest = (modelId: string, maxTokens: number) => ({
     messages: [{ role: 'user' as const, content: [{ text: prompt }] }],
@@ -1759,19 +1567,16 @@ async function callAgentModel(prompt: string): Promise<string> {
     return responseBody.output.message.content[0].text.trim();
   };
 
-  // Attempt 1: Nova Pro with 12s timeout
   try {
     return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 12000, 600);
   } catch (err1: any) {
     console.warn('⚠️ Nova Pro attempt 1 failed:', err1.message);
 
-    // Attempt 2: Retry Nova Pro with 8s timeout (might be transient)
     try {
       return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 8000, 400);
     } catch (err2: any) {
       console.warn('⚠️ Nova Pro attempt 2 failed:', err2.message);
 
-      // Attempt 3: Fallback to Nova Lite (cheaper, faster, still reasonable)
       try {
         console.log('🔄 Falling back to Nova Lite model');
         return await invokeWithTimeout(NOVA_LITE_MODEL_ID, 10000, 400);
@@ -1783,13 +1588,6 @@ async function callAgentModel(prompt: string): Promise<string> {
   }
 }
 
-/**
- * Invoke Bedrock Agent with tool-use (agentic AI path).
- * The agent autonomously decides which tools to call, chains multiple calls,
- * and synthesizes a final answer — true agentic behavior vs prompt-routing.
- *
- * Falls back to direct InvokeModel (callAgentModel) if agent is not configured.
- */
 async function callBedrockAgentIfAvailable(
   userMessage: string,
   phone: string,
@@ -1801,7 +1599,7 @@ async function callBedrockAgentIfAvailable(
 
   try {
     console.log('🤖 Invoking Bedrock Agent with tool-use...');
-    const sessionId = `session-${phone.replace(/\+/g, '')}`; // Stable session per seller
+    const sessionId = `session-${phone.replace(/\+/g, '')}`; 
 
     const command = new InvokeAgentCommand({
       agentId: BEDROCK_AGENT_ID,
@@ -1817,7 +1615,6 @@ async function callBedrockAgentIfAvailable(
       ),
     ]);
 
-    // Collect streamed response chunks
     let fullText = '';
     if (response.completion) {
       for await (const chunk of response.completion) {
@@ -1839,16 +1636,13 @@ async function callBedrockAgentIfAvailable(
   }
 }
 
-/**
- * Parse enhanced response
- */
 function parseEnhancedResponse(response: string, language: LanguageCode): EnhancedAgentResponse {
   const lines = response.split('\n');
   let message = '';
   let action = 'NONE';
   let confidence = 85;
   let reasoning = '';
-  let responseMode: 'voice' | 'text' | 'both' = 'voice'; // Default to voice-only
+  let responseMode: 'voice' | 'text' | 'both' = 'voice'; 
 
   for (const line of lines) {
     if (line.startsWith('MESSAGE:')) {
@@ -1867,17 +1661,14 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
     }
   }
 
-  // If no structured response, use entire response as message
   if (!message) {
     message = response;
   }
 
-  // Force text+voice for actions that need visual confirmation
   if (action === 'CREATE_CATALOG' || action === 'DELETE_PRODUCT' || action === 'REGISTER_UPI') {
     responseMode = 'both';
   }
 
-  // Parse DATA line for action parameters
   let actionData: any = undefined;
   for (const line of lines) {
     if (line.startsWith('DATA:')) {
@@ -1886,19 +1677,19 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
         actionData = JSON.parse(dataStr);
       } catch (e) {
         console.warn('Failed to parse DATA line as JSON, trying regex fallback:', line);
-        // Fallback: extract UPI ID via regex (handles non-JSON agent outputs)
+
         const upiMatch = dataStr.match(/[\w.\-]+@[\w]+/);
         if (upiMatch && action === 'REGISTER_UPI') {
           actionData = { upiId: upiMatch[0] };
           console.log('✅ Extracted UPI ID via fallback regex:', upiMatch[0]);
         }
-        // Fallback: extract productName from quoted text
+
         const nameMatch = dataStr.match(/"([^"]+)"/);
         if (nameMatch && (action === 'DELETE_PRODUCT' || action === 'STORE_DATA')) {
           actionData = { ...(actionData || {}), productName: nameMatch[1] };
           console.log('✅ Extracted productName via fallback regex:', nameMatch[1]);
         }
-        // Fallback: extract price/quantity numbers
+
         const priceMatch = dataStr.match(/price["\s:]*(\d+)/i);
         if (priceMatch && action === 'STORE_DATA') {
           actionData = { ...(actionData || {}), price: parseInt(priceMatch[1]) };
@@ -1915,7 +1706,6 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
     }
   }
 
-  // Extra fallback: if REGISTER_UPI action but no upiId in data, try to extract from the full response
   if (action === 'REGISTER_UPI' && (!actionData || !actionData.upiId)) {
     const upiMatch = response.match(/[\w.\-]+@[\w]+/);
     if (upiMatch) {
@@ -1939,12 +1729,6 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
   };
 }
 
-/**
- * Send agent message respecting response mode
- * - 'voice': voice-only (clean chat)
- * - 'text': text-only (for things that need visual confirmation like buttons)
- * - 'both': text + voice (for catalog confirmations needing both)
- */
 export async function sendEnhancedAgentMessage(
   phone: string,
   message: string,
@@ -1952,14 +1736,13 @@ export async function sendEnhancedAgentMessage(
   mode: 'voice' | 'text' | 'both' = 'voice',
   messageId?: string
 ): Promise<void> {
-  // Store messageId for typing indicator
+
   if (messageId) { _currentMessageId = messageId; }
 
-  // Show typing for realistic delay
   await showTypingIndicator(phone);
 
   const lang = language.split('-')[0] as 'hi' | 'mr' | 'en' | 'bn';
-  // Map Bengali to English for WhatsApp message sender (Bengali not yet supported)
+
   const whatsappLang = lang === 'bn' ? 'en' : lang;
 
   switch (mode) {

@@ -1,12 +1,3 @@
-/**
- * WhatsApp Webhook Handler Lambda
- * 
- * This Lambda function receives incoming WhatsApp messages from AWS End User Messaging (Social),
- * validates webhook signatures, parses message content, routes based on user state,
- * and publishes events to EventBridge.
- * 
- * Requirements: 2.1, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 5.3
- */
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -18,14 +9,6 @@ import { route, MessageType } from '../services/state-router';
 import { sendTextMessage, sendTypingIndicator, markMessageAsRead, setLastMessageId } from './whatsapp-message-sender';
 import crypto from 'crypto';
 
-/**
- * Validates the webhook signature from AWS End User Messaging
- * 
- * @param payload - The raw request body
- * @param signature - The signature from the request headers
- * @param secret - The webhook secret configured in AWS End User Messaging
- * @returns true if signature is valid, false otherwise
- */
 function validateWebhookSignature(
   payload: string,
   signature: string | undefined,
@@ -42,7 +25,6 @@ function validateWebhookSignature(
       .update(payload)
       .digest('hex');
 
-    // Use timing-safe comparison to prevent timing attacks
     return crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature)
@@ -53,35 +35,27 @@ function validateWebhookSignature(
   }
 }
 
-/**
- * Parses incoming WhatsApp message and extracts relevant metadata
- * 
- * @param body - The parsed request body
- * @returns Parsed WhatsApp inbound event
- */
 function parseWhatsAppMessage(body: any): WhatsAppInboundEvent {
-  // Extract message details from Meta WhatsApp webhook payload
-  // Structure: body.entry[0].changes[0].value.messages[0]
+
   const entry = body.entry?.[0];
   const change = entry?.changes?.[0];
   const value = change?.value;
-  
-  // Check if this is a status update (not a message)
+
   if (value?.statuses && !value?.messages) {
     throw new Error('Status update - not a message');
   }
-  
+
   const message = value?.messages?.[0];
   const contact = value?.contacts?.[0];
-  
+
   if (!message) {
     throw new Error('No message found in webhook payload');
   }
-  
+
   return {
     messageId: message.id || crypto.randomUUID(),
     from: message.from,
-    timestamp: parseInt(message.timestamp) * 1000 || Date.now(), // Convert to milliseconds
+    timestamp: parseInt(message.timestamp) * 1000 || Date.now(), 
     type: message.type || 'text',
     content: {
       text: message.text?.body,
@@ -92,42 +66,33 @@ function parseWhatsAppMessage(body: any): WhatsAppInboundEvent {
     },
     profile: {
       name: contact?.profile?.name || message.from,
-      language: undefined, // Will be detected from message content
+      language: undefined, 
     },
   };
 }
 
-/**
- * Determines message type from message content
- */
 function determineMessageType(message: any): 'text' | 'audio' | 'image' | 'button_reply' {
   console.log('Determining message type for:', JSON.stringify(message, null, 2));
-  
-  // Check for interactive button reply
+
   if (message.type === 'interactive' || message.content?.buttonPayload) {
     console.log('Detected button_reply');
     return 'button_reply';
   }
-  
-  // Check for audio/voice message
+
   if (message.type === 'audio' || message.audio || (message.content?.mimeType && message.content.mimeType.startsWith('audio/'))) {
     console.log('Detected audio');
     return 'audio';
   }
-  
-  // Check for image
+
   if (message.type === 'image' || message.image || (message.content?.mimeType && message.content.mimeType.startsWith('image/'))) {
     console.log('Detected image');
     return 'image';
   }
-  
+
   console.log('Defaulting to text');
   return 'text';
 }
 
-/**
- * Maps message type to EventBridge detail-type
- */
 function getEventDetailType(messageType: string): string {
   switch (messageType) {
     case 'audio':
@@ -142,13 +107,6 @@ function getEventDetailType(messageType: string): string {
   }
 }
 
-/**
- * Publishes WhatsApp message event to EventBridge with state-based routing
- * 
- * @param inboundEvent - The parsed WhatsApp message
- * @param userState - Current user state
- * @param routeDecision - Routing decision from state router
- */
 async function publishToEventBridge(
   inboundEvent: WhatsAppInboundEvent,
   userState: UserState,
@@ -161,7 +119,7 @@ async function publishToEventBridge(
     messageType: inboundEvent.type,
     content: inboundEvent.content,
     profile: inboundEvent.profile,
-    // Add state routing information
+
     state: userState.state,
     handler: routeDecision.handler,
     language: userState.language,
@@ -179,7 +137,6 @@ async function publishToEventBridge(
     source: EVENT_SOURCES.WHATSAPP,
   });
 
-  // Add detailed logging for button clicks
   if (inboundEvent.type === 'button_reply') {
     console.log('🔘 BUTTON CLICK DETECTED:', {
       buttonPayload: inboundEvent.content.buttonPayload,
@@ -211,7 +168,7 @@ async function publishToEventBridge(
 
   try {
     const response = await eventBridgeClient.send(command);
-    
+
     if (response.FailedEntryCount && response.FailedEntryCount > 0) {
       console.error('Failed to publish event to EventBridge:', response.Entries);
       throw new Error('Failed to publish event to EventBridge');
@@ -225,57 +182,43 @@ async function publishToEventBridge(
       handler: routeDecision.handler,
     });
 
-    // Additional success logging for button clicks
     if (inboundEvent.type === 'button_reply') {
       console.log('✅ Button click event published successfully - confirmation-handler should be invoked');
     }
   } catch (error) {
     console.error('❌ Error publishing to EventBridge:', error);
-    
-    // Additional error logging for button clicks
+
     if (inboundEvent.type === 'button_reply') {
       console.error('❌ CRITICAL: Button click event failed to publish - confirmation-handler will NOT be invoked');
     }
-    
+
     throw error;
   }
 }
 
-/**
- * Send error guidance message to user with voice
- * 
- * @param phone - User phone number
- * @param guidanceMessage - Guidance message in user's language
- */
 async function sendGuidanceMessage(phone: string, guidanceMessage: string): Promise<void> {
   try {
-    // Import sendTextWithVoice dynamically
+
     const { sendTextWithVoice } = await import('./whatsapp-message-sender');
-    
-    // Typing indicator already sent at the top of the handler
-    // Send message with voice (default to Hindi)
+
     await sendTextWithVoice(phone, guidanceMessage, 'hi');
-    
+
     console.log('Sent guidance message with voice to user:', phone);
   } catch (error) {
     console.error('Error sending guidance message:', error);
-    // Don't throw - guidance message failure shouldn't block webhook processing
+
   }
 }
 
-/**
- * Lambda handler for WhatsApp webhook
- */
 export async function handler(
   event: any
 ): Promise<APIGatewayProxyResult> {
   console.log('Received WhatsApp webhook:', JSON.stringify(event, null, 2));
 
   try {
-    // API Gateway v2 uses event.requestContext.http.method instead of event.httpMethod
+
     const httpMethod = event.requestContext?.http?.method || event.httpMethod;
-    
-    // Handle webhook verification (GET request)
+
     if (httpMethod === 'GET') {
       const verifyToken = event.queryStringParameters?.['hub.verify_token'];
       const challenge = event.queryStringParameters?.['hub.challenge'];
@@ -296,11 +239,9 @@ export async function handler(
       }
     }
 
-    // Handle incoming messages (POST request)
     if (httpMethod === 'POST') {
       const webhookSecret = process.env.WEBHOOK_SECRET;
-      
-      // Validate webhook signature if secret is configured
+
       if (webhookSecret) {
         const signature = event.headers['x-hub-signature-256'] || event.headers['X-Hub-Signature-256'];
         const isValid = validateWebhookSignature(event.body || '', signature, webhookSecret);
@@ -316,14 +257,13 @@ export async function handler(
         console.warn('WEBHOOK_SECRET not configured - skipping signature validation');
       }
 
-      // Parse the message
       const body = JSON.parse(event.body || '{}');
-      
+
       let inboundEvent;
       try {
         inboundEvent = parseWhatsAppMessage(body);
       } catch (error: any) {
-        // Handle status updates and other non-message webhooks
+
         if (error.message.includes('Status update')) {
           console.log('Received status update, ignoring');
           return {
@@ -331,7 +271,7 @@ export async function handler(
             body: JSON.stringify({ success: true, message: 'Status update received' }),
           };
         }
-        throw error; // Re-throw other errors
+        throw error; 
       }
 
       console.log('Parsed WhatsApp message:', {
@@ -340,9 +280,6 @@ export async function handler(
         type: inboundEvent.type,
       });
 
-      // ─── TYPING INDICATOR: IMMEDIATELY after parsing, BEFORE any DynamoDB calls ───
-      // Matches reference implementation exactly: markMessageAsRead(messageID, true)
-      // The typing_indicator: { type: 'text' } field shows the bubble for ~25 seconds
       try {
         setLastMessageId(inboundEvent.from, inboundEvent.messageId);
         const typingResult = await markMessageAsRead(inboundEvent.messageId, true);
@@ -350,18 +287,14 @@ export async function handler(
       } catch (typingErr) {
         console.warn('⚠️ Typing indicator failed (non-blocking):', typingErr);
       }
-      // ─── END TYPING INDICATOR ───
 
-      // Determine actual message type (the type from webhook might not be accurate)
       const actualMessageType = determineMessageType(inboundEvent);
       console.log('Actual message type determined:', actualMessageType);
-      
-      // Update inbound event with correct type
+
       inboundEvent.type = actualMessageType;
 
-      // Get or initialize user state
       let userState = await getUserState(inboundEvent.from);
-      
+
       if (!userState) {
         console.log('New user detected, initializing state:', inboundEvent.from);
         const profileName = inboundEvent.profile?.name || undefined;
@@ -374,7 +307,6 @@ export async function handler(
         language: userState.language,
       });
 
-      // Route message based on state and message type
       const routeDecision = route(inboundEvent.type as MessageType, userState);
 
       console.log('Route decision:', {
@@ -383,10 +315,9 @@ export async function handler(
         metadata: routeDecision.metadata,
       });
 
-      // Handle error routing - send guidance message
       if (routeDecision.handler === 'ERROR') {
         const guidanceMessage = routeDecision.metadata?.guidanceMessage;
-        
+
         if (guidanceMessage) {
           await sendGuidanceMessage(inboundEvent.from, guidanceMessage);
         }
@@ -407,7 +338,6 @@ export async function handler(
         };
       }
 
-      // Publish to EventBridge for processing
       await publishToEventBridge(inboundEvent, userState, routeDecision);
 
       return {
@@ -420,7 +350,6 @@ export async function handler(
       };
     }
 
-    // Unsupported HTTP method
     return {
       statusCode: 405,
       body: JSON.stringify({ error: 'Method not allowed' }),

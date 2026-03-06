@@ -1,22 +1,3 @@
-/**
- * Beckn Protocol Handler — BPP Implementation
- * 
- * Handles all 10 Beckn transaction APIs for the BPP (Buyer Platform Provider) side.
- * Each handler processes the incoming BAP request and returns the appropriate
- * on_* callback response that gets sent to the BAP's callback URI.
- * 
- * Architecture:
- *   BAP → /search  → handleSearch()  → on_search  → BAP callback
- *   BAP → /select  → handleSelect()  → on_select  → BAP callback
- *   BAP → /init    → handleInit()    → on_init    → BAP callback
- *   BAP → /confirm → handleConfirm() → on_confirm → BAP callback
- *   BAP → /status  → handleStatus()  → on_status  → BAP callback
- *   BAP → /cancel  → handleCancel()  → on_cancel  → BAP callback
- *   BAP → /update  → handleUpdate()  → on_update  → BAP callback
- *   BAP → /track   → handleTrack()   → on_track   → BAP callback
- *   BAP → /rating  → handleRating()  → on_rating  → BAP callback
- *   BAP → /support → handleSupport() → on_support → BAP callback
- */
 
 import { randomUUID } from 'crypto';
 import {
@@ -70,14 +51,6 @@ import { createAuthorizationHeader } from './beckn-auth';
 const BPP_ID = process.env.NETWORK_PARTICIPANT_ID || 'vyapar-vaani.ondc.in';
 const BPP_URI = process.env.BPP_BASE_URL || 'https://api.vyapar-vaani.ondc.in';
 
-// ============================================================================
-// SEARCH → ON_SEARCH
-// ============================================================================
-
-/**
- * Handle /search — return matching catalog items
- * Searches across all active sellers' catalogs
- */
 export async function handleSearch(
   request: BecknRequest<SearchMessage>
 ): Promise<BecknResponse<OnSearchMessage>> {
@@ -87,26 +60,23 @@ export async function handleSearch(
   console.log('BPP handling /search:', JSON.stringify(intent, null, 2));
 
   try {
-    // Determine search criteria
+
     const searchName = intent?.item?.descriptor?.name?.toLowerCase();
     const searchCategory = intent?.category?.id || intent?.item?.category?.id;
 
-    // Get all catalog items — filter by category if specified, else scan
     let allItems: CatalogItem[] = [];
     if (searchCategory) {
       allItems = await getCatalogItemsByCategory(searchCategory);
     } else {
-      // For broader search, we'd need a scan — limit to known categories
+
       const categories = ['Grocery', 'Fruits', 'Vegetables', 'Dairy', 'Spices', 'Grains', 'Snacks', 'Beverages'];
       const fetches = categories.map(cat => getCatalogItemsByCategory(cat));
       const results = await Promise.all(fetches);
       allItems = results.flat();
     }
 
-    // Filter active items only
     allItems = allItems.filter(item => item.status === 'ACTIVE');
 
-    // Text search filter
     if (searchName) {
       allItems = allItems.filter(item =>
         item.becknItem.descriptor.name.toLowerCase().includes(searchName) ||
@@ -114,7 +84,6 @@ export async function handleSearch(
       );
     }
 
-    // Group items by seller
     const sellerItemsMap: Record<string, CatalogItem[]> = {};
     for (const item of allItems) {
       if (!sellerItemsMap[item.sellerId]) {
@@ -123,7 +92,6 @@ export async function handleSearch(
       sellerItemsMap[item.sellerId].push(item);
     }
 
-    // Build provider catalog for each seller
     const providers = [];
     for (const [sellerId, items] of Object.entries(sellerItemsMap)) {
       const seller = await getSellerById(sellerId);
@@ -141,7 +109,7 @@ export async function handleSearch(
         },
         locations: [{
           id: `loc-${sellerId}`,
-          gps: '19.0760,72.8777', // Default Mumbai — in production, pulled from seller profile
+          gps: '19.0760,72.8777', 
           address: {
             locality: 'Mumbai',
             city: 'Mumbai',
@@ -195,13 +163,6 @@ export async function handleSearch(
   }
 }
 
-// ============================================================================
-// SELECT → ON_SELECT (Quote Generation)
-// ============================================================================
-
-/**
- * Handle /select — generate quote for selected items
- */
 export async function handleSelect(
   request: BecknRequest<SelectMessage>
 ): Promise<BecknResponse<OnSelectMessage>> {
@@ -211,7 +172,7 @@ export async function handleSelect(
   console.log('BPP handling /select for provider:', provider.id);
 
   try {
-    // Look up each item and build quote
+
     const quotedItems = [];
     const breakup = [];
     let totalValue = 0;
@@ -246,7 +207,6 @@ export async function handleSelect(
       });
     }
 
-    // Add delivery charge
     const deliveryCharge = totalValue >= 500 ? 0 : 30;
     if (deliveryCharge > 0) {
       breakup.push({
@@ -258,7 +218,6 @@ export async function handleSelect(
       totalValue += deliveryCharge;
     }
 
-    // Add packing charge
     const packingCharge = 5;
     breakup.push({
       '@ondc/org/item_id': '',
@@ -301,13 +260,6 @@ export async function handleSelect(
   }
 }
 
-// ============================================================================
-// INIT → ON_INIT (Payment terms initialization)
-// ============================================================================
-
-/**
- * Handle /init — initialize order with billing + fulfillment + payment terms
- */
 export async function handleInit(
   request: BecknRequest<InitMessage>
 ): Promise<BecknResponse<OnInitMessage>> {
@@ -322,7 +274,6 @@ export async function handleInit(
       return buildErrorResponse(context, 'on_init', '30004', `Provider not found: ${provider.id}`);
     }
 
-    // Re-compute the quote (items may have changed)
     const breakup = [];
     let totalValue = 0;
     const quotedItems = [];
@@ -373,7 +324,6 @@ export async function handleInit(
     });
     totalValue += packingCharge;
 
-    // Determine payment method — COD or pre-paid
     const payment: BecknPayment = {
       type: 'ON-ORDER',
       status: 'NOT-PAID',
@@ -450,13 +400,6 @@ export async function handleInit(
   }
 }
 
-// ============================================================================
-// CONFIRM → ON_CONFIRM (Order creation + WhatsApp notification)
-// ============================================================================
-
-/**
- * Handle /confirm — create order and notify seller via WhatsApp
- */
 export async function handleConfirm(
   request: BecknRequest<ConfirmMessage>
 ): Promise<BecknResponse<OnConfirmMessage>> {
@@ -471,7 +414,6 @@ export async function handleConfirm(
       return buildErrorResponse(context, 'on_confirm', '30004', 'Provider not found');
     }
 
-    // Create order in our system
     const orderId = randomUUID();
     const now = Date.now();
 
@@ -481,7 +423,6 @@ export async function handleConfirm(
       price: item.price ? parseFloat(item.price.value) : 0,
     }));
 
-    // Get item prices if not in the confirm message
     for (const orderItem of orderItems) {
       if (orderItem.price === 0) {
         const catalogItem = await getCatalogItem(incomingOrder.provider.id, orderItem.itemId);
@@ -532,10 +473,8 @@ export async function handleConfirm(
 
     await createOrder(order);
 
-    // Send WhatsApp notification to seller (fire-and-forget via EventBridge)
     await notifySellerViaWhatsApp(seller, order, incomingOrder);
 
-    // Build the on_confirm response
     const responseOrder = {
       id: orderId,
       state: ONDC_ORDER_STATES.CREATED,
@@ -563,13 +502,6 @@ export async function handleConfirm(
   }
 }
 
-// ============================================================================
-// STATUS → ON_STATUS
-// ============================================================================
-
-/**
- * Handle /status — return order status
- */
 export async function handleStatus(
   request: BecknRequest<StatusMessage>
 ): Promise<BecknResponse<OnStatusMessage>> {
@@ -615,13 +547,6 @@ export async function handleStatus(
   }
 }
 
-// ============================================================================
-// CANCEL → ON_CANCEL
-// ============================================================================
-
-/**
- * Handle /cancel — cancel an order
- */
 export async function handleCancel(
   request: BecknRequest<CancelMessage>
 ): Promise<BecknResponse<OnCancelMessage>> {
@@ -633,7 +558,6 @@ export async function handleCancel(
       return buildErrorResponse(context, 'on_cancel', '30004', `Order not found: ${message.order_id}`);
     }
 
-    // Check if cancellation is valid
     if (!VALID_ORDER_TRANSITIONS[order.status].includes('CANCELLED')) {
       return buildErrorResponse(context, 'on_cancel', '30005',
         `Cannot cancel order in ${order.status} state`);
@@ -647,7 +571,6 @@ export async function handleCancel(
       notes: `Cancelled by buyer via ONDC. Reason: ${message.cancellation_reason_id}`,
     });
 
-    // Notify seller via WhatsApp
     const seller = await getSellerById(order.sellerId);
     if (seller) {
       await notifySellerOrderCancelled(seller, order, message.cancellation_reason_id);
@@ -678,10 +601,6 @@ export async function handleCancel(
   }
 }
 
-// ============================================================================
-// UPDATE → ON_UPDATE
-// ============================================================================
-
 export async function handleUpdate(
   request: BecknRequest<UpdateMessage>
 ): Promise<BecknResponse<OnUpdateMessage>> {
@@ -693,7 +612,6 @@ export async function handleUpdate(
       return buildErrorResponse(context, 'on_update', '30004', 'Order not found');
     }
 
-    // For now, support fulfillment state updates only
     return {
       context: buildResponseContext(context, 'on_update'),
       message: {
@@ -715,10 +633,6 @@ export async function handleUpdate(
   }
 }
 
-// ============================================================================
-// TRACK → ON_TRACK
-// ============================================================================
-
 export async function handleTrack(
   request: BecknRequest<TrackMessage>
 ): Promise<BecknResponse<OnTrackMessage>> {
@@ -730,7 +644,6 @@ export async function handleTrack(
       return buildErrorResponse(context, 'on_track', '30004', 'Order not found');
     }
 
-    // No live tracking for now — return status-based tracking
     return {
       context: buildResponseContext(context, 'on_track'),
       message: {
@@ -746,19 +659,12 @@ export async function handleTrack(
   }
 }
 
-// ============================================================================
-// RATING → ON_RATING
-// ============================================================================
-
 export async function handleRating(
   request: BecknRequest<RatingMessage>
 ): Promise<BecknResponse<OnRatingMessage>> {
   const { context, message } = request;
 
   console.log('BPP handling /rating:', JSON.stringify(message.ratings));
-
-  // Store ratings in DynamoDB (future enhancement)
-  // For now acknowledge receipt
 
   return {
     context: buildResponseContext(context, 'on_rating'),
@@ -768,10 +674,6 @@ export async function handleRating(
     },
   };
 }
-
-// ============================================================================
-// SUPPORT → ON_SUPPORT
-// ============================================================================
 
 export async function handleSupport(
   request: BecknRequest<SupportMessage>
@@ -787,10 +689,6 @@ export async function handleSupport(
     },
   };
 }
-
-// ============================================================================
-// HELPERS
-// ============================================================================
 
 function buildResponseContext(inContext: BecknContext, action: BecknContext['action']): BecknContext {
   return {
@@ -870,14 +768,10 @@ function mapOrderStatusToFulfillmentCode(status: string): string {
   return map[status] || 'Pending';
 }
 
-/**
- * Fire EventBridge event to notify seller via WhatsApp about new ONDC order
- */
 async function notifySellerViaWhatsApp(seller: SellerProfile, order: Order, becknOrder: any): Promise<void> {
   const { eventBridgeClient, EVENT_BUS_NAME } = await import('../config/aws-clients');
   const { PutEventsCommand } = await import('@aws-sdk/client-eventbridge');
 
-  // Build item names for notification
   const itemNames = [];
   for (const item of order.items) {
     const catalogItem = await getCatalogItem(order.sellerId, item.itemId);
@@ -917,9 +811,6 @@ async function notifySellerViaWhatsApp(seller: SellerProfile, order: Order, beck
   }));
 }
 
-/**
- * Notify seller of order cancellation via WhatsApp
- */
 async function notifySellerOrderCancelled(seller: SellerProfile, order: Order, reasonId: string): Promise<void> {
   const { eventBridgeClient, EVENT_BUS_NAME } = await import('../config/aws-clients');
   const { PutEventsCommand } = await import('@aws-sdk/client-eventbridge');

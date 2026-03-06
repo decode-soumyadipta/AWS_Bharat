@@ -1,81 +1,40 @@
-/**
- * ONDC Schema Validator
- * 
- * This module validates catalog objects and ONDC payloads against
- * Beckn Protocol v1.2.0 specifications.
- * 
- * Features:
- * - Validates catalog objects against on_search schema
- * - Validates context fields (domain, country, city, action, core_version)
- * - Validates mandatory fields presence
- * - Validates currency code (ISO 4217: INR)
- * - Validates GPS coordinate format (lat,long)
- * - Returns validation result with detailed error messages
- * 
- * Validates: Requirements 2.7, 4.7, 8.2, 8.5, 8.6, 8.7
- */
 
 import { BecknCatalogItem, ONDCCatalogPayload } from '../models/catalog';
 
-/**
- * Validation error details
- */
 export interface ValidationError {
   field: string;
   message: string;
   value?: any;
 }
 
-/**
- * Validation result
- */
 export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
 }
 
-/**
- * ISO 4217 currency codes (currently only INR is supported)
- */
 const VALID_CURRENCY_CODES = ['INR'];
 
-/**
- * Valid ONDC domain values
- */
 const VALID_DOMAINS = [
-  'nic2004:52110', // Retail
-  'nic2004:52220', // Food & Beverage
-  'ONDC:RET10', // Grocery
-  'ONDC:RET11', // F&B
-  'ONDC:RET12', // Fashion
-  'ONDC:RET13', // BPC (Beauty & Personal Care)
-  'ONDC:RET14', // Electronics
-  'ONDC:RET15', // Appliances
-  'ONDC:RET16', // Home & Kitchen
+  'nic2004:52110', 
+  'nic2004:52220', 
+  'ONDC:RET10', 
+  'ONDC:RET11', 
+  'ONDC:RET12', 
+  'ONDC:RET13', 
+  'ONDC:RET14', 
+  'ONDC:RET15', 
+  'ONDC:RET16', 
 ];
 
-/**
- * Valid country codes
- */
 const VALID_COUNTRY_CODES = ['IND'];
 
-/**
- * Valid Beckn Protocol core versions
- */
 const VALID_CORE_VERSIONS = ['1.2.0'];
 
-/**
- * Valid actions for on_search
- */
 const VALID_ACTIONS = ['on_search'];
 
-/**
- * Validate a Beckn catalog item
- */
 export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
   const errors: ValidationError[] = [];
 
-  // Validate mandatory fields
   if (!item.id) {
     errors.push({
       field: 'id',
@@ -83,7 +42,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     });
   }
 
-  // Validate descriptor
   if (!item.descriptor) {
     errors.push({
       field: 'descriptor',
@@ -119,14 +77,13 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     }
   }
 
-  // Validate price
   if (!item.price) {
     errors.push({
       field: 'price',
       message: 'Price is required',
     });
   } else {
-    // Validate currency code (ISO 4217)
+
     if (!item.price.currency) {
       errors.push({
         field: 'price.currency',
@@ -140,14 +97,13 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
       });
     }
 
-    // Validate price value
     if (!item.price.value) {
       errors.push({
         field: 'price.value',
         message: 'Price value is required',
       });
     } else {
-      // Validate decimal string format
+
       if (!/^\d+\.\d{2}$/.test(item.price.value)) {
         errors.push({
           field: 'price.value',
@@ -158,7 +114,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     }
   }
 
-  // Validate quantity
   if (!item.quantity) {
     errors.push({
       field: 'quantity',
@@ -192,7 +147,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     }
   }
 
-  // Validate category_id
   if (!item.category_id) {
     errors.push({
       field: 'category_id',
@@ -200,7 +154,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     });
   }
 
-  // Validate fulfillment_id
   if (!item.fulfillment_id) {
     errors.push({
       field: 'fulfillment_id',
@@ -208,7 +161,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     });
   }
 
-  // Validate location_id
   if (!item.location_id) {
     errors.push({
       field: 'location_id',
@@ -216,7 +168,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     });
   }
 
-  // Validate time
   if (!item.time) {
     errors.push({
       field: 'time',
@@ -242,7 +193,7 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
         message: 'Time timestamp is required',
       });
     } else {
-      // Validate ISO 8601 format
+
       try {
         const date = new Date(item.time.timestamp);
         if (isNaN(date.getTime())) {
@@ -262,7 +213,6 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
     }
   }
 
-  // Validate tags array
   if (!Array.isArray(item.tags)) {
     errors.push({
       field: 'tags',
@@ -276,13 +226,9 @@ export function validateCatalogItem(item: BecknCatalogItem): ValidationResult {
   };
 }
 
-/**
- * Validate ONDC context fields
- */
 export function validateContext(context: ONDCCatalogPayload['context']): ValidationResult {
   const errors: ValidationError[] = [];
 
-  // Validate domain
   if (!context.domain) {
     errors.push({
       field: 'context.domain',
@@ -296,7 +242,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate country
   if (!context.country) {
     errors.push({
       field: 'context.country',
@@ -310,7 +255,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate city
   if (!context.city) {
     errors.push({
       field: 'context.city',
@@ -318,7 +262,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate action
   if (!context.action) {
     errors.push({
       field: 'context.action',
@@ -332,7 +275,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate core_version
   if (!context.core_version) {
     errors.push({
       field: 'context.core_version',
@@ -346,7 +288,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate bap_id
   if (!context.bap_id) {
     errors.push({
       field: 'context.bap_id',
@@ -354,7 +295,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate bap_uri
   if (!context.bap_uri) {
     errors.push({
       field: 'context.bap_uri',
@@ -362,7 +302,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate bpp_id
   if (!context.bpp_id) {
     errors.push({
       field: 'context.bpp_id',
@@ -370,7 +309,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate bpp_uri
   if (!context.bpp_uri) {
     errors.push({
       field: 'context.bpp_uri',
@@ -378,7 +316,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate transaction_id (UUID format)
   if (!context.transaction_id) {
     errors.push({
       field: 'context.transaction_id',
@@ -392,7 +329,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate message_id (UUID format)
   if (!context.message_id) {
     errors.push({
       field: 'context.message_id',
@@ -406,7 +342,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
     });
   }
 
-  // Validate timestamp (ISO 8601 format)
   if (!context.timestamp) {
     errors.push({
       field: 'context.timestamp',
@@ -437,9 +372,6 @@ export function validateContext(context: ONDCCatalogPayload['context']): Validat
   };
 }
 
-/**
- * Validate GPS coordinate format (lat,long)
- */
 export function validateGPSCoordinates(gps: string): ValidationResult {
   const errors: ValidationError[] = [];
 
@@ -451,7 +383,6 @@ export function validateGPSCoordinates(gps: string): ValidationResult {
     return { valid: false, errors };
   }
 
-  // GPS format: "lat,long"
   const gpsPattern = /^-?\d+\.\d+,-?\d+\.\d+$/;
   if (!gpsPattern.test(gps)) {
     errors.push({
@@ -462,7 +393,6 @@ export function validateGPSCoordinates(gps: string): ValidationResult {
     return { valid: false, errors };
   }
 
-  // Parse and validate latitude and longitude ranges
   const [latStr, longStr] = gps.split(',');
   const lat = parseFloat(latStr);
   const long = parseFloat(longStr);
@@ -489,19 +419,14 @@ export function validateGPSCoordinates(gps: string): ValidationResult {
   };
 }
 
-/**
- * Validate complete ONDC on_search payload
- */
 export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): ValidationResult {
   const errors: ValidationError[] = [];
 
-  // Validate context
   const contextValidation = validateContext(payload.context);
   if (!contextValidation.valid) {
     errors.push(...contextValidation.errors);
   }
 
-  // Validate message structure
   if (!payload.message) {
     errors.push({
       field: 'message',
@@ -518,7 +443,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
     return { valid: false, errors };
   }
 
-  // Validate bpp/descriptor
   if (!payload.message.catalog['bpp/descriptor']) {
     errors.push({
       field: 'message.catalog.bpp/descriptor',
@@ -526,7 +450,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
     });
   }
 
-  // Validate bpp/providers
   if (!payload.message.catalog['bpp/providers']) {
     errors.push({
       field: 'message.catalog.bpp/providers',
@@ -538,7 +461,7 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
       message: 'BPP providers must be an array',
     });
   } else {
-    // Validate each provider
+
     payload.message.catalog['bpp/providers'].forEach((provider, providerIndex) => {
       if (!provider.id) {
         errors.push({
@@ -554,7 +477,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
         });
       }
 
-      // Validate locations
       if (!provider.locations || !Array.isArray(provider.locations)) {
         errors.push({
           field: `message.catalog.bpp/providers[${providerIndex}].locations`,
@@ -569,7 +491,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
             });
           }
 
-          // Validate GPS coordinates
           if (location.gps) {
             const gpsValidation = validateGPSCoordinates(location.gps);
             if (!gpsValidation.valid) {
@@ -583,7 +504,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
             }
           }
 
-          // Validate address
           if (!location.address) {
             errors.push({
               field: `message.catalog.bpp/providers[${providerIndex}].locations[${locationIndex}].address`,
@@ -593,7 +513,6 @@ export function validateONDCCatalogPayload(payload: ONDCCatalogPayload): Validat
         });
       }
 
-      // Validate items
       if (!provider.items || !Array.isArray(provider.items)) {
         errors.push({
           field: `message.catalog.bpp/providers[${providerIndex}].items`,

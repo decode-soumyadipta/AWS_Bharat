@@ -1,79 +1,47 @@
-/**
- * Order Management Data Models
- * 
- * These interfaces define the structure of orders,
- * fulfillment details, and payment information.
- * 
- * Validates: Requirements 1.7, 2.9, 5.6
- */
 
-/**
- * Order item details
- */
 export interface OrderItem {
-  itemId: string; // Reference to catalog item
+  itemId: string; 
   quantity: number;
-  price: number; // Price per unit in INR
+  price: number; 
 }
 
-/**
- * Delivery or pickup address
- */
-export interface FulfillmentAddress {
-  name: string; // Recipient name
+interface FulfillmentAddress {
+  name: string; 
   building: string;
   locality: string;
   city: string;
   state: string;
   country: string;
-  area_code: string; // Pincode
+  area_code: string; 
 }
 
-/**
- * Contact information for fulfillment
- */
-export interface FulfillmentContact {
-  phone: string; // E.164 format
+interface FulfillmentContact {
+  phone: string; 
   email?: string;
 }
 
-/**
- * Order fulfillment details
- */
 export interface OrderFulfillment {
   type: 'Delivery' | 'Pickup';
-  address?: FulfillmentAddress; // Required for Delivery
+  address?: FulfillmentAddress; 
   contact: FulfillmentContact;
 }
 
-/**
- * Payment method
- */
-export type PaymentMethod = 'UPI' | 'COD';
+type PaymentMethod = 'UPI' | 'COD';
 
-/**
- * Payment verification source
- */
-export type PaymentVerifiedBy = 'SCREENSHOT_AI' | 'SELLER_CONFIRMED' | 'MANUAL_REF' | 'SYSTEM';
+type PaymentVerifiedBy = 'SCREENSHOT_AI' | 'SELLER_CONFIRMED' | 'MANUAL_REF' | 'SYSTEM';
 
-/**
- * Payment information
- */
 export interface OrderPayment {
   type: 'ON-ORDER' | 'ON-FULFILLMENT' | 'POST-FULFILLMENT';
   status: 'PAID' | 'NOT-PAID' | 'PENDING_VERIFICATION';
-  amount: number; // Total amount in INR
-  method: PaymentMethod; // UPI or COD
-  upiTransactionRef?: string; // UPI transaction reference ID
-  upiId?: string; // Seller UPI ID used for payment
-  paidAt?: number; // Unix timestamp when payment was made
-  verifiedBy?: PaymentVerifiedBy; // How payment was verified
-  screenshotS3Key?: string; // S3 key of payment screenshot
+  amount: number; 
+  method: PaymentMethod; 
+  upiTransactionRef?: string; 
+  upiId?: string; 
+  paidAt?: number; 
+  verifiedBy?: PaymentVerifiedBy; 
+  screenshotS3Key?: string; 
 }
 
-/**
- * Valid order status values
- */
 export type OrderStatus = 
   | 'PENDING'
   | 'ACCEPTED'
@@ -83,99 +51,66 @@ export type OrderStatus =
   | 'DELIVERED'
   | 'CANCELLED';
 
-/**
- * Order timeline entry for state tracking
- */
 export interface OrderTimelineEntry {
   status: OrderStatus;
-  timestamp: number; // Unix timestamp
+  timestamp: number; 
   actor: 'SELLER' | 'BUYER' | 'SYSTEM';
-  notes?: string; // Optional notes about the transition
+  notes?: string; 
 }
 
-/**
- * Complete order stored in DynamoDB
- * 
- * DynamoDB Keys:
- * - PK: ORDER#<order_id>
- * - SK: METADATA
- * - GSI2PK: SELLER#<seller_id>
- * - GSI2SK: STATUS#<status>#<timestamp>
- */
 export interface Order {
-  // DynamoDB Keys
-  PK: string; // ORDER#<order_id>
-  SK: string; // METADATA
-  GSI2PK: string; // SELLER#<seller_id>
-  GSI2SK: string; // STATUS#<status>#<timestamp>
+
+  PK: string; 
+  SK: string; 
+  GSI2PK: string; 
+  GSI2SK: string; 
   entityType: 'ORDER';
-  
-  // Order Information
-  orderId: string; // UUID
-  sellerId: string; // UUID
-  buyerAppId: string; // BAP subscriber ID
-  transactionId: string; // ONDC transaction ID
-  
-  // Order Details
+
+  orderId: string; 
+  sellerId: string; 
+  buyerAppId: string; 
+  transactionId: string; 
+
   items: OrderItem[];
   fulfillment: OrderFulfillment;
   payment: OrderPayment;
   status: OrderStatus;
   timeline: OrderTimelineEntry[];
-  
-  // Timestamps
-  createdAt: number; // Unix timestamp
-  updatedAt: number; // Unix timestamp
+
+  createdAt: number; 
+  updatedAt: number; 
 }
 
-/**
- * Order timeline entry stored separately in DynamoDB
- * for detailed audit trail
- * 
- * DynamoDB Keys:
- * - PK: ORDER#<order_id>
- * - SK: TIMELINE#<timestamp>
- */
-export interface OrderTimeline {
-  // DynamoDB Keys
-  PK: string; // ORDER#<order_id>
-  SK: string; // TIMELINE#<timestamp>
+interface OrderTimeline {
+
+  PK: string; 
+  SK: string; 
   entityType: 'ORDER_TIMELINE';
-  
-  // Timeline Entry
-  orderId: string; // UUID
+
+  orderId: string; 
   status: OrderStatus;
-  timestamp: number; // Unix timestamp
+  timestamp: number; 
   actor: 'SELLER' | 'BUYER' | 'SYSTEM';
   notes?: string;
 }
 
-/**
- * Order state transition validation
- */
-export interface OrderStateTransition {
+interface OrderStateTransition {
   from: OrderStatus;
   to: OrderStatus;
   valid: boolean;
 }
 
-/**
- * Valid order state machine transitions
- */
 export const VALID_ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   PENDING: ['ACCEPTED', 'REJECTED'],
   ACCEPTED: ['PACKED', 'CANCELLED'],
-  REJECTED: [], // Terminal state
+  REJECTED: [], 
   PACKED: ['SHIPPED', 'CANCELLED'],
   SHIPPED: ['DELIVERED'],
-  DELIVERED: [], // Terminal state
-  CANCELLED: [], // Terminal state
+  DELIVERED: [], 
+  CANCELLED: [], 
 };
 
-/**
- * Interactive WhatsApp message for order notification
- */
-export interface OrderNotificationMessage {
+interface OrderNotificationMessage {
   orderId: string;
   buyerName: string;
   items: Array<{

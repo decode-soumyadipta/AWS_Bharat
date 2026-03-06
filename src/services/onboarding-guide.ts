@@ -1,22 +1,10 @@
-/**
- * Onboarding Guide Utility
- * 
- * Sends a comprehensive text + voice feature tour to new sellers
- * after they complete PAN verification or choose guest mode.
- * This is a one-time message showing all Vyapar Vaani features.
- */
 
-/**
- * Send onboarding guide message after PAN verification or guest mode.
- * Sends a clean point-wise TEXT + a longer conversational VOICE message.
- */
 export async function sendOnboardingGuide(phone: string, language: string): Promise<void> {
   const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
   const { sendTextMessage, sendVoiceOnly, sendTypingIndicator } = await import('../lambdas/whatsapp-message-sender');
 
   await sendTypingIndicator(phone);
 
-  // --- CLEAN POINT-WISE TEXT MESSAGE ---
   const textGuide: Record<string, string> = {
     'hi': [
       'व्यापार वाणी — आपका AI बिज़नेस असिस्टेंट',
@@ -118,14 +106,11 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
     ].join('\n'),
   };
 
-  // Send text guide
   await sendTextMessage(phone, textGuide[lang] || textGuide['hi']);
 
-  // Wait a moment before voice
   await new Promise(resolve => setTimeout(resolve, 1500));
   await sendTypingIndicator(phone);
 
-  // --- VOICE MESSAGE (conversational, a bit longer) ---
   const voiceGuide: Record<string, string> = {
     'hi': 'Chaliye, ab main aapko bata deta hoon ki Vyapar Vaani se aap kya kya kar sakte hain. '
       + 'Sabse pehle, product add karna. Bas voice mein boliye ki kya bechna hai, kitne ka hai, kitna hai. '

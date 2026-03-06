@@ -2,31 +2,11 @@ import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwat
 
 const cloudWatchClient = new CloudWatchClient({ region: process.env.AWS_REGION || 'ap-south-1' });
 
-export const METRICS_NAMESPACE = 'VyaparVaani';
+const METRICS_NAMESPACE = 'VyaparVaani';
 
 export enum MetricName {
   TIME_TO_NETWORK = 'TimeToNetwork',
-  CATALOG_REJECTION_RATE = 'CatalogRejectionRate',
-  IMAGE_ENHANCEMENT_SUCCESS_RATE = 'ImageEnhancementSuccessRate',
-  ORDER_ACCEPTANCE_RATE = 'OrderAcceptanceRate',
-  VOICE_INTERACTIONS_PER_CATALOG = 'VoiceInteractionsPerCatalog',
-  KYC_EXTRACTION_FAILURE = 'KYC/ExtractionFailure',
   VOICE_TRANSCRIPTION_FAILURE = 'Voice/TranscriptionFailure',
-  IMAGE_ENHANCEMENT_FAILURE = 'Image/EnhancementFailure',
-  BECKN_VALIDATION_FAILURE = 'Beckn/ValidationFailure',
-  ONDC_REGISTRY_UNAVAILABLE = 'ONDC/RegistryUnavailable',
-  WHATSAPP_DELIVERY_FAILURE = 'WhatsApp/DeliveryFailure',
-  // Voice-first workflow metrics
-  STATE_TRANSITION = 'StateTransition',
-  STATE_TRANSITION_DURATION = 'StateTransitionDuration',
-  ERROR_RATE = 'ErrorRate',
-  MEDIA_DOWNLOAD_DURATION = 'MediaDownloadDuration',
-  TRANSCRIPTION_DURATION = 'TranscriptionDuration',
-  KYC_PROCESSING_DURATION = 'KYCProcessingDuration',
-  IMAGE_ENHANCEMENT_DURATION = 'ImageEnhancementDuration',
-  CATALOG_CREATION_DURATION = 'CatalogCreationDuration',
-  RETRY_COUNT = 'RetryCount',
-  ACTIVE_USERS_BY_STATE = 'ActiveUsersByState',
 }
 
 export enum MetricUnit {
@@ -37,9 +17,6 @@ export enum MetricUnit {
   NONE = 'None',
 }
 
-/**
- * Publish a metric to CloudWatch
- */
 export async function publishMetric(
   metricName: MetricName,
   value: number,
@@ -65,13 +42,10 @@ export async function publishMetric(
     );
   } catch (error) {
     console.error('Failed to publish metric:', error);
-    // Don't throw - metrics failures shouldn't break the application
+
   }
 }
 
-/**
- * Publish multiple metrics in a single call
- */
 export async function publishMetrics(
   metrics: Array<{
     name: MetricName;
@@ -102,10 +76,7 @@ export async function publishMetrics(
   }
 }
 
-/**
- * Helper to measure execution time and publish as metric
- */
-export async function measureExecutionTime<T>(
+async function measureExecutionTime<T>(
   metricName: MetricName,
   operation: () => Promise<T>,
   dimensions?: Record<string, string>
