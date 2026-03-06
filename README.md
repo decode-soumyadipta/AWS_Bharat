@@ -58,41 +58,33 @@ In a typical session (listing one product), AI is invoked **7 times**: Transcrib
 <img src="generated-diagrams/vyapar-vaani-architecture.png" alt="Vyapar Vaani AWS Architecture" width="100%"/>
 </div>
 
-The architecture follows a **4-layer event-driven design** flowing left to right:
+**4-Layer Event-Driven Architecture** (Left → Right):
 
-**Layer 1: External Layer** (Blue)
-- **Users**: Rural sellers via WhatsApp, marketplace buyers via web browser
-- **WhatsApp Cloud API v22.0**: Business messaging platform
-- **API Gateway**: HTTP API for webhook endpoint, REST API for marketplace
+**Layer 1: External** (Blue)
+- Users: Sellers (WhatsApp) + Buyers (Web)
+- WhatsApp Cloud API v22.0
+- API Gateway: HTTP (webhook) + REST (marketplace)
 
-**Layer 2: Event & Compute Layer** (Orange)
-- **EventBridge**: Central event bus with 17 rules, 30-day archive, and DLQ
-- **Lambda Functions**: Webhook handler, AI agent (NLP engine), marketplace API
-- **Step Functions**: KYC pipeline (extract → validate → register) with 2min timeout
+**Layer 2: Event & Compute** (Orange)
+- EventBridge: 17 rules, 30-day archive, DLQ
+- Lambda: Webhook, AI Agent, Marketplace API
+- Step Functions: KYC pipeline (2min timeout)
 
-**Layer 3: AI/ML Services** (Purple)
-- **Bedrock Nova Pro v1:0**: Intent classification, entity extraction, UPI verification
-- **Bedrock Nova Lite v1:0**: Product descriptions, pricing recommendations, alerts
-- **Bedrock Titan Image v2**: Background removal and image enhancement
-- **Transcribe**: Multi-language voice-to-text (hi-IN, mr-IN, en-IN) with auto-detection
-- **Textract**: KYC document OCR for PAN/Aadhaar extraction
-- **Polly Neural**: Text-to-speech with Kajal (Hindi), Aditi (Marathi), Joanna (English)
+**Layer 3: AI/ML** (Purple)
+- Bedrock: Nova Pro (intent/entity), Nova Lite (descriptions/pricing), Titan Image (enhancement)
+- Transcribe: Voice→Text (hi-IN/mr-IN/en-IN)
+- Textract: KYC OCR (PAN/Aadhaar)
+- Polly: TTS (Kajal/Aditi/Joanna)
 
 **Layer 4: Data & Security** (Red)
-- **DynamoDB**: 2 tables (vyapar-vaani-data with 5 GSIs, marketplace-products with 2 GSIs)
-- **S3**: 3 buckets (products with lifecycle policies, encrypted KYC docs, frontend SPA)
-- **CloudFront**: CDN distribution for marketplace with S3 origin
-- **KMS**: Customer-managed encryption key with auto-rotation
-- **IAM**: 23 Lambda execution roles with least privilege policies
+- DynamoDB: 2 tables, 7 GSIs total
+- S3: 3 buckets (products, KYC, frontend)
+- CloudFront: CDN for marketplace
+- KMS: Encryption key (auto-rotation)
+- IAM: 23 roles (least privilege)
 
-**Color-Coded Data Flows**:
-- 🔵 **Blue**: Seller journey (Voice/Text → Webhook → EventBridge → AI Agent)
-- 🟣 **Purple**: AI processing (Classify → Transcribe → Generate → Enhance → Speak)
-- 🔴 **Red**: Data persistence (Save → Upload → Store → Register)
-- 🟠 **Orange**: KYC verification (KYC Event → Extract → Store)
-- 🟢 **Green**: Marketplace operations (Browse → API Call → Query)
-- 🔵 **Teal**: CDN delivery (Request → Serve)
-- ⚫ **Gray**: Security (Encrypt → Authorize)
+**Data Flows**:
+- Blue: Seller journey | Purple: AI processing | Red: Storage | Orange: KYC | Green: Marketplace | Teal: CDN | Gray: Security
 
 ---
 
