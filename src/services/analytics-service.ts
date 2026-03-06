@@ -119,6 +119,7 @@ export async function getSalesSummary(
   totalRevenue: number;
   averageOrderValue: number;
   topProduct: string | null;
+  topProducts: Array<{ name: string; quantity: number; revenue: number }>;
   timeRange: string;
 }> {
   const allOrders = await getOrdersBySeller(sellerId, sellerPhone);
@@ -131,9 +132,14 @@ export async function getSalesSummary(
   }, 0);
   const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-  // Get top product
-  const topProducts = await getTopSellingProducts(sellerId, 1, timeRangeMs, sellerPhone);
-  const topProduct = topProducts.length > 0 ? topProducts[0].productName : null;
+  // Get ALL top products (up to 50) so summary includes every product
+  const topProductsList = await getTopSellingProducts(sellerId, 50, timeRangeMs, sellerPhone);
+  const topProduct = topProductsList.length > 0 ? topProductsList[0].productName : null;
+  const topProducts = topProductsList.map(p => ({
+    name: p.productName,
+    quantity: p.totalQuantity,
+    revenue: p.totalRevenue,
+  }));
 
   const timeRangeDays = Math.floor(timeRangeMs / (24 * 60 * 60 * 1000));
 
@@ -142,6 +148,7 @@ export async function getSalesSummary(
     totalRevenue,
     averageOrderValue,
     topProduct,
+    topProducts,
     timeRange: `${timeRangeDays} days`,
   };
 }

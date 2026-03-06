@@ -169,55 +169,16 @@ export function setLastMessageId(phone: string, messageId: string): void {
 }
 
 /**
- * Send standalone typing indicator to a phone number (v22.0+).
- * Does NOT require a message ID or read-receipt transition.
- * Shows "typing..." bubble for ~25 seconds or until a message is sent.
+ * Re-send typing indicator using the same message_id.
+ * Per WhatsApp Cloud API docs, typing_indicator can be sent alongside
+ * status: 'read' with the same message_id. The read is idempotent,
+ * but the typing indicator fires every time.
  */
-async function sendStandaloneTyping(
-  to: string
+async function resendTypingWithMessageId(
+  messageId: string
 ): Promise<{ success: boolean; data?: any; error?: string }> {
-  const config = getWhatsAppConfig();
-
-  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
-    console.warn('WhatsApp API configuration missing, skipping standalone typing');
-    return { success: false, error: 'Configuration missing' };
-  }
-
-  try {
-    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
-    const payload = {
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'typing_indicator',
-      typing_indicator: { type: 'text' },
-    };
-
-    console.log('sendStandaloneTyping payload:', JSON.stringify(payload));
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.accessToken}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const responseBody = await response.text();
-    console.log(`sendStandaloneTyping response: ${response.status} — ${responseBody}`);
-
-    if (!response.ok) {
-      return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
-    }
-
-    let parsed;
-    try { parsed = JSON.parse(responseBody); } catch { parsed = responseBody; }
-    return { success: true, data: parsed };
-  } catch (error) {
-    console.warn('Standalone typing indicator error:', error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-  }
+  // Simply re-use markMessageAsRead with typing — the API accepts it
+  return markMessageAsRead(messageId, true);
 }
 
 export async function sendTypingIndicator(
@@ -226,10 +187,12 @@ export async function sendTypingIndicator(
 ): Promise<{ success: boolean; error?: string }> {
   const msgId = messageId || lastMessageIdByPhone[to];
 
-  // If the message was already marked as read, use standalone typing (works every time)
+  // If the message was already marked as read, re-send typing with the same message_id
+  // The WhatsApp API accepts repeated read+typing_indicator calls — read is idempotent,
+  // but the typing indicator fires every time.
   if (msgId && alreadyReadMessageIds.has(msgId)) {
-    console.log('📝 Message already read, using standalone typing for', to);
-    return sendStandaloneTyping(to);
+    console.log('📝 Message already read, re-sending typing with message_id for', to);
+    return resendTypingWithMessageId(msgId);
   }
 
   // First time: use markMessageAsRead with typing (triggers read + typing)
@@ -246,10 +209,9 @@ export async function sendTypingIndicator(
     }
   }
 
-  // No messageId at all — try standalone typing as last resort
+  // No messageId at all — cannot show typing without a message_id
   if (to) {
-    console.log('⚠️ No messageId for typing, trying standalone typing for', to);
-    return sendStandaloneTyping(to);
+    console.log('⚠️ No messageId for typing indicator — typing requires a message_id per WhatsApp API');
   }
 
   console.warn('⚠️ No messageId or phone for typing indicator — skipping');

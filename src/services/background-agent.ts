@@ -264,7 +264,7 @@ Generate the complete message:`;
 
   try {
     const response = await bedrockClient.send(new ConverseCommand({
-      modelId: 'amazon.nova-lite-v1:0',
+      modelId: 'us.amazon.nova-lite-v1:0',
       messages: [{ role: 'user', content: [{ text: prompt }] }],
       inferenceConfig: { maxTokens: 800, temperature: 0.7 },
     }));
@@ -563,7 +563,7 @@ Generate the complete message:`;
 
   try {
     const response = await bedrockClient.send(new ConverseCommand({
-      modelId: 'amazon.nova-lite-v1:0',
+      modelId: 'us.amazon.nova-lite-v1:0',
       messages: [{ role: 'user', content: [{ text: prompt }] }],
       inferenceConfig: { maxTokens: 800, temperature: 0.7 },
     }));

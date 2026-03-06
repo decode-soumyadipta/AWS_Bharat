@@ -18,7 +18,8 @@ import type { ProductSalesStats, DateRangeAnalytics } from './analytics-service'
 import { getSellerByPhone } from './dynamodb-repository';
 
 // pdfmake uses CommonJS — import via require
-const PdfPrinter = require('pdfmake');
+// In v0.3.5+, PdfPrinter class is at pdfmake/js/Printer (default export)
+const PdfPrinter = require('pdfmake/js/Printer').default;
 
 const NOVA_LITE_MODEL_ID = 'amazon.nova-lite-v1:0';
 
@@ -442,29 +443,27 @@ async function buildPdf(data: ReportData, language: 'hi' | 'mr' | 'en'): Promise
   };
 
   // Generate PDF buffer
-  return new Promise<Buffer>((resolve, reject) => {
-    try {
-      // pdfmake/build/vfs_fonts in npm exports font buffers directly (not under pdfMake.vfs)
-      const vfsFonts = require('pdfmake/build/vfs_fonts');
-      
-      const printer = new PdfPrinter({
-        Roboto: {
-          normal: Buffer.from(vfsFonts['Roboto-Regular.ttf'], 'base64'),
-          bold: Buffer.from(vfsFonts['Roboto-Medium.ttf'], 'base64'),
-          italics: Buffer.from(vfsFonts['Roboto-Italic.ttf'], 'base64'),
-          bolditalics: Buffer.from(vfsFonts['Roboto-MediumItalic.ttf'], 'base64'),
-        },
-      });
+  // pdfmake/build/vfs_fonts in npm exports font buffers directly (not under pdfMake.vfs)
+  const vfsFonts = require('pdfmake/build/vfs_fonts');
+  
+  const printer = new PdfPrinter({
+    Roboto: {
+      normal: Buffer.from(vfsFonts['Roboto-Regular.ttf'], 'base64'),
+      bold: Buffer.from(vfsFonts['Roboto-Medium.ttf'], 'base64'),
+      italics: Buffer.from(vfsFonts['Roboto-Italic.ttf'], 'base64'),
+      bolditalics: Buffer.from(vfsFonts['Roboto-MediumItalic.ttf'], 'base64'),
+    },
+  });
 
-      const pdfDoc = printer.createPdfKitDocument(docDefinition);
-      const chunks: Buffer[] = [];
-      pdfDoc.on('data', (chunk: Buffer) => chunks.push(chunk));
-      pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
-      pdfDoc.on('error', reject);
-      pdfDoc.end();
-    } catch (err) {
-      reject(err);
-    }
+  // In pdfmake 0.3.5+, createPdfKitDocument returns a Promise
+  const pdfDoc = await printer.createPdfKitDocument(docDefinition);
+
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    pdfDoc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
+    pdfDoc.on('error', reject);
+    pdfDoc.end();
   });
 }
 

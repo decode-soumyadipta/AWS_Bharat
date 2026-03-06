@@ -507,7 +507,7 @@ describe('Intent Classification Lambda', () => {
       expect(bedrockClient.send).toHaveBeenCalledTimes(1);
       const callArgs = (bedrockClient.send as jest.Mock).mock.calls[0][0];
       
-      expect(callArgs.input.modelId).toBe('amazon.nova-lite-v1:0');
+      expect(callArgs.input.modelId).toBe('amazon.nova-pro-v1:0');
       expect(callArgs.input.contentType).toBe('application/json');
       
       const requestBody = JSON.parse(callArgs.input.body);

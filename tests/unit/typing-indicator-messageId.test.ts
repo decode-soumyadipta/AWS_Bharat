@@ -137,9 +137,8 @@ describe('sendTypingIndicator runtime behaviour', () => {
     process.env.WHATSAPP_ACCESS_TOKEN = 'test-access-token';
   });
 
-  it('falls back to standalone typing when no messageId and no cache', async () => {
-    // After dedup fix: sendTypingIndicator now falls back to sendStandaloneTyping(phone)
-    // which uses the phone number directly — no messageId needed
+  it('returns error when no messageId and no cache (typing requires message_id)', async () => {
+    // WhatsApp Cloud API requires message_id for typing indicators — no standalone endpoint
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       status: 200,
@@ -147,8 +146,8 @@ describe('sendTypingIndicator runtime behaviour', () => {
     });
 
     const result = await sendTypingIndicator('+910000000000');
-    // Now succeeds via standalone typing (or at least attempts fetch)
-    expect(global.fetch).toHaveBeenCalled();
+    // Cannot show typing without a message_id — returns error
+    expect(result.success).toBe(false);
   });
 
   it('sends typing indicator when messageId is provided directly', async () => {
@@ -266,9 +265,8 @@ describe('markMessageAsRead with typing=true', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Cross-Lambda cache isolation scenario', () => {
-  it('uses standalone typing on cold start when cache is empty', async () => {
-    // After dedup fix: sendTypingIndicator falls back to standalone typing
-    // (uses phone number directly) when no messageId is cached
+  it('returns error on cold start when cache is empty (typing requires message_id)', async () => {
+    // WhatsApp Cloud API requires message_id — cannot show typing without one
     const coldStartPhone = '+910000099999';
 
     (global.fetch as jest.Mock).mockResolvedValue({
@@ -278,8 +276,8 @@ describe('Cross-Lambda cache isolation scenario', () => {
     });
 
     const result = await sendTypingIndicator(coldStartPhone);
-    // Should attempt standalone typing via fetch
-    expect(global.fetch).toHaveBeenCalled();
+    // No message_id available — should return error
+    expect(result.success).toBe(false);
   });
 
   it('sendTypingIndicator succeeds with explicit messageId even on cold start', async () => {

@@ -286,6 +286,20 @@ export async function processWithEnhancedAgent(
         reasoning: 'On-demand daily update generated via background agent pipeline',
       };
     }
+
+    // Fallback: if updateMessage is null (Bedrock call failed), tell user
+    const weatherErrorMsg = currentLanguage.startsWith('hi')
+      ? 'माफ़ करें, अभी मौसम और बाज़ार की जानकारी लाने में दिक्कत हुई। कृपया थोड़ी देर बाद पूछें।'
+      : currentLanguage.startsWith('mr')
+      ? 'माफ करा, सध्या हवामान आणि बाजारभाव मिळवण्यात अडचण आली. कृपया थोड्या वेळाने विचारा.'
+      : 'Sorry, had trouble fetching weather and market info. Please try again shortly.';
+    return {
+      message: weatherErrorMsg,
+      actions: [],
+      responseMode: 'voice',
+      confidence: 0.7,
+      reasoning: 'On-demand daily update failed — generateOnDemandUpdate returned null',
+    };
   }
   // ── END ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────
 
@@ -830,12 +844,25 @@ async function getAnalyticsInfo(
 
     if (query.type === 'sales_summary') {
       const summary = await getSalesSummary(sellerId, undefined, phone);
+      // Build per-product breakdown
+      const productBreakdown = summary.topProducts.length > 0
+        ? summary.topProducts.map(p => `${p.name}: ${p.quantity} units, ₹${p.revenue.toFixed(0)}`).join('; ')
+        : null;
       if (lang === 'hi') {
-        return `बिक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई। टॉप: ${summary.topProduct || 'कोई नहीं'}`;
+        const productsInfo = productBreakdown
+          ? `\nसभी प्रोडक्ट: ${productBreakdown}`
+          : '';
+        return `बिक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई।${productsInfo}`;
       } else if (lang === 'mr') {
-        return `विक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई. टॉप: ${summary.topProduct || 'काहीही नाही'}`;
+        const productsInfo = productBreakdown
+          ? `\nसर्व उत्पादने: ${productBreakdown}`
+          : '';
+        return `विक्री सारांश (${summary.timeRange}): ${summary.totalOrders} ऑर्डर, ₹${summary.totalRevenue.toFixed(0)} कमाई.${productsInfo}`;
       }
-      return `Sales summary (${summary.timeRange}): ${summary.totalOrders} orders, ₹${summary.totalRevenue.toFixed(0)} revenue. Top: ${summary.topProduct || 'None'}`;
+      const productsInfo = productBreakdown
+        ? `\nAll products: ${productBreakdown}`
+        : '';
+      return `Sales summary (${summary.timeRange}): ${summary.totalOrders} orders, ₹${summary.totalRevenue.toFixed(0)} revenue.${productsInfo}`;
     }
 
     // Date-range queries: yesterday, today, last_week, last_month  

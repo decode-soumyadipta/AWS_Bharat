@@ -36,7 +36,7 @@ describe('Report generator — source contracts', () => {
   });
 
   it('generates PDF using pdfmake', () => {
-    expect(reportGen).toContain("require('pdfmake')");
+    expect(reportGen).toContain("require('pdfmake/js/Printer')");
     expect(reportGen).toContain("require('pdfmake/build/vfs_fonts')");
   });
 
