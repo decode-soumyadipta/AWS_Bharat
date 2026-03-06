@@ -3,7 +3,7 @@
 
 # AWS environment
 aws_env
-
+clear-database1.js
 # Node.js
 node_modules/
 npm-debug.log*

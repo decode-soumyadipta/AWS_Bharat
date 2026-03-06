@@ -54,43 +54,45 @@ In a typical session (listing one product), AI is invoked **7 times**: Transcrib
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    Seller([📱 Seller on WhatsApp\nVoice / Image / Text / Buttons])
-    Buyer([🛒 Buyer\nMarketplace Browser])
+<div align="center">
+<img src="generated-diagrams/vyapar-vaani-architecture.png" alt="Vyapar Vaani AWS Architecture" width="100%"/>
+</div>
 
-    Seller -->|WhatsApp Cloud API v22.0| APIGW_WH[API Gateway\nPOST /whatsapp/webhook]
-    Buyer -->|HTTPS| APIGW_MKT[API Gateway REST\nGET /products · POST /orders]
+The architecture follows a **4-layer event-driven design** flowing left to right:
 
-    APIGW_WH --> EB[EventBridge Bus\n17 rules · 1 scheduled · 30-day archive]
-    APIGW_MKT --> MktLambda[Marketplace Lambdas × 4]
+**Layer 1: External Layer** (Blue)
+- **Users**: Rural sellers via WhatsApp, marketplace buyers via web browser
+- **WhatsApp Cloud API v22.0**: Business messaging platform
+- **API Gateway**: HTTP API for webhook endpoint, REST API for marketplace
 
-    MktLambda --> CF[CloudFront CDN]
-    CF --> S3SPA[S3 — Static SPA]
+**Layer 2: Event & Compute Layer** (Orange)
+- **EventBridge**: Central event bus with 17 rules, 30-day archive, and DLQ
+- **Lambda Functions**: Webhook handler, AI agent (NLP engine), marketplace API
+- **Step Functions**: KYC pipeline (extract → validate → register) with 2min timeout
 
-    EB -->|whatsapp.*| AgentHandler[agent-handler Lambda]
-    EB -->|catalog.created| CatalogSync[catalog-sync Lambda]
-    EB -->|schedule 7 PM IST| BgAgent[background-agent Lambda]
-    EB -->|failures| SQS[SQS Dead-Letter Queue]
+**Layer 3: AI/ML Services** (Purple)
+- **Bedrock Nova Pro v1:0**: Intent classification, entity extraction, UPI verification
+- **Bedrock Nova Lite v1:0**: Product descriptions, pricing recommendations, alerts
+- **Bedrock Titan Image v2**: Background removal and image enhancement
+- **Transcribe**: Multi-language voice-to-text (hi-IN, mr-IN, en-IN) with auto-detection
+- **Textract**: KYC document OCR for PAN/Aadhaar extraction
+- **Polly Neural**: Text-to-speech with Kajal (Hindi), Aditi (Marathi), Joanna (English)
 
-    AgentHandler --> Transcribe[AWS Transcribe\nhi-IN · mr-IN · en-IN]
-    AgentHandler --> NovaPro[Bedrock Nova Pro\nIntent · Entities · UPI verify]
-    AgentHandler --> NovaLite[Bedrock Nova Lite\nDescriptions · Price · Reports]
-    AgentHandler --> Titan[Titan Image v2\nBackground removal]
-    AgentHandler --> Polly[AWS Polly\nKajal · Aditi · Joanna]
+**Layer 4: Data & Security** (Red)
+- **DynamoDB**: 2 tables (vyapar-vaani-data with 5 GSIs, marketplace-products with 2 GSIs)
+- **S3**: 3 buckets (products with lifecycle policies, encrypted KYC docs, frontend SPA)
+- **CloudFront**: CDN distribution for marketplace with S3 origin
+- **KMS**: Customer-managed encryption key with auto-rotation
+- **IAM**: 23 Lambda execution roles with least privilege policies
 
-    AgentHandler --> DDB[(DynamoDB\n2 tables · 5 GSIs)]
-    AgentHandler --> S3[(S3\nImages · Voice · PDFs · KYC)]
-    AgentHandler --> KMS[KMS\nCustomer-managed key]
-
-    CatalogSync --> DDB
-    BgAgent --> NovaPro
-    BgAgent --> ExternalAPI[🌐 Open-Meteo\ndata.gov.in mandi prices]
-
-    KYCPhoto[📄 PAN / Aadhaar Photo] --> StepFn[Step Functions\nKYC Pipeline]
-    StepFn --> Textract[AWS Textract\nAnalyzeDocument]
-    StepFn --> DDB
-```
+**Color-Coded Data Flows**:
+- 🔵 **Blue**: Seller journey (Voice/Text → Webhook → EventBridge → AI Agent)
+- 🟣 **Purple**: AI processing (Classify → Transcribe → Generate → Enhance → Speak)
+- 🔴 **Red**: Data persistence (Save → Upload → Store → Register)
+- 🟠 **Orange**: KYC verification (KYC Event → Extract → Store)
+- 🟢 **Green**: Marketplace operations (Browse → API Call → Query)
+- 🔵 **Teal**: CDN delivery (Request → Serve)
+- ⚫ **Gray**: Security (Encrypt → Authorize)
 
 ---
 
