@@ -58,69 +58,74 @@ In a typical session (listing one product), AI is invoked **7 times**: Transcrib
 <img src="generated-diagrams/vyapar-vaani-architecture.png" alt="Vyapar Vaani AWS Architecture" width="100%"/>
 </div>
 
-**4-Layer Event-Driven Architecture** (Left → Right):
+**4-Layer Event-Driven Design** (Left → Right):
 
-**Layer 1: External** (Blue)
-- Users: Sellers (WhatsApp) + Buyers (Web)
-- WhatsApp Cloud API v22.0
-- API Gateway: HTTP (webhook) + REST (marketplace)
+- **External**: WhatsApp Cloud API · API Gateway (HTTP + REST) · Sellers + Buyers
+- **Event & Compute**: EventBridge (17 rules) · Lambda (23 functions) · Step Functions (KYC)
+- **AI/ML**: Bedrock (Nova Pro/Lite + Titan) · Transcribe · Textract · Polly
+- **Data & Security**: DynamoDB (2 tables, 7 GSIs) · S3 (3 buckets) · CloudFront · KMS · IAM (23 roles)
 
-**Layer 2: Event & Compute** (Orange)
-- EventBridge: 17 rules, 30-day archive, DLQ
-- Lambda: Webhook, AI Agent, Marketplace API
-- Step Functions: KYC pipeline (2min timeout)
-
-**Layer 3: AI/ML** (Purple)
-- Bedrock: Nova Pro (intent/entity), Nova Lite (descriptions/pricing), Titan Image (enhancement)
-- Transcribe: Voice→Text (hi-IN/mr-IN/en-IN)
-- Textract: KYC OCR (PAN/Aadhaar)
-- Polly: TTS (Kajal/Aditi/Joanna)
-
-**Layer 4: Data & Security** (Red)
-- DynamoDB: 2 tables, 7 GSIs total
-- S3: 3 buckets (products, KYC, frontend)
-- CloudFront: CDN for marketplace
-- KMS: Encryption key (auto-rotation)
-- IAM: 23 roles (least privilege)
-
-**Data Flows**:
-- Blue: Seller journey | Purple: AI processing | Red: Storage | Orange: KYC | Green: Marketplace | Teal: CDN | Gray: Security
+**Color-Coded Flows**: Blue (Seller) · Purple (AI) · Red (Storage) · Orange (KYC) · Green (Marketplace) · Teal (CDN) · Gray (Security)
 
 ---
 
-## Seller Flow — Voice to Marketplace
+## Key Workflows
 
-```mermaid
-sequenceDiagram
-    participant S as Seller (WhatsApp)
-    participant WH as Webhook Lambda
-    participant AI as AI Pipeline
-    participant DB as DynamoDB / S3
-    participant B as Buyer Marketplace
+### 1. Seller Voice to Product Listing
 
-    S->>WH: 🎤 "Mera tamatar 30 rupay kilo"
-    WH->>AI: Route via EventBridge
-    AI->>AI: Transcribe → language auto-detect (hi-IN)
-    AI->>AI: Nova Pro → intent=CREATE_CATALOG, entities={tamatar, ₹30, kg}
-    AI->>AI: Nova Lite → fetch live mandi price (₹11–₹28/kg)
-    AI->>DB: Store partial session state
-    WH-->>S: 🔊 Polly: "Photo bhejiye"
+Seller speaks in Hindi/Marathi → AI extracts product details → Photo enhancement → Live on marketplace
 
-    S->>WH: 📷 Product photo
-    AI->>AI: Titan Image v2 → background removal → white background
-    AI->>AI: Nova Lite → bilingual product description
-    AI->>DB: Save enhanced image to S3
-    WH-->>S: Confirmation card + market price + [Approve] [Edit] [View]
+<div align="center">
+<img src="generated-diagrams/seller-voice-flow.png" alt="Seller Voice Flow" width="100%"/>
+</div>
 
-    S->>WH: ✅ Taps "Approve"
-    AI->>DB: Create catalog item (DynamoDB + marketplace-products table)
-    DB-->>B: Product live on marketplace instantly
+### 2. AI Agent Processing
 
-    B->>WH: Place order (UPI / COD)
-    WH-->>S: 🔊 Polly reads order aloud in Hindi
-    S->>WH: Taps [Accept]
-    WH-->>B: Order confirmed + real-time tracking
-```
+Every message goes through intent classification → entity extraction → response generation → voice output
+
+<div align="center">
+<img src="generated-diagrams/ai-agent-processing.png" alt="AI Agent Processing" width="100%"/>
+</div>
+
+### 3. Image Enhancement Pipeline
+
+Raw product photo → Titan removes background → White background → Enhanced image stored → Served via CDN
+
+<div align="center">
+<img src="generated-diagrams/image-enhancement-flow.png" alt="Image Enhancement" width="100%"/>
+</div>
+
+### 4. KYC Verification
+
+Seller uploads PAN/Aadhaar → Textract extracts fields → Validation → Registered seller
+
+<div align="center">
+<img src="generated-diagrams/kyc-pipeline.png" alt="KYC Pipeline" width="100%"/>
+</div>
+
+### 5. Buyer Marketplace Journey
+
+Buyer browses products → Places order → Payment verification → Seller notified via WhatsApp
+
+<div align="center">
+<img src="generated-diagrams/marketplace-buyer-flow.png" alt="Marketplace Buyer Flow" width="100%"/>
+</div>
+
+### 6. Order Management
+
+Order placed → Payment verified → Saved to DynamoDB → EventBridge triggers notification → Polly reads order to seller
+
+<div align="center">
+<img src="generated-diagrams/order-management-flow.png" alt="Order Management" width="100%"/>
+</div>
+
+### 7. Daily Background Agent
+
+Every day at 7 PM IST → Fetch weather + mandi prices → AI generates Hindi summary → Voice message to all sellers
+
+<div align="center">
+<img src="generated-diagrams/background-agent-flow.png" alt="Background Agent" width="100%"/>
+</div>
 
 ---
 
@@ -155,21 +160,6 @@ sequenceDiagram
 
 ---
 
-## ONDC Integration — Full Beckn Order Lifecycle
-
-| Phase | Action | What Happens |
-|---|---|---|
-| Discovery | `search` → `on_search` | ONDC-compliant catalog with `@ondc/org` extensions |
-| Selection | `select` → `on_select` | Quote with item availability check |
-| Initialization | `init` → `on_init` | Billing, fulfillment, payment terms |
-| Confirmation | `confirm` → `on_confirm` | Order created, seller notified via WhatsApp |
-| Tracking | `status` → `on_status` | Real-time order status from DynamoDB |
-| Modification | `update` → `on_update` | Address / quantity changes |
-| Cancellation | `cancel` → `on_cancel` | Cancellation with refund trigger |
-| Tracking | `track` → `on_track` | Delivery tracking info |
-
----
-
 ## Language Support
 
 | Language | Transcribe | Polly Voice | LLM Prompts |
@@ -184,59 +174,11 @@ sequenceDiagram
 
 ---
 
-## KYC Pipeline
+## ONDC Integration
 
-```mermaid
-flowchart LR
-    A[📄 Photo of PAN / Aadhaar] --> B[Textract\nAnalyzeDocument\nFORMS + TABLES]
-    B --> C{Validate Fields}
-    C -->|PAN format: ABCDE1234F\nName + DOB valid| D[✅ Register Seller\nONDC Registry\nWhatsApp confirmation]
-    C -->|Invalid| E[❌ Request re-upload\nwith guidance]
+Full Beckn protocol implementation: `search` → `select` → `init` → `confirm` → `status` → `update` → `cancel` → `track`
 
-    style D fill:#22c55e,color:#fff
-    style E fill:#ef4444,color:#fff
-```
-
-Timeout: 2 min &nbsp;|&nbsp; Retries: 3 with exponential backoff
-
----
-
-## Background Agent — Daily Proactive Alerts
-
-Scheduled via EventBridge at **7:00 PM IST** (`cron(30 13 * * ? *)`):
-
-1. **Weather** — Open-Meteo API, 3-day forecast for seller's location
-2. **Market prices** — data.gov.in live mandi prices for seller's crops
-3. **AI summary** — Nova Lite synthesises weather + prices into actionable Hindi advice
-4. **Delivery** — Text + Polly voice message to every active seller
-
-Also triggered on-demand when a seller asks about weather or prices.
-
----
-
-## Buyer Marketplace
-
-Live at **[d29x1w2stzqkag.cloudfront.net](https://d29x1w2stzqkag.cloudfront.net)** — served via CloudFront + S3.
-
-| Feature | Details |
-|---|---|
-| Product browsing | Grid view with images, prices, seller info |
-| Search + filter | Real-time text search, category filtering |
-| Cart | Add/remove, quantity management |
-| UPI payment | UPI ID + reference + AI screenshot verification |
-| Cash on delivery | Alternative payment path |
-| Order tracking | Real-time status polling |
-| Responsive | 640px + 380px breakpoints, touch-optimised |
-
----
-
-## PDF Business Reports
-
-Generated with `pdfmake` (Roboto font). Delivered as WhatsApp document + Polly voice summary.
-
-Sections: Order summary · Revenue breakdown · Product performance · Catalog · **AI recommendations (Nova Lite)**
-
-Report periods: weekly · monthly · custom date range
+All endpoints are ONDC-compliant with `@ondc/org` extensions for catalog, orders, and fulfillment.
 
 ---
 
