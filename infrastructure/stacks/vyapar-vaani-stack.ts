@@ -957,10 +957,12 @@ export class VyaparVaaniStack extends cdk.Stack {
     agentHandlerLambda.addToRolePolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        actions: ['bedrock:InvokeModel', 'bedrock:InvokeAgent'],
+        actions: ['bedrock:InvokeModel', 'bedrock:InvokeAgent', 'bedrock:Converse'],
         resources: [
           'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0',
+          'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0',
           'arn:aws:bedrock:*::foundation-model/us.amazon.nova-lite-v1:0',
+          `arn:aws:bedrock:*:*:inference-profile/us.amazon.nova-lite-v1:0`,
           'arn:aws:bedrock:*::foundation-model/amazon.titan-image-generator-v2:0',
           `arn:aws:bedrock:${this.region}:${this.account}:agent/*`,
           `arn:aws:bedrock:${this.region}:${this.account}:agent-alias/*`,
@@ -1088,10 +1090,12 @@ export class VyaparVaaniStack extends cdk.Stack {
 
     bedrockAgentRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel'],
+      actions: ['bedrock:InvokeModel', 'bedrock:Converse'],
       resources: [
         'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0',
+        'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0',
         'arn:aws:bedrock:*::foundation-model/us.amazon.nova-lite-v1:0',
+        `arn:aws:bedrock:*:*:inference-profile/us.amazon.nova-lite-v1:0`,
       ],
     }));
 

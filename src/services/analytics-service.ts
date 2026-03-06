@@ -4,7 +4,7 @@ import { docClient, TABLE_NAME } from '../config/aws-clients';
 import { getOrdersBySeller } from './dynamodb-repository';
 import type { OrderStatus } from '../models/order';
 
-const CONFIRMED_STATUSES: OrderStatus[] = ['ACCEPTED', 'PACKED', 'SHIPPED', 'DELIVERED'];
+const CONFIRMED_STATUSES: OrderStatus[] = ['CONFIRMED', 'ACCEPTED', 'PACKED', 'SHIPPED', 'DELIVERED'];
 const PENDING_STATUSES: OrderStatus[] = ['PENDING'];
 const REJECTED_STATUSES: OrderStatus[] = ['REJECTED'];
 const CANCELLED_STATUSES: OrderStatus[] = ['CANCELLED'];

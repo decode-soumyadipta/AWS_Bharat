@@ -44,6 +44,7 @@ export interface OrderPayment {
 
 export type OrderStatus = 
   | 'PENDING'
+  | 'CONFIRMED'
   | 'ACCEPTED'
   | 'REJECTED'
   | 'PACKED'
@@ -101,7 +102,8 @@ interface OrderStateTransition {
 }
 
 export const VALID_ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  PENDING: ['ACCEPTED', 'REJECTED'],
+  PENDING: ['CONFIRMED', 'ACCEPTED', 'REJECTED'],
+  CONFIRMED: ['PACKED', 'CANCELLED'],
   ACCEPTED: ['PACKED', 'CANCELLED'],
   REJECTED: [], 
   PACKED: ['SHIPPED', 'CANCELLED'],

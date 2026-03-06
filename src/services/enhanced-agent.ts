@@ -11,7 +11,7 @@ import {
   getConversationHistory,
   UserConversationContext
 } from './conversation-memory';
-import { getPartialData, PartialCatalogItem } from './partial-data-store';
+import { getPartialData, mergePartialData, PartialCatalogItem } from './partial-data-store';
 import { getUserState } from './state-manager';
 import { sendTextMessage, sendTypingIndicator, sendTextWithVoice, sendVoiceOnly } from '../lambdas/whatsapp-message-sender';
 import { remote_web_search, getLocalMarketPrice, fetchLiveMarketPrice } from '../tools/web-search';
@@ -124,6 +124,17 @@ export async function processWithEnhancedAgent(
       if (livePrice.found) {
         const liveTag = livePrice.isLive ? '🟢 LIVE' : '📋';
         marketInfo = `${liveTag} आज का बाज़ार भाव ${partialData.productName}: ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
+        if (livePrice.isLive) {
+          await mergePartialData(phone, {
+            cachedMarketPrice: {
+              priceInfo: livePrice.priceInfo,
+              sourceName: livePrice.sourceName,
+              sourceUrl: livePrice.sourceUrl,
+              isLive: true,
+              cachedAt: Date.now(),
+            },
+          } as any).catch(() => {});
+        }
       }
     } catch (e: any) {
       console.warn('Live price fetch failed, using fallback:', e.message);
