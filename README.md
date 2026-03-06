@@ -2,11 +2,19 @@
 
 <img src="marketplace/logo.png" alt="Vyapar Vaani" width="180"/>
 
-# Vyapar Vaani
+# Vyapar Vaani   
 
+### ( Seller:&nbsp; <img width="20" height="20" alt="image" src="https://github.com/user-attachments/assets/f621f10e-8e13-43d3-b70b-087ab07e595e" /> &nbsp;+91-8902418321 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Buyer Marketplace Website:&nbsp; [**Live Marketplace →**](https://d29x1w2stzqkag.cloudfront.net) )
+
+~~~
+🟡 Sellers Send WhatsApp Voice Message 🗣️ hi!  |  Defaults to Hindi — want English? Just say →  "Talk in English!"
+~~~
+---
 **500M Indian Rural Sellers can't navigate through complex apps.**
 
-*Vyapar Vaani is Zero UI — no forms, no apps, no menus. Just WhatsApp — the app 800M Indians already know — speak in Hindi, Marathi, or your local language, and AI handles product listings, pricing, product photography, and orders. The rest is commerce.*
+*Vyapar Vaani is Zero UI — no forms, no apps, no menus. Just WhatsApp — the app 800M Indians already know. Speak in any Indian language (Now supports Hindi, English & Marathi), and let AI handle product listings, pricing, product photography, and orders.*
+
+</br>
 
 [![AWS](https://img.shields.io/badge/AWS-13%20Services-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 [![Bedrock](https://img.shields.io/badge/Bedrock-Nova%20Pro%20%2B%20Lite%20%2B%20Titan-232F3E?logo=amazonaws&logoColor=white)](https://aws.amazon.com/bedrock/)
@@ -15,7 +23,7 @@
 [![ONDC](https://img.shields.io/badge/ONDC-Beckn%20Protocol-0055A4)](https://ondc.org/)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp_Cloud_API-v22.0-25D366?logo=whatsapp&logoColor=white)](https://business.whatsapp.com/)
 
-[**Live Marketplace →**](https://d29x1w2stzqkag.cloudfront.net) &nbsp;·&nbsp; [**REST API →**](https://o72ecc4lpg.execute-api.us-east-1.amazonaws.com/prod/) &nbsp;·&nbsp; [**Webhook →**](https://m6sqkaco93.execute-api.us-east-1.amazonaws.com/whatsapp/webhook)
+
 
 </div>
 
