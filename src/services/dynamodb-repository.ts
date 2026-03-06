@@ -151,7 +151,7 @@ export async function getCatalogItem(sellerId: string, itemId: string): Promise<
   return (result.Item as CatalogItem) || null;
 }
 
-export async function getCatalogItemsBySeller(sellerId: string): Promise<CatalogItem[]> {
+export async function getCatalogItemsBySeller(sellerId: string, sellerPhone?: string): Promise<CatalogItem[]> {
   const params: QueryCommandInput = {
     TableName: TABLE_NAME,
     KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
@@ -162,7 +162,29 @@ export async function getCatalogItemsBySeller(sellerId: string): Promise<Catalog
   };
 
   const result = await docClient.send(new QueryCommand(params));
-  return (result.Items || []) as CatalogItem[];
+  const items = (result.Items || []) as CatalogItem[];
+
+  if (sellerPhone && sellerPhone !== sellerId) {
+    const phoneParams: QueryCommandInput = {
+      TableName: TABLE_NAME,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :sk)',
+      ExpressionAttributeValues: {
+        ':pk': `SELLER#${sellerPhone}`,
+        ':sk': 'ITEM#',
+      },
+    };
+    const phoneResult = await docClient.send(new QueryCommand(phoneParams));
+    const phoneItems = (phoneResult.Items || []) as CatalogItem[];
+    const seenIds = new Set(items.map(i => i.itemId));
+    for (const item of phoneItems) {
+      if (!seenIds.has(item.itemId)) {
+        items.push(item);
+        seenIds.add(item.itemId);
+      }
+    }
+  }
+
+  return items;
 }
 
 export async function getCatalogItemsByCategory(category: string): Promise<CatalogItem[]> {

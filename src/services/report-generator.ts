@@ -13,6 +13,64 @@ const PdfPrinter = require('pdfmake/js/Printer').default;
 
 const NOVA_LITE_MODEL_ID = 'amazon.nova-lite-v1:0';
 
+const DEVANAGARI_CONSONANTS: Record<string, string> = {
+  'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng',
+  'च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'ny',
+  'ट':'t','ठ':'th','ड':'d','ढ':'dh','ण':'n',
+  'त':'t','थ':'th','द':'d','ध':'dh','न':'n',
+  'प':'p','फ':'ph','ब':'b','भ':'bh','म':'m',
+  'य':'y','र':'r','ल':'l','व':'v',
+  'श':'sh','ष':'sh','स':'s','ह':'h',
+  'क़':'q','ख़':'kh','ग़':'gh','ज़':'z','ड़':'r','ढ़':'rh','फ़':'f',
+};
+const DEVANAGARI_VOWELS: Record<string, string> = {
+  'अ':'a','आ':'aa','इ':'i','ई':'ee','उ':'u','ऊ':'oo',
+  'ए':'e','ऐ':'ai','ओ':'o','औ':'au','ऋ':'ri',
+};
+const DEVANAGARI_MATRAS: Record<string, string> = {
+  'ा':'a','ि':'i','ी':'ee','ु':'u','ू':'oo',
+  'े':'e','ै':'ai','ो':'o','ौ':'au','ृ':'ri',
+  '्':'','ं':'n','ः':'h','ँ':'n',
+};
+const DEVANAGARI_DIGITS: Record<string, string> = {
+  '०':'0','१':'1','२':'2','३':'3','४':'4',
+  '५':'5','६':'6','७':'7','८':'8','९':'9',
+};
+
+function toLatinSafe(text: string): string {
+  if (!text) return '';
+  if (/^[\x00-\x7F]*$/.test(text)) return text;
+
+  const chars = [...text];
+  let result = '';
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    const next = chars[i + 1] || '';
+
+    if (DEVANAGARI_CONSONANTS[ch + next]) {
+      const c = DEVANAGARI_CONSONANTS[ch + next];
+      i++;
+      const after = chars[i + 1] || '';
+      if (after === '्') { result += c; i++; }
+      else if (DEVANAGARI_MATRAS[after] !== undefined) { result += c + DEVANAGARI_MATRAS[after]; i++; }
+      else { result += c + 'a'; }
+      continue;
+    }
+    if (DEVANAGARI_CONSONANTS[ch]) {
+      const c = DEVANAGARI_CONSONANTS[ch];
+      if (next === '्') { result += c; i++; }
+      else if (DEVANAGARI_MATRAS[next] !== undefined) { result += c + DEVANAGARI_MATRAS[next]; i++; }
+      else { result += c + 'a'; }
+      continue;
+    }
+    if (DEVANAGARI_VOWELS[ch]) { result += DEVANAGARI_VOWELS[ch]; continue; }
+    if (DEVANAGARI_MATRAS[ch] !== undefined) { result += DEVANAGARI_MATRAS[ch]; continue; }
+    if (DEVANAGARI_DIGITS[ch]) { result += DEVANAGARI_DIGITS[ch]; continue; }
+    if (ch.charCodeAt(0) < 128) { result += ch; }
+  }
+  return result || text;
+}
+
 type ReportType = 'weekly' | 'monthly' | 'custom';
 
 interface ReportRequest {
@@ -81,7 +139,7 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
         averageOrderValue: 0, topProduct: null, topProducts: [], timeRange: '30d',
       })),
       getDateRangeAnalytics(sellerId, dateQuery, phone).catch(() => null),
-      getCatalogItemsBySeller(sellerId).catch(() => [] as CatalogItem[]),
+      getCatalogItemsBySeller(sellerId, phone).catch(() => [] as CatalogItem[]),
       getOrdersBySeller(sellerId, phone).catch(() => [] as Order[]),
     ]);
 
@@ -105,7 +163,9 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       totalRevenue: dateRangeData?.totalRevenue ?? salesSummary.totalRevenue,
       confirmedRevenue: dateRangeData?.confirmedRevenue ?? salesSummary.confirmedRevenue,
       pendingRevenue: dateRangeData?.pendingRevenue ?? salesSummary.pendingRevenue,
-      averageOrderValue: salesSummary.averageOrderValue,
+      averageOrderValue: salesSummary.averageOrderValue > 0
+        ? salesSummary.averageOrderValue
+        : (salesSummary.totalOrders > 0 ? salesSummary.totalRevenue / salesSummary.totalOrders : 0),
       topProducts,
       allProductStats,
       catalogItems,
@@ -245,10 +305,13 @@ async function buildPdf(data: ReportData): Promise<Buffer> {
     margin: [0, 0, 0, 12],
   });
 
+  const safeName = toLatinSafe(data.sellerName);
+  const safeLocation = toLatinSafe(data.sellerLocation);
+
   const infoRows: any[][] = [
     [
       { text: 'Seller', bold: true, border: [false, false, false, false] },
-      { text: data.sellerName.toUpperCase(), border: [false, false, false, false] },
+      { text: safeName.toUpperCase(), border: [false, false, false, false] },
       { text: 'Phone', bold: true, border: [false, false, false, false] },
       { text: data.sellerPhone, border: [false, false, false, false] },
     ],
@@ -264,10 +327,10 @@ async function buildPdf(data: ReportData): Promise<Buffer> {
       },
     ],
   ];
-  if (data.sellerLocation) {
+  if (safeLocation) {
     infoRows.push([
       { text: 'Location', bold: true, border: [false, false, false, false] },
-      { text: data.sellerLocation, colSpan: 3, border: [false, false, false, false] }, {}, {},
+      { text: safeLocation, colSpan: 3, border: [false, false, false, false] }, {}, {},
     ]);
   }
   content.push({
@@ -350,7 +413,7 @@ async function buildPdf(data: ReportData): Promise<Buffer> {
       const avgPrice = p.totalQuantity > 0 ? p.totalRevenue / p.totalQuantity : 0;
       prodRows.push([
         { text: `${i + 1}`, alignment: 'center' },
-        p.productName || 'Unknown',
+        toLatinSafe(p.productName) || 'Unknown',
         { text: `${p.totalOrders}`, alignment: 'center' },
         { text: `${p.totalQuantity}`, alignment: 'center' },
         { text: `${CURRENCY}${p.totalRevenue.toFixed(0)}`, alignment: 'right' },
@@ -389,7 +452,7 @@ async function buildPdf(data: ReportData): Promise<Buffer> {
     ]];
 
     activeCatalog.slice(0, 20).forEach((item, i) => {
-      const name = item.becknItem?.descriptor?.name || item.itemId;
+      const name = toLatinSafe(item.becknItem?.descriptor?.name || item.itemId);
       const price = item.becknItem?.price?.value ? `${CURRENCY}${item.becknItem.price.value}` : 'N/A';
       const stock = item.becknItem?.quantity?.available?.count ?? 'N/A';
       const st = item.status === 'ACTIVE' ? 'Active' : 'Draft';
@@ -533,14 +596,14 @@ async function generateRecommendations(data: ReportData): Promise<string[]> {
   try {
     const productList = data.allProductStats.length > 0
       ? data.allProductStats.map(p =>
-          `${p.productName}: ${p.totalOrders} orders, ${p.totalQuantity} units sold, Rs ${p.totalRevenue.toFixed(0)} revenue, avg Rs ${p.averageOrderValue.toFixed(0)}/order`
+          `${toLatinSafe(p.productName)}: ${p.totalOrders} orders, ${p.totalQuantity} units sold, Rs ${p.totalRevenue.toFixed(0)} revenue, avg Rs ${p.averageOrderValue.toFixed(0)}/order`
         ).join('\n')
       : 'No products sold yet';
 
     const catalogList = data.catalogItems
       .filter(c => c.status === 'ACTIVE' || c.status === 'DRAFT')
       .map(c => {
-        const name = c.becknItem?.descriptor?.name || c.itemId;
+        const name = toLatinSafe(c.becknItem?.descriptor?.name || c.itemId);
         const price = c.becknItem?.price?.value || 'unknown';
         const stock = c.becknItem?.quantity?.available?.count ?? 'unknown';
         return `${name}: listed at Rs ${price}, stock ${stock}`;
@@ -643,7 +706,7 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
     }
 
     if (data.allProductStats.length > 0) {
-      parts.push(`Sabse zyada bikne wala product ${data.allProductStats[0].productName} raha.`);
+      parts.push(`Sabse zyada bikne wala product ${toLatinSafe(data.allProductStats[0].productName)} raha.`);
     }
 
     const activeCount = data.catalogItems.filter(c => c.status === 'ACTIVE').length;
@@ -669,7 +732,7 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
   }
 
   if (data.allProductStats.length > 0) {
-    parts.push(`Top product: ${data.allProductStats[0].productName}.`);
+    parts.push(`Top product: ${toLatinSafe(data.allProductStats[0].productName)}.`);
   }
 
   const activeCount = data.catalogItems.filter(c => c.status === 'ACTIVE').length;

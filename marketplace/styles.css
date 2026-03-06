@@ -30,14 +30,17 @@
   --radius-xl: 20px;
   --header-h: 64px;
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  padding-bottom: 44px;
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
 }
 
 /* ===== LOGIN SCREEN ===== */
@@ -834,14 +837,75 @@ body {
   .top-header .search-bar { max-width: 300px; margin: 0 12px; }
 }
 @media (max-width: 640px) {
-  .top-header { padding: 0 12px; }
+  .top-header { padding: 0 10px; height: 56px; }
   .top-header .search-bar { display: none; }
   .top-header .logo-text { font-size: 1rem; }
+  .top-header .logo-img { width: 32px; height: 32px; }
   .header-btn .btn-label { display: none; }
-  .products-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
-  .card-body .p-price { font-size: 1rem; }
-  .sub-header { padding: 6px 12px; gap: 14px; }
-  .modal-box { width: 95%; max-width: none; }
+  .header-btn { padding: 6px 8px; font-size: 0.78rem; }
+  .header-btn.cart-btn .cart-icon { font-size: 1.3rem; }
+  .cart-count { font-size: 0.65rem; min-width: 16px; height: 16px; }
+  .products-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .product-card .card-img { aspect-ratio: 4/3; }
+  .card-body { padding: 8px 10px 10px; }
+  .card-body .p-name { font-size: 0.82rem; -webkit-line-clamp: 1; }
+  .card-body .p-seller { font-size: 0.7rem; margin-bottom: 4px; }
+  .card-body .p-desc { display: none; }
+  .card-body .p-price { font-size: 0.95rem; margin-bottom: 1px; }
+  .card-body .p-stock { font-size: 0.7rem; margin-bottom: 6px; }
+  .card-body .card-actions { flex-direction: column; gap: 5px; }
+  .btn-add-cart { padding: 8px 0; font-size: 0.78rem; }
+  .btn-buy-now { padding: 8px 0; font-size: 0.78rem; text-align: center; }
+  .sub-header { padding: 6px 10px; gap: 12px; }
+  .sub-header a { font-size: 0.76rem; }
+  .main-layout { padding: 8px; padding-bottom: 48px; }
+  .modal-box { width: 100%; max-width: none; border-radius: 0; max-height: 100vh; }
+  .modal-body { padding: 16px; }
+  .modal-box .modal-header { padding: 14px 16px; }
+  .form-row { flex-direction: column; gap: 0; }
+  .checkout-section { margin-bottom: 14px; }
+  .checkout-section h4 { font-size: 0.82rem; }
+  .payment-opt { padding: 10px 12px; }
+  .payment-opt .po-icon { font-size: 1.2rem; }
+  .btn-primary { padding: 12px; font-size: 0.88rem; }
+  .cart-sidebar { width: 100vw; max-width: 100vw; right: -100vw; }
+  .cart-sidebar .cart-header { padding: 14px 16px; }
+  .cart-sidebar .cart-body { padding: 12px 14px; }
+  .cart-item-row { gap: 8px; }
+  .cart-item-row .ci-name { font-size: 0.8rem; }
+  .orders-mobile { width: 100vw; max-width: 100vw; right: -100vw; }
+  .order-card { padding: 12px 14px; }
+  .order-card .oc-id { font-size: 0.72rem; }
+  .order-card .oc-items { font-size: 0.76rem; }
+  .order-card .oc-amount { font-size: 0.78rem; }
+  .toast { max-width: 280px; font-size: 0.8rem; padding: 10px 14px; }
+  .toast-container { top: 64px; right: 10px; }
+  .badge-sm { font-size: 0.62rem; padding: 2px 5px; }
+  .ondc-footer { padding: 6px 10px; font-size: 0.7rem; }
+  .ondc-badge-footer { font-size: 0.62rem; padding: 1px 6px; }
+  .upi-screen .upi-amount { font-size: 1.6rem; }
+  .upi-qr-container { padding: 12px; }
+  .upi-qr-container img { width: 160px; height: 160px; }
+  .btn-upi-deep { padding: 10px 20px; font-size: 0.82rem; }
+  .verify-btns { gap: 6px; }
+  .order-confirm .success-icon { font-size: 2.5rem; }
+  .order-step { width: 65px; }
+  .order-step .step-icon { width: 30px; height: 30px; font-size: 0.85rem; }
+  .order-step .step-label { font-size: 0.62rem; }
+}
+
+/* ===== EXTRA SMALL PHONES (< 380px) ===== */
+@media (max-width: 380px) {
+  .products-grid { grid-template-columns: 1fr; gap: 8px; }
+  .product-card { display: flex; flex-direction: row; }
+  .product-card .card-img { width: 110px; min-width: 110px; aspect-ratio: 1/1; }
+  .card-body .card-actions { flex-direction: row; }
+  .btn-buy-now { flex: 1; }
+  .top-header .logo-text { font-size: 0.9rem; }
+  .header-btn .btn-value { font-size: 0.76rem; }
+  .login-card { padding: 28px 20px; }
+  .login-card .brand h1 { font-size: 1.3rem; }
+  .login-card .brand-logo { width: 56px; height: 56px; }
 }
 
 /* ===== MOBILE ORDERS DRAWER ===== */
