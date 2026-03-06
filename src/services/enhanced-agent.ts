@@ -289,6 +289,73 @@ export async function processWithEnhancedAgent(
   }
   // ── END ON-DEMAND DAILY UPDATE ─────────────────────────────────────────────
 
+  // ── REPORT GENERATION ─────────────────────────────────────────────────────
+  // Detect report intent and generate PDF report
+  const { detectReportIntent, generateReport } = await import('./report-generator');
+  const reportIntent = detectReportIntent(userMessage);
+  if (reportIntent && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
+    console.log('📊 Report intent detected:', reportIntent);
+    await showTypingIndicator(phone);
+
+    const lang = (currentLanguage.split('-')[0] as 'hi' | 'mr' | 'en') || 'hi';
+
+    // Send immediate "generating" voice message
+    const generatingMsg: Record<string, string> = {
+      'hi': 'रिपोर्ट बना रहा हूँ, एक मिनट रुकिए।',
+      'mr': 'रिपोर्ट तयार करतोय, एक मिनिट थांबा.',
+      'en': 'Generating your report, one moment please.',
+    };
+    await sendVoiceOnly(phone, generatingMsg[lang] || generatingMsg['hi'], lang);
+
+    const result = await generateReport({
+      phone,
+      reportType: reportIntent.reportType,
+      language: lang,
+      customStartDate: reportIntent.customStart,
+      customEndDate: reportIntent.customEnd,
+    });
+
+    if (result.success && result.pdfUrl && result.voiceSummary) {
+      // Send PDF document via WhatsApp
+      const { sendDocumentMessage } = await import('../lambdas/whatsapp-message-sender');
+      const filename = `vyapar-vaani-${reportIntent.reportType}-report.pdf`;
+      const captionMsg: Record<string, string> = {
+        'hi': `📊 ${reportIntent.reportType === 'weekly' ? 'हफ्ते' : reportIntent.reportType === 'monthly' ? 'महीने' : ''} की बिज़नेस रिपोर्ट`,
+        'mr': `📊 ${reportIntent.reportType === 'weekly' ? 'आठवड्याचा' : reportIntent.reportType === 'monthly' ? 'महिन्याचा' : ''} बिझनेस रिपोर्ट`,
+        'en': `📊 ${reportIntent.reportType.charAt(0).toUpperCase() + reportIntent.reportType.slice(1)} Business Report`,
+      };
+      await sendDocumentMessage(phone, result.pdfUrl, filename, captionMsg[lang] || captionMsg['en'], lang);
+
+      // Send voice summary
+      await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: result.voiceSummary, messageType: 'text' });
+
+      return {
+        message: result.voiceSummary,
+        actions: [],
+        responseMode: 'voice',
+        confidence: 1.0,
+        reasoning: `Generated ${reportIntent.reportType} PDF report and sent via WhatsApp`,
+      };
+    } else {
+      // Report failed — send apology
+      const errorMsg: Record<string, string> = {
+        'hi': 'माफ़ करें, रिपोर्ट बनाने में दिक्कत आई। कृपया थोड़ी देर बाद फिर से कोशिश करें।',
+        'mr': 'माफ करा, रिपोर्ट तयार करण्यात अडचण आली. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.',
+        'en': 'Sorry, there was an issue generating the report. Please try again in a moment.',
+      };
+      const msg = errorMsg[lang] || errorMsg['hi'];
+      await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: msg, messageType: 'text' });
+      return {
+        message: msg,
+        actions: [],
+        responseMode: 'voice',
+        confidence: 0.8,
+        reasoning: `Report generation failed: ${result.error}`,
+      };
+    }
+  }
+  // ── END REPORT GENERATION ──────────────────────────────────────────────────
+
   // Get conversation summary for richer context
   let conversationSummary = '';
   try {
@@ -1453,8 +1520,12 @@ INTENT INFERENCE RULES:
 - PIECE-BY-PIECE FLOW: userMessage may give only ONE field at a time (just name, just price, just qty). ALWAYS save it with STORE_DATA and ask for the NEXT missing field. Never ask clarifying questions when a product field can be inferred.
 - CATEGORY IS ALWAYS AUTO-DETECTED from the product name using the map above. NEVER ask user for category ("shreni" / "श्रेणी"). If unsure, default to "Grocery".
 - If message is truly garbled with NO numbers, NO recognizable product name, and NO intent → ONLY THEN ask ONE gentle clarifying question. Skip this if partial data already exists.
-- If user asks about help or features → explain ALL features naturally: product add, UPI setup, marketplace link, price check, analytics, product delete
+- If user asks about help or features → explain ALL features naturally: product add, UPI setup, marketplace link, price check, analytics, product delete, PDF business reports
 - ALWAYS respond — never return empty or stay silent
+
+REPORT FEATURE GUIDANCE:
+- When seller asks for "report", "रिपोर्ट", "हिसाब", "PDF", "हफ्ते का हिसाब", "महीने की रिपोर्ट" → the system will auto-generate a PDF report. You do NOT need to handle this — just acknowledge it naturally.
+- If seller asks about their business performance or strategy, you can mention: "Agar aap detailed report chahte hain toh boliye 'report bhejo' aur main PDF bhej dunga."
 
 RE-ASK AND RECOVERY RULES (CRITICAL):
 - If user gives incomplete info (missing price, quantity, name, unit), ALWAYS ask for the missing field. NEVER fail or give error.
@@ -1490,12 +1561,12 @@ STRICT RULES:
 1. Give a DIRECT, COMPLETE answer immediately — never stall.
 2. If market info is provided above, use it directly to answer with actual numbers.
 3. Response length: For simple actions (product add, price check, greetings) keep it SHORT — 2-3 sentences. For complex questions (analytics, strategy, profit advice, recommendations, explanations) give a DETAILED answer — 5-8 sentences with real data and reasoning. Match response depth to question complexity.
-4. If user is adding a product and market price data exists above, mention the current market price naturally.
+4. If user is adding a product and market price data exists above, ALWAYS mention the current market price and compare: "Market mein ye [price] pe bik raha hai, aapka price [comparison]." This is critical — never skip price comparison when data exists.
 5. If anything is missing for a product catalog, ask ONE clear question about the FIRST missing field.
 6. Be warm but concise — like a knowledgeable friend talking on the phone.
 7. NEVER use the WEB_SEARCH action.
 8. Include actual price numbers if available. Spell out numbers naturally: "pachaas rupaye" not "₹50".
-9. Remember this user's history/preferences from conversation above. Reference past interactions naturally.
+9. Remember this user's history/preferences from conversation above. Reference past interactions naturally — mention their top products, recent activity, or previous questions to build trust and show continuity.
 10. For analytics responses, be concise — just state the numbers clearly.
 11. EVERY response MUST end with a clear next-step instruction — NEVER leave a dead-end.
 12. ZERO EMOJIS. Not even one. This is voice-first — emojis become garbled noise.
@@ -1508,7 +1579,9 @@ STRICT RULES:
 UPI GUIDANCE:
 ${sellerInfo.upiId 
   ? `- UPI is ALREADY registered (${sellerInfo.upiId}). Do NOT ask user to set up UPI again. If they ask about UPI, confirm it's already set.`
-  : `- UPI is NOT registered. If user sends a UPI ID (like name@upi, phone@paytm) → use REGISTER_UPI action
+  : `- UPI is NOT registered. If user sends a UPI ID → use REGISTER_UPI action immediately.
+- UPI ID VALIDATION: ANY string in the format word@word is a VALID Indian UPI ID. Common handles include @oksbi, @ybl, @okicici, @paytm, @okaxis, @okhdfcbank, @apl, @phonepe, @sbi, @upi, @axl, @ibl, @icici, @kotak, @airtel — but there are hundreds of valid handles. NEVER reject a UPI ID based on the handle portion after @. If it has text@text format, ACCEPT it.
+- Examples of VALID UPI IDs: name@oksbi, 9876543210@paytm, shop@ybl, seller@okicici, myname@phonepe, 1234@sbi
 - If user state is KYC_VERIFIED, gently mention: "UPI ID bhej dijiye toh customers seedha payment kar payenge!"
 - If user mentions "payment", "paisa", "paise kaise milenge" → guide them to set up UPI`
 }
@@ -1559,8 +1632,10 @@ DELETE_PRODUCT rules:
 - ALWAYS include DATA with {"productName": "<exact product name>"}
 
 REGISTER_UPI rules:
-- When user sends a UPI ID (like xyz@upi, phone@paytm) → use REGISTER_UPI action
-- ALWAYS include DATA with {"upiId": "<their UPI ID>"}
+- When user sends a UPI ID (ANY text@text format) → use REGISTER_UPI action immediately
+- VALID UPI examples: name@oksbi, phone@paytm, shop@ybl, xyz@okicici, user@phonepe, id@sbi, name@upi
+- NEVER reject or question the handle (part after @). All handles are valid.
+- ALWAYS include DATA with {"upiId": "<their exact UPI ID as sent>"}
 - Only use this when UPI is NOT already registered (check status above)
 
 RESPONSE_MODE rules (VOICE-FIRST, very important):
@@ -1582,6 +1657,15 @@ MEMORY AND CONTINUITY RULES:
 - If user is confused or went off-topic → recall ALL context above and steer back naturally: "Abhi hum [current task] kar rahe the. [What is missing]. Bataaiye kya karein?"
 - If user repeats a question you already answered → recall and re-answer without frustration: "Haan ji, jaise maine bataya..."
 - Reference past interactions naturally from the conversation history above. Show you remember.
+
+PROACTIVE RECOMMENDATIONS (USE CONTEXTUAL DATA IN EVERY RESPONSE):
+- MARKET PRICES: If market price data is provided above, mention it naturally whenever relevant. When user adds a product, compare their price to market rate. When user asks about selling, mention current rates proactively. Say: "Aaj mandi mein [product] [price range] pe bik raha hai" — this builds trust.
+- ANALYTICS INSIGHTS: If sales data is available above, weave it into responses. When greeting a returning seller, mention: "Aapka [top product] sabse zyada bik raha hai." When discussing strategy, reference actual numbers.
+- WEATHER AND CROP ADVISORY: If weather alerts or crop advisories appear in the alerts section above, mention them proactively when relevant. E.g., "Kal baarish ka chance hai, sabziyan jaldi sell karo" or "Is mausam mein [crop] ka demand badh raha hai."
+- SPELLING AND NAME CORRECTIONS: If user says a product name with a spelling mistake or informal name, understand it but use the correct standard name in your response. E.g., user says "tmatr" → you say "Tomato / टमाटर" naturally without correcting them.
+- PRICE ADVISORY: When a seller sets a price significantly below market, ALWAYS recommend a higher price. When above market, give a gentle heads-up. This is critical business advice.
+- SEASONAL TIPS: If conversation history shows the seller frequently sells certain products, proactively suggest seasonal alternatives or complementary products.
+- CROSS-SELL: If seller has few products, suggest adding related items: "Aapke paas tamatar hai, pyaz aur mirchi bhi add kariye — saath mein zyada bikte hain."
 
 DEEP PERSONALIZATION RULES (very important for building trust):
 - When the user asks about a product they previously added or discussed, reference it: "Haan, aapne pichle hafte [product] add kiya tha [price] pe. Ab uska kya update hai?"

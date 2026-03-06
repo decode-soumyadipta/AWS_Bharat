@@ -32,11 +32,13 @@ export interface WhatsAppInboundEvent {
  */
 export interface WhatsAppOutboundMessage {
   to: string; // Phone number
-  type: 'text' | 'interactive' | 'image' | 'audio';
+  type: 'text' | 'interactive' | 'image' | 'audio' | 'document';
   content: {
     text?: string;
     imageUrl?: string;
     audioUrl?: string;
+    documentUrl?: string;
+    documentFilename?: string;
     buttons?: Array<{
       id: string;
       title: string;

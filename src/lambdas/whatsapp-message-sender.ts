@@ -131,6 +131,9 @@ export async function markMessageAsRead(
       return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
     }
 
+    // Track this message as already-read so subsequent typing uses standalone endpoint
+    alreadyReadMessageIds.add(messageId);
+
     let parsed;
     try { parsed = JSON.parse(responseBody); } catch { parsed = responseBody; }
     return { success: true, data: parsed };
@@ -141,37 +144,116 @@ export async function markMessageAsRead(
 }
 
 /**
- * Sends WhatsApp typing indicator via markMessageAsRead with typing_indicator field.
- * Matches reference implementation: markMessageAsRead(messageID, true)
- * This shows the "typing..." bubble for ~25 seconds or until a response is sent.
+ * Sends WhatsApp typing indicator.
+ * 
+ * IMPORTANT: WhatsApp Cloud API's markMessageAsRead(msgId, true) only triggers
+ * the typing bubble on the FIRST call (unread→read transition). Subsequent calls
+ * with the same messageId are no-ops — the typing bubble does NOT re-appear.
+ * 
+ * Fix: After the first mark-as-read, use the standalone typing_indicator endpoint
+ * (available in v22.0+) which sends typing directly to a phone number without
+ * needing a message state transition.
  */
 
 // Cache the last message ID per phone so typing works even without explicit messageId
 const lastMessageIdByPhone: Record<string, string> = {};
 
+// Track messages already marked as read — subsequent typing must use standalone endpoint
+const alreadyReadMessageIds: Set<string> = new Set();
+
+// Export for testing
+export { alreadyReadMessageIds as _alreadyReadMessageIds };
+
 export function setLastMessageId(phone: string, messageId: string): void {
   lastMessageIdByPhone[phone] = messageId;
+}
+
+/**
+ * Send standalone typing indicator to a phone number (v22.0+).
+ * Does NOT require a message ID or read-receipt transition.
+ * Shows "typing..." bubble for ~25 seconds or until a message is sent.
+ */
+async function sendStandaloneTyping(
+  to: string
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const config = getWhatsAppConfig();
+
+  if (!config.endpoint || !config.phoneNumberId || !config.accessToken) {
+    console.warn('WhatsApp API configuration missing, skipping standalone typing');
+    return { success: false, error: 'Configuration missing' };
+  }
+
+  try {
+    const url = `${config.endpoint}/${config.phoneNumberId}/messages`;
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'typing_indicator',
+      typing_indicator: { type: 'text' },
+    };
+
+    console.log('sendStandaloneTyping payload:', JSON.stringify(payload));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.accessToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseBody = await response.text();
+    console.log(`sendStandaloneTyping response: ${response.status} — ${responseBody}`);
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}: ${responseBody}` };
+    }
+
+    let parsed;
+    try { parsed = JSON.parse(responseBody); } catch { parsed = responseBody; }
+    return { success: true, data: parsed };
+  } catch (error) {
+    console.warn('Standalone typing indicator error:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
 }
 
 export async function sendTypingIndicator(
   to: string,
   messageId?: string
 ): Promise<{ success: boolean; error?: string }> {
-  // Use provided messageId, cached one, or skip
   const msgId = messageId || lastMessageIdByPhone[to];
-  if (!msgId) {
-    console.warn('⚠️ No messageId for typing indicator, phone:', to, '— skipping typing indicator');
-    return { success: false, error: 'No messageId available' };
+
+  // If the message was already marked as read, use standalone typing (works every time)
+  if (msgId && alreadyReadMessageIds.has(msgId)) {
+    console.log('📝 Message already read, using standalone typing for', to);
+    return sendStandaloneTyping(to);
   }
 
-  // Delegate to markMessageAsRead with typing=true (exact reference implementation)
-  try {
-    const result = await markMessageAsRead(msgId, true);
-    return result;
-  } catch (err) {
-    console.warn('Typing indicator exception:', err);
-    return { success: false, error: err instanceof Error ? err.message : 'Unknown typing error' };
+  // First time: use markMessageAsRead with typing (triggers read + typing)
+  if (msgId) {
+    try {
+      const result = await markMessageAsRead(msgId, true);
+      if (result.success) {
+        alreadyReadMessageIds.add(msgId);
+      }
+      return result;
+    } catch (err) {
+      console.warn('Typing indicator exception:', err);
+      return { success: false, error: err instanceof Error ? err.message : 'Unknown typing error' };
+    }
   }
+
+  // No messageId at all — try standalone typing as last resort
+  if (to) {
+    console.log('⚠️ No messageId for typing, trying standalone typing for', to);
+    return sendStandaloneTyping(to);
+  }
+
+  console.warn('⚠️ No messageId or phone for typing indicator — skipping');
+  return { success: false, error: 'No messageId or phone available' };
 }
 
 /**
@@ -249,6 +331,30 @@ export async function sendAudioMessage(
     type: 'audio',
     content: {
       audioUrl,
+    },
+    language,
+  };
+
+  return sendMessageWithRetry(message);
+}
+
+/**
+ * Sends a document (PDF, etc.) via WhatsApp with optional caption
+ */
+export async function sendDocumentMessage(
+  to: string,
+  documentUrl: string,
+  filename: string,
+  caption?: string,
+  language: 'hi' | 'mr' | 'en' = 'en'
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const message: WhatsAppOutboundMessage = {
+    to,
+    type: 'document',
+    content: {
+      documentUrl,
+      documentFilename: filename,
+      text: caption,
     },
     language,
   };
@@ -481,6 +587,17 @@ function constructWhatsAppPayload(message: WhatsAppOutboundMessage): any {
         },
       };
 
+    case 'document':
+      return {
+        ...basePayload,
+        type: 'document',
+        document: {
+          link: message.content.documentUrl,
+          filename: message.content.documentFilename || 'report.pdf',
+          caption: message.content.text,
+        },
+      };
+
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -548,6 +665,13 @@ export async function handler(event: any): Promise<any> {
           throw new Error('Audio URL is required for audio messages');
         }
         result = await sendAudioMessage(to, content.audioUrl, language);
+        break;
+
+      case 'document':
+        if (!content?.documentUrl) {
+          throw new Error('Document URL is required for document messages');
+        }
+        result = await sendDocumentMessage(to, content.documentUrl, content.documentFilename || 'report.pdf', content.text, language);
         break;
 
       case 'voice':

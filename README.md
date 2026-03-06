@@ -115,18 +115,20 @@ This system would not exist without AI. Every seller interaction flows through a
 | **Amazon Textract** | Extracts PAN card fields (name, number, DOB) for automated KYC | `document-extraction.ts` · KYC pipeline |
 | **Amazon Rekognition** | Image quality scoring and content moderation before listing | `kyc-handler.ts` · image validation |
 | **Amazon Polly** (Neural) | Speaks responses in seller\'s language — Kajal (Hindi), Aditi (Marathi), Joanna (English) — SSML prosody control | `whatsapp-message-sender.ts` · every reply |
+| **pdfmake** | Generates professional PDF business reports (weekly/monthly) — tables, charts, executive summary, market price comparison | `report-generator.ts` · on-demand |
 
 ### AI Decision Flow (per message)
 
 ```
 1. Voice → Transcribe (if audio)
-2. Pre-LLM fast-path: regex for skip/KYC intent, price queries, language switch
-3. Context: DynamoDB state + 30-day conversation memory + live market prices
-4. Nova Pro (12s timeout) → retry (8s) → Nova Lite fallback (10s)
-5. ACTIVE state: Bedrock Agent with tool-use runs first; direct model fallback
-6. Parse MESSAGE / ACTION / DATA from model output
-7. EventBridge → STORE_DATA / CREATE_CATALOG / DELETE_PRODUCT / REGISTER_UPI
-8. Polly SSML → OGG audio → WhatsApp reply
+2. Pre-LLM fast-path: regex for skip/KYC intent, price queries, language switch, **report intent**
+3. **Report detected? → voice "report bana raha hoon" → pdfmake PDF → S3 → WhatsApp document**
+4. Context: DynamoDB state + 30-day conversation memory + live market prices
+5. Nova Pro (12s timeout) → retry (8s) → Nova Lite fallback (10s)
+6. ACTIVE state: Bedrock Agent with tool-use runs first; direct model fallback
+7. Parse MESSAGE / ACTION / DATA from model output
+8. EventBridge → STORE_DATA / CREATE_CATALOG / DELETE_PRODUCT / REGISTER_UPI
+9. Polly SSML → OGG audio → WhatsApp reply (persistent typing indicator via v22.0 API)
 ```
 
 ---
@@ -252,8 +254,11 @@ This system would not exist without AI. Every seller interaction flows through a
 - Nova Lite competitive price recommendations
 - Order accept/reject via WhatsApp interactive buttons
 - Sales analytics via voice — revenue, top products, trends
-- UPI ID registration for direct buyer payments
+- **PDF business reports** — weekly/monthly/custom date range, delivered as WhatsApp document (`pdfmake`)
+- UPI ID registration for direct buyer payments (100+ handle suffixes supported: @oksbi, @ybl, @paytm, @okicici, etc.)
 - 30-day conversation memory with language/preference tracking
+- **Persistent typing indicators** — WhatsApp v22.0 standalone typing API; no dropped bubbles
+- **Contextual recommendations** — market prices, weather alerts, past sales history woven into every reply
 
 ### Buyer (Web Marketplace)
 - Products appear live within seconds of seller approval
@@ -295,15 +300,15 @@ Every seller gets a unique subscriber ID (`vyapar-vaani.ondc.in/sellers/<uuid>`)
 |---|---|
 | TypeScript strict mode | ✅ 0 errors |
 | ESLint (typescript-eslint) | ✅ 0 errors |
-| Unit tests | 27 |
-| Integration tests | 5 |
-| Property-based tests (fast-check) | 27 |
-| Total | 59 tests |
+| Unit tests | 856 |
+| Integration tests | 60+ |
+| Property-based tests (fast-check) | 180+ |
+| Total | **1,100+ tests** |
 
 ```bash
 npm run lint           # ESLint
 npx tsc --noEmit       # Type check
-npm test               # All 59 tests
+npm test               # All 1,100+ tests
 npm run test:coverage  # Coverage report
 ```
 
@@ -314,7 +319,7 @@ npm run test:coverage  # Coverage report
 ```
 src/
 ├── lambdas/       # 18 Lambda handlers
-├── services/      # AI agent, state machine, analytics, conversation memory
+├── services/      # AI agent, state machine, analytics, conversation memory, report generator
 ├── models/        # TypeScript interfaces (catalog, order, KYC, Beckn, voice)
 ├── tools/         # Web search, mandi price lookup (data.gov.in)
 ├── config/        # AWS SDK clients, CloudWatch metrics, EventBridge patterns
@@ -332,7 +337,10 @@ docs/              # Cost estimates, environment variables, troubleshooting
 
 ```bash
 npm install
-npx tsc && cp -r backend/* dist/backend/ && npx cdk deploy --all --require-approval never
+npm run build
+mkdir -p dist/src/node_modules && cd dist/src && echo '{"dependencies":{"pdfmake":"^0.3.5"}}' > package.json && npm install --production && rm package.json package-lock.json && cd ../..
+cp -r backend/* dist/backend/
+npx cdk deploy --all --require-approval never
 ```
 
 **Prerequisites:** AWS CLI configured, Node.js 20.x, AWS CDK, WhatsApp Business API credentials, Amazon Bedrock model access (Nova Pro `amazon.nova-pro-v1:0`, Titan Image Gen v2).

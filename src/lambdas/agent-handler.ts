@@ -1398,8 +1398,8 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
       console.log('❌ Invalid UPI ID:', upiId);
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const invalidMsg = lang === 'hi'
-        ? '❌ UPI ID सही नहीं लग रहा। कृपया सही UPI ID बताएं (जैसे: name@upi, 9876543210@paytm)'
-        : '❌ Invalid UPI ID. Please provide a valid one (e.g., name@upi, 9876543210@paytm)';
+        ? '❌ UPI ID सही नहीं लग रहा। कृपया सही UPI ID बताएं जिसमें @ लगा हो, जैसे: name@oksbi, 9876543210@paytm, shop@ybl'
+        : '❌ Invalid UPI ID. Please provide a valid one with @ symbol (e.g., name@oksbi, 9876543210@paytm, shop@ybl)';
       await sendEnhancedAgentMessage(phone, invalidMsg, language as any, 'voice');
       return;
     }
