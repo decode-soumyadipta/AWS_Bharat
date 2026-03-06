@@ -5,7 +5,9 @@ import { s3Client, PRODUCTS_BUCKET_NAME, bedrockClient } from '../config/aws-cli
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getTopSellingProducts, getSalesSummary, getDateRangeAnalytics } from './analytics-service';
 import type { ProductSalesStats, DateRangeAnalytics } from './analytics-service';
-import { getSellerByPhone } from './dynamodb-repository';
+import { getSellerByPhone, getCatalogItemsBySeller, getOrdersBySeller } from './dynamodb-repository';
+import type { CatalogItem } from '../models/catalog';
+import type { Order } from '../models/order';
 
 const PdfPrinter = require('pdfmake/js/Printer').default;
 
@@ -17,21 +19,22 @@ interface ReportRequest {
   phone: string;
   reportType: ReportType;
   language: 'hi' | 'mr' | 'en';
-  customStartDate?: string; 
-  customEndDate?: string;   
+  customStartDate?: string;
+  customEndDate?: string;
 }
 
 interface ReportResult {
   success: boolean;
-  pdfUrl?: string;        
-  s3Key?: string;         
-  voiceSummary?: string;  
+  pdfUrl?: string;
+  s3Key?: string;
+  voiceSummary?: string;
   error?: string;
 }
 
 interface ReportData {
   sellerName: string;
   sellerPhone: string;
+  sellerLocation: string;
   reportType: ReportType;
   dateLabel: string;
   startDate: string;
@@ -46,6 +49,9 @@ interface ReportData {
   pendingRevenue: number;
   averageOrderValue: number;
   topProducts: ProductSalesStats[];
+  allProductStats: ProductSalesStats[];
+  catalogItems: CatalogItem[];
+  recentOrders: Order[];
   dateRangeAnalytics: DateRangeAnalytics | null;
   recommendations: string[];
   generatedAt: string;
@@ -55,31 +61,38 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
   const { phone, reportType, language, customStartDate, customEndDate } = request;
 
   try {
-    console.log(`📊 Generating ${reportType} report for ${phone}`);
+    console.log(`Generating ${reportType} report for ${phone}`);
 
     const seller = await getSellerByPhone(phone);
     const sellerId = seller ? seller.PK.replace('SELLER#', '') : phone;
     const sellerName = seller?.name || 'Seller';
+    const sellerLocation = seller?.location?.district
+      ? `${seller.location.district}, ${seller.location.state || ''}`
+      : seller?.location?.state || '';
 
     const { startDate, endDate, dateLabel, dateQuery } = getDateRange(reportType, customStartDate, customEndDate);
 
-    const [topProducts, salesSummary, dateRangeData] = await Promise.all([
-      getTopSellingProducts(sellerId, 10, undefined, phone).catch(() => [] as ProductSalesStats[]),
+    const [topProducts, allProductStats, salesSummary, dateRangeData, catalogItems, allOrders] = await Promise.all([
+      getTopSellingProducts(sellerId, 10, undefined, phone, true).catch(() => [] as ProductSalesStats[]),
+      getTopSellingProducts(sellerId, 10, undefined, phone, false).catch(() => [] as ProductSalesStats[]),
       getSalesSummary(sellerId, undefined, phone).catch(() => ({
         totalOrders: 0, confirmedOrders: 0, pendingOrders: 0, rejectedOrders: 0, cancelledOrders: 0,
         totalRevenue: 0, confirmedRevenue: 0, pendingRevenue: 0,
         averageOrderValue: 0, topProduct: null, topProducts: [], timeRange: '30d',
       })),
       getDateRangeAnalytics(sellerId, dateQuery, phone).catch(() => null),
+      getCatalogItemsBySeller(sellerId).catch(() => [] as CatalogItem[]),
+      getOrdersBySeller(sellerId, phone).catch(() => [] as Order[]),
     ]);
 
-    const recommendations = await generateRecommendations(
-      sellerName, topProducts, salesSummary, dateRangeData, language
-    );
+    const recentOrders = allOrders
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 15);
 
     const reportData: ReportData = {
       sellerName,
       sellerPhone: phone,
+      sellerLocation,
       reportType,
       dateLabel,
       startDate,
@@ -94,12 +107,17 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       pendingRevenue: dateRangeData?.pendingRevenue ?? salesSummary.pendingRevenue,
       averageOrderValue: salesSummary.averageOrderValue,
       topProducts,
+      allProductStats,
+      catalogItems,
+      recentOrders,
       dateRangeAnalytics: dateRangeData,
-      recommendations,
+      recommendations: [],
       generatedAt: new Date().toISOString(),
     };
 
-    const pdfBuffer = await buildPdf(reportData, language);
+    reportData.recommendations = await generateRecommendations(reportData);
+
+    const pdfBuffer = await buildPdf(reportData);
 
     const s3Key = `reports/${phone}/${reportType}-${startDate}-to-${endDate}.pdf`;
     await s3Client.send(new PutObjectCommand({
@@ -122,7 +140,7 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
 
     const voiceSummary = buildVoiceSummary(reportData, language);
 
-    console.log(`✅ Report generated: ${s3Key}`);
+    console.log(`Report generated: ${s3Key}`);
 
     return {
       success: true,
@@ -131,7 +149,7 @@ export async function generateReport(request: ReportRequest): Promise<ReportResu
       voiceSummary,
     };
   } catch (error) {
-    console.error('❌ Report generation failed:', error);
+    console.error('Report generation failed:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -163,7 +181,7 @@ function getDateRange(
     return {
       startDate,
       endDate,
-      dateLabel: ist.toLocaleDateString('hi-IN', { month: 'long', year: 'numeric' }),
+      dateLabel: `${startDate} to ${endDate}`,
       dateQuery: 'last_month',
     };
   }
@@ -180,241 +198,317 @@ function getDateRange(
   };
 }
 
-async function buildPdf(data: ReportData, _language: 'hi' | 'mr' | 'en'): Promise<Buffer> {
-  const labels = {
-    title: 'Vyapar Vaani - Business Report',
-    seller: 'Seller',
-    phone: 'Phone',
-    period: 'Period',
-    generated: 'Generated',
-    orderSummary: 'Order Summary',
-    confirmedOrders: 'Confirmed Orders',
-    confirmedRevenue: 'Confirmed Revenue',
-    avgOrder: 'Avg. Order Value',
-    pendingOrders: 'Pending Orders',
-    pendingRevenue: 'Pending Revenue',
-    rejectedOrders: 'Rejected',
-    cancelledOrders: 'Cancelled',
-    totalOrders: 'Total Orders',
-    topProducts: 'Top Products (Confirmed Sales)',
-    productName: 'Product',
-    orders: 'Orders',
-    quantity: 'Qty Sold',
-    revenue: 'Revenue (Rs)',
-    recommendations: 'Recommendations',
-    noData: 'No data available for this period.',
-    currency: 'Rs ',
-  };
+async function buildPdf(data: ReportData): Promise<Buffer> {
+  const content: any[] = [];
 
-  const productRows: any[][] = [
+  const HDR = '#4A90D9';
+  const HDR_TEXT = '#FFFFFF';
+  const CURRENCY = 'Rs ';
+
+  function sectionHeading(text: string): any {
+    return { text, fontSize: 15, bold: true, color: '#2C3E50', margin: [0, 10, 0, 8] };
+  }
+
+  function dividerLine(): any {
+    return {
+      canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: '#DDDDDD' }],
+      margin: [0, 8, 0, 8],
+    };
+  }
+
+  function statusColor(status: string): string {
+    const map: Record<string, string> = {
+      DELIVERED: '#27AE60', ACCEPTED: '#27AE60', PACKED: '#27AE60', SHIPPED: '#2980B9',
+      PENDING: '#F39C12', REJECTED: '#E74C3C', CANCELLED: '#95A5A6',
+    };
+    return map[status] || '#2C3E50';
+  }
+
+  function statusLabel(status: string): string {
+    const map: Record<string, string> = {
+      DELIVERED: 'Delivered', ACCEPTED: 'Accepted', PACKED: 'Packed', SHIPPED: 'Shipped',
+      PENDING: 'Pending', REJECTED: 'Rejected', CANCELLED: 'Cancelled',
+    };
+    return map[status] || status;
+  }
+
+  function fmtDate(ts: number): string {
+    return new Date(ts).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  content.push({
+    text: 'Vyapar Vaani - Business Report',
+    fontSize: 22, bold: true, color: '#2C3E50', alignment: 'center', margin: [0, 0, 0, 5],
+  });
+  content.push({
+    canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: HDR }],
+    margin: [0, 0, 0, 12],
+  });
+
+  const infoRows: any[][] = [
     [
-      { text: '#', bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
-      { text: labels.productName, bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
-      { text: labels.orders, bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
-      { text: labels.quantity, bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
-      { text: labels.revenue, bold: true, fillColor: '#4A90D9', color: '#FFFFFF' },
+      { text: 'Seller', bold: true, border: [false, false, false, false] },
+      { text: data.sellerName.toUpperCase(), border: [false, false, false, false] },
+      { text: 'Phone', bold: true, border: [false, false, false, false] },
+      { text: data.sellerPhone, border: [false, false, false, false] },
+    ],
+    [
+      { text: 'Period', bold: true, border: [false, false, false, false] },
+      { text: data.dateLabel, border: [false, false, false, false] },
+      { text: 'Generated', bold: true, border: [false, false, false, false] },
+      {
+        text: new Date(data.generatedAt).toLocaleDateString('en-IN', {
+          day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        }),
+        border: [false, false, false, false],
+      },
     ],
   ];
+  if (data.sellerLocation) {
+    infoRows.push([
+      { text: 'Location', bold: true, border: [false, false, false, false] },
+      { text: data.sellerLocation, colSpan: 3, border: [false, false, false, false] }, {}, {},
+    ]);
+  }
+  content.push({
+    table: { widths: [60, '*', 60, '*'], body: infoRows },
+    layout: 'noBorders',
+    margin: [0, 0, 0, 15],
+  });
 
-  if (data.topProducts.length > 0) {
-    data.topProducts.forEach((p, i) => {
-      productRows.push([
+  content.push(sectionHeading('Order Summary'));
+  content.push({
+    table: {
+      widths: ['*', '*', '*', '*', '*'],
+      body: [
+        [
+          { text: 'Total Orders', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Confirmed', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Pending', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Rejected', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Cancelled', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+        ],
+        [
+          { text: `${data.totalOrders}`, fontSize: 20, bold: true, color: '#2C3E50', alignment: 'center', border: [false, false, false, false] },
+          { text: `${data.confirmedOrders}`, fontSize: 20, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
+          { text: `${data.pendingOrders}`, fontSize: 20, bold: true, color: '#F39C12', alignment: 'center', border: [false, false, false, false] },
+          { text: `${data.rejectedOrders}`, fontSize: 20, bold: true, color: '#E74C3C', alignment: 'center', border: [false, false, false, false] },
+          { text: `${data.cancelledOrders}`, fontSize: 20, bold: true, color: '#95A5A6', alignment: 'center', border: [false, false, false, false] },
+        ],
+      ],
+    },
+    layout: 'noBorders',
+    margin: [0, 0, 0, 8],
+  });
+
+  content.push(sectionHeading('Revenue Breakdown'));
+  content.push({
+    table: {
+      widths: ['*', '*', '*'],
+      body: [
+        [
+          { text: 'Confirmed Revenue', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Pending Revenue', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+          { text: 'Avg. Order Value', fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
+        ],
+        [
+          { text: `${CURRENCY}${data.confirmedRevenue.toFixed(0)}`, fontSize: 22, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
+          { text: `${CURRENCY}${data.pendingRevenue.toFixed(0)}`, fontSize: 22, bold: true, color: '#F39C12', alignment: 'center', border: [false, false, false, false] },
+          { text: `${CURRENCY}${data.averageOrderValue.toFixed(0)}`, fontSize: 22, bold: true, color: '#2980B9', alignment: 'center', border: [false, false, false, false] },
+        ],
+      ],
+    },
+    layout: 'noBorders',
+    margin: [0, 0, 0, 5],
+  });
+
+  const totalRev = data.confirmedRevenue + data.pendingRevenue;
+  if (totalRev > 0) {
+    const confPct = data.confirmedRevenue > 0 ? Math.round((data.confirmedRevenue / totalRev) * 100) : 0;
+    content.push({
+      text: `Total Potential Revenue: ${CURRENCY}${totalRev.toFixed(0)}  (${confPct}% confirmed, ${100 - confPct}% pending)`,
+      fontSize: 10, color: '#34495E', italics: true, alignment: 'center', margin: [0, 0, 0, 10],
+    });
+  }
+
+  content.push(dividerLine());
+
+  const productsToShow = data.allProductStats.length > 0 ? data.allProductStats : data.topProducts;
+  content.push(sectionHeading('Product Performance (All Orders)'));
+
+  const prodRows: any[][] = [[
+    { text: '#', bold: true, fillColor: HDR, color: HDR_TEXT, alignment: 'center' as const },
+    { text: 'Product', bold: true, fillColor: HDR, color: HDR_TEXT },
+    { text: 'Orders', bold: true, fillColor: HDR, color: HDR_TEXT, alignment: 'center' as const },
+    { text: 'Qty Sold', bold: true, fillColor: HDR, color: HDR_TEXT, alignment: 'center' as const },
+    { text: 'Revenue', bold: true, fillColor: HDR, color: HDR_TEXT, alignment: 'right' as const },
+    { text: 'Avg Price', bold: true, fillColor: HDR, color: HDR_TEXT, alignment: 'right' as const },
+  ]];
+
+  if (productsToShow.length > 0) {
+    productsToShow.forEach((p, i) => {
+      const avgPrice = p.totalQuantity > 0 ? p.totalRevenue / p.totalQuantity : 0;
+      prodRows.push([
         { text: `${i + 1}`, alignment: 'center' },
         p.productName || 'Unknown',
         { text: `${p.totalOrders}`, alignment: 'center' },
         { text: `${p.totalQuantity}`, alignment: 'center' },
-        { text: `${labels.currency}${p.totalRevenue.toFixed(0)}`, alignment: 'right' },
+        { text: `${CURRENCY}${p.totalRevenue.toFixed(0)}`, alignment: 'right' },
+        { text: `${CURRENCY}${avgPrice.toFixed(0)}`, alignment: 'right' },
       ]);
     });
   } else {
-    productRows.push([{ text: labels.noData, colSpan: 5, alignment: 'center', italics: true }, {}, {}, {}, {}]);
+    prodRows.push([{
+      text: 'No products sold in this period.',
+      colSpan: 6, alignment: 'center', italics: true, color: '#7F8C8D',
+    }, {}, {}, {}, {}, {}]);
   }
 
-  const recommendationItems = data.recommendations.length > 0
-    ? data.recommendations.map((r, i) => `${i + 1}. ${r}`)
-    : [labels.noData];
+  content.push({
+    table: { headerRows: 1, widths: [25, '*', 45, 50, 65, 60], body: prodRows },
+    layout: {
+      hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+      hLineColor: () => '#DDDDDD', vLineColor: () => '#DDDDDD',
+      paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 5, paddingBottom: () => 5,
+    },
+    margin: [0, 0, 0, 10],
+  });
+
+  content.push(dividerLine());
+
+  const activeCatalog = data.catalogItems.filter(c => c.status === 'ACTIVE' || c.status === 'DRAFT');
+  content.push(sectionHeading(`Your Product Catalog (${activeCatalog.length} items)`));
+
+  if (activeCatalog.length > 0) {
+    const catRows: any[][] = [[
+      { text: '#', bold: true, fillColor: '#2ECC71', color: HDR_TEXT, alignment: 'center' as const },
+      { text: 'Product Name', bold: true, fillColor: '#2ECC71', color: HDR_TEXT },
+      { text: 'Price', bold: true, fillColor: '#2ECC71', color: HDR_TEXT, alignment: 'right' as const },
+      { text: 'Stock', bold: true, fillColor: '#2ECC71', color: HDR_TEXT, alignment: 'center' as const },
+      { text: 'Status', bold: true, fillColor: '#2ECC71', color: HDR_TEXT, alignment: 'center' as const },
+    ]];
+
+    activeCatalog.slice(0, 20).forEach((item, i) => {
+      const name = item.becknItem?.descriptor?.name || item.itemId;
+      const price = item.becknItem?.price?.value ? `${CURRENCY}${item.becknItem.price.value}` : 'N/A';
+      const stock = item.becknItem?.quantity?.available?.count ?? 'N/A';
+      const st = item.status === 'ACTIVE' ? 'Active' : 'Draft';
+      const sClr = item.status === 'ACTIVE' ? '#27AE60' : '#F39C12';
+      catRows.push([
+        { text: `${i + 1}`, alignment: 'center' },
+        name,
+        { text: price, alignment: 'right' },
+        { text: `${stock}`, alignment: 'center' },
+        { text: st, alignment: 'center', color: sClr, bold: true },
+      ]);
+    });
+
+    content.push({
+      table: { headerRows: 1, widths: [25, '*', 65, 50, 55], body: catRows },
+      layout: {
+        hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+        hLineColor: () => '#DDDDDD', vLineColor: () => '#DDDDDD',
+        paddingLeft: () => 6, paddingRight: () => 6, paddingTop: () => 5, paddingBottom: () => 5,
+      },
+      margin: [0, 0, 0, 10],
+    });
+  } else {
+    content.push({
+      text: 'No products listed in your catalog yet. Add products via WhatsApp to start selling.',
+      fontSize: 10, color: '#7F8C8D', italics: true, margin: [10, 0, 0, 10],
+    });
+  }
+
+  content.push(dividerLine());
+
+  content.push(sectionHeading(`Recent Orders (${data.recentOrders.length})`));
+
+  if (data.recentOrders.length > 0) {
+    const orderRows: any[][] = [[
+      { text: '#', bold: true, fillColor: '#8E44AD', color: HDR_TEXT, alignment: 'center' as const },
+      { text: 'Order ID', bold: true, fillColor: '#8E44AD', color: HDR_TEXT },
+      { text: 'Date', bold: true, fillColor: '#8E44AD', color: HDR_TEXT },
+      { text: 'Items', bold: true, fillColor: '#8E44AD', color: HDR_TEXT, alignment: 'center' as const },
+      { text: 'Amount', bold: true, fillColor: '#8E44AD', color: HDR_TEXT, alignment: 'right' as const },
+      { text: 'Status', bold: true, fillColor: '#8E44AD', color: HDR_TEXT, alignment: 'center' as const },
+    ]];
+
+    data.recentOrders.slice(0, 10).forEach((order, i) => {
+      const itemCount = order.items.reduce((s, it) => s + it.quantity, 0);
+      const amount = order.items.reduce((s, it) => s + it.price * it.quantity, 0);
+      const shortId = order.orderId.length > 12 ? '...' + order.orderId.slice(-8) : order.orderId;
+      orderRows.push([
+        { text: `${i + 1}`, alignment: 'center' },
+        { text: shortId, fontSize: 9 },
+        { text: fmtDate(order.createdAt), fontSize: 9 },
+        { text: `${itemCount}`, alignment: 'center' },
+        { text: `${CURRENCY}${amount.toFixed(0)}`, alignment: 'right' },
+        { text: statusLabel(order.status), alignment: 'center', color: statusColor(order.status), bold: true, fontSize: 9 },
+      ]);
+    });
+
+    content.push({
+      table: { headerRows: 1, widths: [25, '*', 65, 40, 60, 55], body: orderRows },
+      layout: {
+        hLineWidth: () => 0.5, vLineWidth: () => 0.5,
+        hLineColor: () => '#DDDDDD', vLineColor: () => '#DDDDDD',
+        paddingLeft: () => 5, paddingRight: () => 5, paddingTop: () => 4, paddingBottom: () => 4,
+      },
+      margin: [0, 0, 0, 10],
+    });
+
+    if (data.recentOrders.length > 10) {
+      content.push({
+        text: `... and ${data.recentOrders.length - 10} more orders not shown`,
+        fontSize: 9, color: '#7F8C8D', italics: true, alignment: 'center', margin: [0, 0, 0, 5],
+      });
+    }
+  } else {
+    content.push({
+      text: 'No orders received in this period. Share your marketplace link to start receiving orders.',
+      fontSize: 10, color: '#7F8C8D', italics: true, margin: [10, 0, 0, 10],
+    });
+  }
+
+  content.push(dividerLine());
+
+  content.push(sectionHeading('AI-Powered Recommendations'));
+
+  if (data.recommendations.length > 0) {
+    data.recommendations.forEach((r, i) => {
+      const cleaned = r.replace(/^\d+[\.\)\-]\s*/, '').trim();
+      content.push({
+        columns: [
+          { text: `${i + 1}.`, width: 18, bold: true, color: HDR, fontSize: 11 },
+          { text: cleaned, width: '*', fontSize: 11, color: '#34495E', lineHeight: 1.4 },
+        ],
+        margin: [5, 0, 0, 6],
+      });
+    });
+  } else {
+    content.push({
+      text: 'Add more products and get orders to receive personalized AI recommendations.',
+      fontSize: 10, color: '#7F8C8D', italics: true, margin: [10, 0, 0, 6],
+    });
+  }
+
+  content.push({
+    canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#DDDDDD' }],
+    margin: [0, 20, 0, 10],
+  });
+  content.push({
+    text: 'Powered by Vyapar Vaani -- AI Business Assistant for Rural India',
+    fontSize: 9, color: '#95A5A6', alignment: 'center', italics: true,
+  });
 
   const docDefinition: any = {
     pageSize: 'A4',
-    pageMargins: [40, 60, 40, 60],
-
-    content: [
-
-      {
-        text: labels.title,
-        fontSize: 22,
-        bold: true,
-        color: '#2C3E50',
-        alignment: 'center',
-        margin: [0, 0, 0, 5],
-      },
-      {
-        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: '#4A90D9' }],
-        margin: [0, 0, 0, 15],
-      },
-
-      {
-        columns: [
-          {
-            width: '*',
-            text: [
-              { text: `${labels.seller}: `, bold: true },
-              data.sellerName,
-            ],
-          },
-          {
-            width: '*',
-            text: [
-              { text: `${labels.phone}: `, bold: true },
-              data.sellerPhone,
-            ],
-            alignment: 'right',
-          },
-        ],
-        margin: [0, 0, 0, 5],
-      },
-      {
-        columns: [
-          {
-            width: '*',
-            text: [
-              { text: `${labels.period}: `, bold: true },
-              data.dateLabel,
-            ],
-          },
-          {
-            width: '*',
-            text: [
-              { text: `${labels.generated}: `, bold: true },
-              new Date(data.generatedAt).toLocaleDateString('en-IN', {
-                day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-              }),
-            ],
-            alignment: 'right',
-          },
-        ],
-        margin: [0, 0, 0, 20],
-      },
-
-      {
-        text: labels.orderSummary,
-        fontSize: 16,
-        bold: true,
-        color: '#2C3E50',
-        margin: [0, 0, 0, 10],
-      },
-      {
-        table: {
-          widths: ['*', '*', '*'],
-          body: [
-            [
-              { text: labels.confirmedOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-              { text: labels.confirmedRevenue, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-              { text: labels.avgOrder, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-            ],
-            [
-              { text: `${data.confirmedOrders}`, fontSize: 22, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
-              { text: `${labels.currency}${data.confirmedRevenue.toFixed(0)}`, fontSize: 22, bold: true, color: '#27AE60', alignment: 'center', border: [false, false, false, false] },
-              { text: `${labels.currency}${data.averageOrderValue.toFixed(0)}`, fontSize: 22, bold: true, color: '#2980B9', alignment: 'center', border: [false, false, false, false] },
-            ],
-          ],
-        },
-        layout: 'noBorders',
-        margin: [0, 0, 0, 10],
-      },
-
-      ...(data.pendingOrders > 0 || data.rejectedOrders > 0 || data.cancelledOrders > 0 ? [{
-        table: {
-          widths: ['*', '*', '*', '*'],
-          body: [
-            [
-              { text: labels.totalOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-              { text: labels.pendingOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-              { text: labels.rejectedOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-              { text: labels.cancelledOrders, fontSize: 9, color: '#7F8C8D', alignment: 'center', border: [false, false, false, false] },
-            ],
-            [
-              { text: `${data.totalOrders}`, fontSize: 16, bold: true, color: '#2C3E50', alignment: 'center', border: [false, false, false, false] },
-              { text: `${data.pendingOrders}`, fontSize: 16, bold: true, color: '#F39C12', alignment: 'center', border: [false, false, false, false] },
-              { text: `${data.rejectedOrders}`, fontSize: 16, bold: true, color: '#E74C3C', alignment: 'center', border: [false, false, false, false] },
-              { text: `${data.cancelledOrders}`, fontSize: 16, bold: true, color: '#95A5A6', alignment: 'center', border: [false, false, false, false] },
-            ],
-          ],
-        },
-        layout: 'noBorders',
-        margin: [0, 0, 0, 5] as [number, number, number, number],
-      }] : []),
-      ...(data.pendingRevenue > 0 ? [{
-        text: `Pending Revenue: ${labels.currency}${data.pendingRevenue.toFixed(0)} (awaiting confirmation)`,
-        fontSize: 10,
-        color: '#F39C12',
-        italics: true,
-        alignment: 'center' as const,
-        margin: [0, 0, 0, 15] as [number, number, number, number],
-      }] : [{ text: '', margin: [0, 0, 0, 15] as [number, number, number, number] }]),
-
-      {
-        text: labels.topProducts,
-        fontSize: 16,
-        bold: true,
-        color: '#2C3E50',
-        margin: [0, 0, 0, 10],
-      },
-      {
-        table: {
-          headerRows: 1,
-          widths: [30, '*', 60, 60, 80],
-          body: productRows,
-        },
-        layout: {
-          hLineWidth: () => 0.5,
-          vLineWidth: () => 0.5,
-          hLineColor: () => '#DDDDDD',
-          vLineColor: () => '#DDDDDD',
-          paddingLeft: () => 8,
-          paddingRight: () => 8,
-          paddingTop: () => 6,
-          paddingBottom: () => 6,
-        },
-        margin: [0, 0, 0, 25],
-      },
-
-      {
-        text: labels.recommendations,
-        fontSize: 16,
-        bold: true,
-        color: '#2C3E50',
-        margin: [0, 0, 0, 10],
-      },
-      ...recommendationItems.map(r => ({
-        text: r,
-        fontSize: 11,
-        color: '#34495E',
-        margin: [10, 0, 0, 6],
-        lineHeight: 1.4,
-      })),
-
-      {
-        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#DDDDDD' }],
-        margin: [0, 25, 0, 10],
-      },
-      {
-        text: 'Powered by Vyapar Vaani — AI Business Assistant for Rural India',
-        fontSize: 9,
-        color: '#95A5A6',
-        alignment: 'center',
-        italics: true,
-      },
-    ],
-
-    defaultStyle: {
-      fontSize: 11,
-      lineHeight: 1.3,
-    },
+    pageMargins: [40, 50, 40, 50],
+    content,
+    defaultStyle: { fontSize: 11, lineHeight: 1.3 },
   };
 
   const vfsFonts = require('pdfmake/build/vfs_fonts');
-
   const printer = new PdfPrinter({
     Roboto: {
       normal: Buffer.from(vfsFonts['Roboto-Regular.ttf'], 'base64'),
@@ -435,36 +529,63 @@ async function buildPdf(data: ReportData, _language: 'hi' | 'mr' | 'en'): Promis
   });
 }
 
-async function generateRecommendations(
-  sellerName: string,
-  topProducts: ProductSalesStats[],
-  salesSummary: { totalOrders: number; confirmedOrders: number; pendingOrders: number; confirmedRevenue: number; totalRevenue: number; averageOrderValue: number; topProduct: string | null },
-  dateRangeData: DateRangeAnalytics | null,
-  language: 'hi' | 'mr' | 'en'
-): Promise<string[]> {
+async function generateRecommendations(data: ReportData): Promise<string[]> {
   try {
-    const productList = topProducts.map(p => `${p.productName}: ${p.totalOrders} orders, Rs ${p.totalRevenue}`).join('\n');
-    const langName = language === 'hi' ? 'Hindi' : language === 'mr' ? 'Marathi' : 'English';
+    const productList = data.allProductStats.length > 0
+      ? data.allProductStats.map(p =>
+          `${p.productName}: ${p.totalOrders} orders, ${p.totalQuantity} units sold, Rs ${p.totalRevenue.toFixed(0)} revenue, avg Rs ${p.averageOrderValue.toFixed(0)}/order`
+        ).join('\n')
+      : 'No products sold yet';
 
-    const prompt = `You are a rural Indian business advisor. Based on this seller's data, give exactly 4 short, actionable recommendations in ${langName} (use Devanagari script for Hindi/Marathi).
+    const catalogList = data.catalogItems
+      .filter(c => c.status === 'ACTIVE' || c.status === 'DRAFT')
+      .map(c => {
+        const name = c.becknItem?.descriptor?.name || c.itemId;
+        const price = c.becknItem?.price?.value || 'unknown';
+        const stock = c.becknItem?.quantity?.available?.count ?? 'unknown';
+        return `${name}: listed at Rs ${price}, stock ${stock}`;
+      })
+      .join('\n') || 'No products in catalog';
 
-Seller: ${sellerName}
-Confirmed Orders: ${salesSummary.confirmedOrders}
-Pending Orders: ${salesSummary.pendingOrders}
-Total Orders: ${salesSummary.totalOrders}
-Confirmed Revenue: Rs ${salesSummary.confirmedRevenue}
-Top Product: ${salesSummary.topProduct || 'None yet'}
-Products:
-${productList || 'No products sold yet'}
+    const orderSummary = data.recentOrders.length > 0
+      ? data.recentOrders.slice(0, 5).map(o => {
+          const amt = o.items.reduce((s, it) => s + it.price * it.quantity, 0);
+          return `Order ${o.orderId.slice(-6)}: Rs ${amt.toFixed(0)}, status ${o.status}, ${new Date(o.createdAt).toLocaleDateString('en-IN')}`;
+        }).join('\n')
+      : 'No recent orders';
 
-Rules:
-- Each recommendation max 2 sentences
-- Focus on: pricing strategy, product diversification, seasonal opportunities, customer retention
-- Use real numbers from the data
-- If no sales data, suggest getting started strategies
-- Write in ${langName} only (Devanagari for Hindi/Marathi)
-- NO bullet points or special characters
-- Return exactly 4 lines, one recommendation per line`;
+    const prompt = `You are a business advisor for rural Indian sellers on the ONDC marketplace. Based on this seller's REAL data, give exactly 4 specific, actionable recommendations in ENGLISH.
+
+Seller: ${data.sellerName}
+Location: ${data.sellerLocation || 'India'}
+Report Period: ${data.dateLabel}
+
+ORDER DATA:
+Total Orders: ${data.totalOrders}
+Confirmed Orders: ${data.confirmedOrders} (revenue: Rs ${data.confirmedRevenue.toFixed(0)})
+Pending Orders: ${data.pendingOrders} (revenue: Rs ${data.pendingRevenue.toFixed(0)})
+Rejected Orders: ${data.rejectedOrders}
+Cancelled Orders: ${data.cancelledOrders}
+Average Order Value: Rs ${data.averageOrderValue.toFixed(0)}
+
+PRODUCT SALES:
+${productList}
+
+CATALOG ITEMS (currently listed):
+${catalogList}
+
+RECENT ORDERS:
+${orderSummary}
+
+RULES:
+- Write in ENGLISH only. No Hindi, no Devanagari, no special characters.
+- Each recommendation must be 1-2 sentences, specific and actionable.
+- Reference ACTUAL numbers from the data above (products, revenue, order counts).
+- Focus on: (a) improving conversion of pending orders to confirmed, (b) pricing optimization, (c) catalog expansion based on what sells, (d) stock and fulfillment improvements.
+- If the seller has few or no sales, focus on catalog building, pricing strategy, and promotion tips.
+- If there are rejected/cancelled orders, address why and how to reduce them.
+- Be concrete: mention specific product names, amounts, and percentages.
+- Return EXACTLY 4 lines, one recommendation per line. No numbering, no bullets.`;
 
     const command = new InvokeModelCommand({
       modelId: NOVA_LITE_MODEL_ID,
@@ -472,7 +593,7 @@ Rules:
       accept: 'application/json',
       body: JSON.stringify({
         messages: [{ role: 'user', content: [{ text: prompt }] }],
-        inferenceConfig: { max_new_tokens: 400, temperature: 0.7 },
+        inferenceConfig: { max_new_tokens: 500, temperature: 0.7 },
       }),
     });
 
@@ -481,27 +602,19 @@ Rules:
     const text = responseBody.output.message.content[0].text.trim();
 
     const lines = text.split('\n').filter((l: string) => l.trim().length > 0).slice(0, 4);
-    return lines.length > 0 ? lines : getDefaultRecommendations(language);
+    return lines.length > 0 ? lines : getDefaultRecommendations();
   } catch (error) {
     console.warn('AI recommendations failed, using defaults:', error);
-    return getDefaultRecommendations(language);
+    return getDefaultRecommendations();
   }
 }
 
-function getDefaultRecommendations(language: 'hi' | 'mr' | 'en'): string[] {
-  if (language === 'hi' || language === 'mr') {
-    return [
-      'अपने सबसे ज़्यादा बिकने वाले उत्पादों का स्टॉक हमेशा तैयार रखें।',
-      'मंडी भाव देखकर अपनी कीमतें अपडेट करते रहें — इससे ज़्यादा ग्राहक आएंगे।',
-      'नए मौसमी उत्पाद जोड़ें — ग्राहकों को वैराइटी पसंद आती है।',
-      'अपना मार्केटप्लेस लिंक ज़्यादा से ज़्यादा लोगों के साथ शेयर करें।',
-    ];
-  }
+function getDefaultRecommendations(): string[] {
   return [
-    'Keep top-selling products well stocked to avoid missing sales.',
-    'Update prices based on current mandi rates to attract more customers.',
-    'Add seasonal products to your catalog for variety.',
-    'Share your marketplace link with more people to grow your customer base.',
+    'Keep your top-selling products well stocked to avoid missing orders when demand is high.',
+    'Review your pricing regularly against current mandi rates to stay competitive and attract more buyers.',
+    'Add seasonal products to your catalog to give customers more variety and increase average order value.',
+    'Share your ONDC marketplace link on WhatsApp groups and with local contacts to reach more customers.',
   ];
 }
 
@@ -517,6 +630,8 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
       parts.push(`${data.sellerName} ji, aapki report taiyaar hai.`);
     }
 
+    parts.push(`Kul ${data.totalOrders} orders aaye.`);
+
     if (data.confirmedOrders > 0) {
       parts.push(`Confirmed orders: ${data.confirmedOrders}, revenue ${data.confirmedRevenue} rupaye.`);
     }
@@ -527,33 +642,39 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
       parts.push('Is samay mein abhi koi order nahi aaya.');
     }
 
-    if (data.topProducts.length > 0) {
-      parts.push(`Sabse zyada bikne wala product ${data.topProducts[0].productName} raha.`);
+    if (data.allProductStats.length > 0) {
+      parts.push(`Sabse zyada bikne wala product ${data.allProductStats[0].productName} raha.`);
     }
 
-    parts.push('PDF report bhej raha hoon, ismein poori detail aur suggestions hain.');
+    const activeCount = data.catalogItems.filter(c => c.status === 'ACTIVE').length;
+    parts.push(`Aapke catalog mein ${activeCount} products listed hain.`);
+
+    parts.push('PDF report bhej raha hoon, ismein poori detail aur AI suggestions hain.');
 
     return parts.join(' ');
   }
 
   const parts: string[] = [];
   parts.push(`${data.sellerName}, your ${data.reportType} report is ready.`);
+  parts.push(`Total ${data.totalOrders} orders received.`);
 
   if (data.confirmedOrders > 0) {
     parts.push(`Confirmed: ${data.confirmedOrders} orders, ${data.confirmedRevenue} rupees revenue.`);
   }
   if (data.pendingOrders > 0) {
-    parts.push(`Pending: ${data.pendingOrders} orders (${data.pendingRevenue} rupees awaiting confirmation).`);
+    parts.push(`Pending: ${data.pendingOrders} orders worth ${data.pendingRevenue} rupees.`);
   }
   if (data.totalOrders === 0) {
     parts.push('No orders recorded for this period yet.');
   }
 
-  if (data.topProducts.length > 0) {
-    parts.push(`Your top selling product was ${data.topProducts[0].productName}.`);
+  if (data.allProductStats.length > 0) {
+    parts.push(`Top product: ${data.allProductStats[0].productName}.`);
   }
 
-  parts.push('Sending you the detailed PDF report now with recommendations.');
+  const activeCount = data.catalogItems.filter(c => c.status === 'ACTIVE').length;
+  parts.push(`You have ${activeCount} products in your catalog.`);
+  parts.push('Sending the detailed PDF report with AI-powered recommendations.');
 
   return parts.join(' ');
 }
