@@ -1,9 +1,13 @@
-
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { downloadImage } from '../services/media-download';
 import { getUserState, updateUserState } from '../services/state-manager';
 import { getPartialData, savePartialData } from '../services/partial-data-store';
-import { sendTextMessage, markMessageAsRead, sendTypingIndicator, setLastMessageId } from './whatsapp-message-sender';
+import {
+  sendTextMessage,
+  markMessageAsRead,
+  sendTypingIndicator,
+  setLastMessageId,
+} from './whatsapp-message-sender';
 import { PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { ImageEnhancementRequest, ImageEnhancementResponse } from './image-enhancement';
 
@@ -25,27 +29,22 @@ interface ImageHandlerResponse {
   };
 }
 
-export const handler = async (
-  event: any
-): Promise<ImageHandlerResponse> => {
+export const handler = async (event: any): Promise<ImageHandlerResponse> => {
   console.log('Image handler request:', JSON.stringify(event, null, 2));
 
   try {
-
     let phone: string;
     let mediaId: string;
     let messageId: string;
 
     if (event.detail) {
-
       phone = event.detail.phone;
-
-      mediaId = event.detail.content?.mediaId || 
-                event.detail.content?.mediaUrl || 
-                event.detail.content?.image?.id;
+      mediaId =
+        event.detail.content?.mediaId ||
+        event.detail.content?.mediaUrl ||
+        event.detail.content?.image?.id;
       messageId = event.detail.messageId;
     } else {
-
       phone = event.phone;
       mediaId = event.mediaId;
       messageId = event.messageId;
@@ -58,9 +57,8 @@ export const handler = async (
     if (messageId) {
       setLastMessageId(phone, messageId);
       await markMessageAsRead(messageId, true);
-      console.log('✅ Image handler: typing indicator sent');
+      console.log('✅ Image handler: message marked as read');
     } else {
-
       await sendTypingIndicator(phone);
     }
 
@@ -90,9 +88,7 @@ export const handler = async (
     }
 
     const partialData = await getPartialData(phone);
-    if (!partialData) {
-      throw new Error('No partial data found for user');
-    }
+    if (!partialData) throw new Error('No partial data found for user');
 
     console.log('Partial data:', partialData);
 
@@ -116,30 +112,35 @@ export const handler = async (
     }
 
     const originalImageUrl = downloadResult.s3Url;
-    console.log('Original image uploaded:', originalImageUrl);
+    console.log('Original image uploaded to S3:', originalImageUrl);
 
-    console.log('Calling image enhancement Lambda');
-    const enhancementRequest: ImageEnhancementRequest = {
-      rawImageUrl: originalImageUrl,
-      productName: partialData.productName || 'Product',
-      productCategory: partialData.category,
-      itemId: `item-${Date.now()}`,
-      sellerId: phone.replace(/\+/g, ''),
-    };
-
-    let enhancedImageUrl = originalImageUrl; 
+    // ── Image Enhancement ────────────────────────────────────────────────────
+    let enhancedImageUrl = originalImageUrl; // safe fallback
 
     try {
+      const enhancementRequest: ImageEnhancementRequest = {
+        rawImageUrl: originalImageUrl,
+        productName: partialData.productName || 'Product',
+        productCategory: partialData.category,
+        itemId: `item-${Date.now()}`,
+        sellerId: phone.replace(/\+/g, ''),
+      };
+
+      console.log('Calling image enhancement Lambda...');
       const enhancementResponse = await invokeImageEnhancement(enhancementRequest);
 
       if (enhancementResponse.success && enhancementResponse.enhancedImageUrl) {
         enhancedImageUrl = enhancementResponse.enhancedImageUrl;
-        console.log('Image enhanced successfully:', enhancedImageUrl);
+        console.log('✅ Image enhanced successfully:', enhancedImageUrl);
       } else {
-        console.warn('Image enhancement failed, using original:', enhancementResponse.error);
+        // FIX #4: Log the actual error from the enhancement Lambda
+        console.warn(
+          'Image enhancement returned failure — using original.',
+          JSON.stringify(enhancementResponse.error)
+        );
       }
     } catch (error: any) {
-      console.error('Image enhancement error:', error);
+      console.error('Image enhancement invocation threw:', error.message);
       console.log('Falling back to original image');
     }
 
@@ -155,40 +156,43 @@ export const handler = async (
     });
     console.log('Updated state to CONFIRMATION_PENDING');
 
-    console.log('Calling confirmation-handler Lambda');
+    // ── Trigger confirmation handler ─────────────────────────────────────────
+    console.log('Calling confirmation-handler Lambda...');
     const confirmationRequest = {
-      detail: {
-        phone,
-        action: 'generate',
-      },
+      detail: { phone, action: 'generate' },
     };
 
-    const confirmationCommand = new InvokeCommand({
-      FunctionName: process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler',
-      InvocationType: 'RequestResponse',
-      Payload: JSON.stringify(confirmationRequest),
-    });
-
     try {
+      const confirmationCommand = new InvokeCommand({
+        FunctionName:
+          process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler',
+        InvocationType: 'RequestResponse',
+        Payload: JSON.stringify(confirmationRequest),
+      });
+
       const confirmationResponse = await lambdaClient.send(confirmationCommand);
+
+      // FIX #4: Check for Lambda-level function errors
+      if (confirmationResponse.FunctionError) {
+        console.error(
+          'Confirmation handler Lambda threw a function error:',
+          confirmationResponse.FunctionError
+        );
+        throw new Error(`Confirmation handler error: ${confirmationResponse.FunctionError}`);
+      }
+
       if (confirmationResponse.Payload) {
         const result = JSON.parse(new TextDecoder().decode(confirmationResponse.Payload));
         console.log('Confirmation handler result:', result);
       }
     } catch (error: any) {
-      console.error('Failed to call confirmation handler:', error);
-
+      console.error('Failed to call confirmation handler, sending fallback message:', error.message);
       await sendConfirmationMessage(phone, partialData, userState.language || 'hi');
     }
 
-    return {
-      success: true,
-      originalImageUrl,
-      enhancedImageUrl,
-    };
+    return { success: true, originalImageUrl, enhancedImageUrl };
   } catch (error: any) {
     console.error('Image handler failed:', error);
-
     return {
       success: false,
       error: {
@@ -199,19 +203,32 @@ export const handler = async (
   }
 };
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 async function invokeImageEnhancement(
   request: ImageEnhancementRequest
 ): Promise<ImageEnhancementResponse> {
   const command = new InvokeCommand({
-    FunctionName: process.env.IMAGE_ENHANCEMENT_FUNCTION_NAME || 'vyapar-vaani-image-enhancement',
+    FunctionName:
+      process.env.IMAGE_ENHANCEMENT_FUNCTION_NAME || 'vyapar-vaani-image-enhancement',
     InvocationType: 'RequestResponse',
     Payload: JSON.stringify(request),
   });
 
   const response = await lambdaClient.send(command);
 
+  // FIX #4: Detect Lambda execution errors (timeout, OOM, unhandled exception)
+  if (response.FunctionError) {
+    const rawPayload = response.Payload
+      ? new TextDecoder().decode(response.Payload)
+      : '(no payload)';
+    throw new Error(
+      `Image enhancement Lambda function error [${response.FunctionError}]: ${rawPayload}`
+    );
+  }
+
   if (!response.Payload) {
-    throw new Error('No response from image enhancement Lambda');
+    throw new Error('No response payload from image enhancement Lambda');
   }
 
   const payload = JSON.parse(new TextDecoder().decode(response.Payload));
@@ -223,13 +240,12 @@ async function sendConfirmationMessage(
   partialData: any,
   language: string
 ): Promise<void> {
-
   const langCode = language.split('-')[0] as 'hi' | 'mr' | 'en';
 
   const messages: Record<string, string> = {
-    'hi': `✅ उत्पाद की छवि प्राप्त हुई!\n\nउत्पाद: ${partialData.productName}\nकीमत: ₹${partialData.price}\nमात्रा: ${partialData.quantity} ${partialData.unit}\n\nकृपया पुष्टि करें कि यह जानकारी सही है।`,
-    'mr': `✅ उत्पादाची प्रतिमा प्राप्त झाली!\n\nउत्पाद: ${partialData.productName}\nकिंमत: ₹${partialData.price}\nप्रमाण: ${partialData.quantity} ${partialData.unit}\n\nकृपया पुष्टी करा की ही माहिती बरोबर आहे.`,
-    'en': `✅ Product image received!\n\nProduct: ${partialData.productName}\nPrice: ₹${partialData.price}\nQuantity: ${partialData.quantity} ${partialData.unit}\n\nPlease confirm that this information is correct.`,
+    hi: `✅ उत्पाद की छवि प्राप्त हुई!\n\nउत्पाद: ${partialData.productName}\nकीमत: ₹${partialData.price}\nमात्रा: ${partialData.quantity} ${partialData.unit}\n\nकृपया पुष्टि करें कि यह जानकारी सही है।`,
+    mr: `✅ उत्पादाची प्रतिमा प्राप्त झाली!\n\nउत्पाद: ${partialData.productName}\nकिंमत: ₹${partialData.price}\nप्रमाण: ${partialData.quantity} ${partialData.unit}\n\nकृपया पुष्टी करा की ही माहिती बरोबर आहे.`,
+    en: `✅ Product image received!\n\nProduct: ${partialData.productName}\nPrice: ₹${partialData.price}\nQuantity: ${partialData.quantity} ${partialData.unit}\n\nPlease confirm that this information is correct.`,
   };
 
   const message = messages[langCode] || messages['hi'];
