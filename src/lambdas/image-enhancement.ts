@@ -3,8 +3,10 @@ import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { s3Client, bedrockClient, PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { Readable } from 'stream';
 import * as zlib from 'zlib';
+import Jimp from 'jimp';
 
 const TITAN_IMAGE_MODEL_ID = 'amazon.titan-image-generator-v2:0';
+const TITAN_MAX_DIMENSION = 1408;
 
 export interface ImageEnhancementRequest {
   rawImageUrl: string;
@@ -65,8 +67,9 @@ export const handler = async (
     const rawImageBuffer = await downloadImageFromS3(event.rawImageUrl);
     console.log(`Downloaded image: ${rawImageBuffer.length} bytes`);
 
-    const base64Image = rawImageBuffer.toString('base64');
-    console.log(`Encoded image to base64: ${base64Image.length} characters`);
+    const resizedBuffer = await resizeForTitan(rawImageBuffer);
+    const base64Image = resizedBuffer.toString('base64');
+    console.log(`Image ready for Titan: ${base64Image.length} base64 chars`);
 
     let enhancedImageBuffer: Buffer | undefined;
 
@@ -109,18 +112,16 @@ export const handler = async (
           taskType: 'INPAINTING',
           inPaintingParams: {
             image: inpaintSourceBase64,
-            text: 'pure solid white background, bright white studio backdrop, clean plain white, professional product photography, even white illumination, no shadows',
-            negativeText:
-              'color, pattern, texture, gradient, dark, shadow, floor, table, wall, clutter, objects, text, watermark, blur, noise',
-            maskPrompt:
-              'background, wall, floor, table, surface, surroundings, everything behind and around the main product, backdrop, environment, shadow',
+            text: 'clean solid white background, studio product photography, bright even white backdrop',
+            negativeText: 'color pattern texture gradient dark shadow floor table wall clutter objects text watermark blur noise',
+            maskPrompt: 'background wall floor table surface surroundings backdrop environment shadow',
           },
           imageGenerationConfig: {
             quality: 'premium',
             numberOfImages: 1,
             height: 1024,
             width: 1024,
-            cfgScale: 8.0,
+            cfgScale: 6.0,
           },
         };
 
@@ -175,6 +176,27 @@ async function downloadImageFromS3(imageUrl: string): Promise<Buffer> {
   const response = await s3Client.send(command);
   if (!response.Body) throw new Error('Empty response body from S3');
   return streamToBuffer(response.Body as Readable);
+}
+
+async function resizeForTitan(imageBuffer: Buffer): Promise<Buffer> {
+  const image = await Jimp.read(imageBuffer);
+  const { width, height } = image.bitmap;
+  console.log(`Original image dimensions: ${width}x${height}`);
+
+  if (width <= TITAN_MAX_DIMENSION && height <= TITAN_MAX_DIMENSION) {
+    console.log('Image within Titan limits, no resize needed');
+    return imageBuffer;
+  }
+
+  const scale = TITAN_MAX_DIMENSION / Math.max(width, height);
+  const newW = Math.round(width * scale);
+  const newH = Math.round(height * scale);
+  console.log(`Resizing for Titan: ${width}x${height} -> ${newW}x${newH}`);
+
+  image.resize(newW, newH);
+  const resizedBuffer = await image.getBufferAsync(Jimp.MIME_JPEG);
+  console.log(`Resized image: ${resizedBuffer.length} bytes`);
+  return resizedBuffer;
 }
 
 function parseS3Url(url: string): { bucket: string; key: string } {
