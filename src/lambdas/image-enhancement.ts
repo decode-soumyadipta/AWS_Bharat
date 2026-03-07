@@ -95,14 +95,14 @@ export const handler = async (
       console.log('Background removed successfully, compositing on white canvas...');
 
       const cutoutBuffer = Buffer.from(cutoutBase64, 'base64');
-      const compositedBuffer = compositeOnWhiteBackground(cutoutBuffer);
+      const compositeResult = compositeOnWhiteBackground(cutoutBuffer);
 
-      if (compositedBuffer !== cutoutBuffer) {
-        enhancedImageBuffer = compositedBuffer;
+      if (compositeResult.composited) {
+        enhancedImageBuffer = compositeResult.buffer;
         whiteBackgroundApplied = true;
         console.log(`White background composite SUCCESS: ${enhancedImageBuffer.length} bytes`);
       } else {
-        console.warn('White compositing skipped (non-RGBA format from Titan), falling through to INPAINTING...');
+        console.warn('White compositing skipped (no alpha channel from Titan), falling through to INPAINTING...');
 
       }
     } catch (bgRemovalError: any) {
@@ -125,7 +125,7 @@ export const handler = async (
             numberOfImages: 1,
             height: 1024,
             width: 1024,
-            cfgScale: 10.0, 
+            cfgScale: 8.0, 
           },
         };
 
@@ -251,14 +251,14 @@ async function streamToBuffer(stream: Readable): Promise<Buffer> {
   });
 }
 
-function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
+function compositeOnWhiteBackground(imageBuffer: Buffer): { buffer: Buffer; composited: boolean } {
 
   const isPng = imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && 
                 imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47;
 
   if (!isPng) {
-    console.log('Image is not PNG, returning as-is (same ref)');
-    return imageBuffer;
+    console.log('Image is not PNG, returning as-is');
+    return { buffer: imageBuffer, composited: false };
   }
 
   try {
@@ -267,7 +267,7 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
 
     if (bitDepth !== 8) {
       console.log(`PNG bitDepth=${bitDepth} (not 8) - cannot process, returning as-is`);
-      return imageBuffer;
+      return { buffer: imageBuffer, composited: false };
     }
 
     if (colorType === 6) {
@@ -307,23 +307,12 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
 
       const result = encodePng(width, height, rgbaPixels);
       console.log(`White background composite complete: ${result.length} bytes`);
-      return result;
+      return { buffer: result, composited: true };
     }
 
     if (colorType === 2) {
-      console.log(`Converting ${width}x${height} RGB PNG to RGBA with white bg check`);
-      const rgbaPixels = Buffer.alloc(width * height * 4);
-      for (let i = 0; i < width * height; i++) {
-        const srcIdx = i * 3;
-        const dstIdx = i * 4;
-        rgbaPixels[dstIdx] = rawPixels[srcIdx];
-        rgbaPixels[dstIdx + 1] = rawPixels[srcIdx + 1];
-        rgbaPixels[dstIdx + 2] = rawPixels[srcIdx + 2];
-        rgbaPixels[dstIdx + 3] = 255; 
-      }
-      const result = encodePng(width, height, rgbaPixels);
-      console.log(`RGB→RGBA conversion complete: ${result.length} bytes`);
-      return result;
+      console.log(`RGB PNG ${width}x${height} has no alpha channel — cannot composite, falling through to INPAINTING`);
+      return { buffer: imageBuffer, composited: false };
     }
 
     if (colorType === 4) {
@@ -356,14 +345,14 @@ function compositeOnWhiteBackground(imageBuffer: Buffer): Buffer {
       }
       const result = encodePng(width, height, rgbaPixels);
       console.log(`Grayscale+Alpha→RGBA conversion complete: ${result.length} bytes`);
-      return result;
+      return { buffer: result, composited: true };
     }
 
     console.log(`PNG colorType=${colorType} - unsupported, returning as-is`);
-    return imageBuffer;
+    return { buffer: imageBuffer, composited: false };
   } catch (error: any) {
     console.warn('PNG compositing failed, returning original:', error.message);
-    return imageBuffer;
+    return { buffer: imageBuffer, composited: false };
   }
 }
 

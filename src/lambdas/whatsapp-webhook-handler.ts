@@ -338,6 +338,13 @@ export async function handler(
         };
       }
 
+      try {
+        await markMessageAsRead(inboundEvent.messageId, true);
+        console.log('✅ Re-sent typing indicator before EventBridge publish');
+      } catch (typingErr) {
+        console.warn('⚠️ Pre-publish typing indicator failed (non-blocking):', typingErr);
+      }
+
       await publishToEventBridge(inboundEvent, userState, routeDecision);
 
       return {

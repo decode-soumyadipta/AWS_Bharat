@@ -7,102 +7,124 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
 
   const textGuide: Record<string, string> = {
     'hi': [
-      'व्यापार वाणी — आपका AI बिज़नेस असिस्टेंट',
+      '*🙏 व्यापार वाणी में आपका स्वागत है!*',
+      '_आपका AI बिज़नेस असिस्टेंट — बस बोलिए, बाकी मैं संभालूँगा_',
       '',
-      'आप ये सब कर सकते हैं:',
+      '*🛒 प्रोडक्ट जोड़ें*',
+      'बोलिए: _"टमाटर बीस रुपये किलो, पाँच किलो है"_',
+      'या सिर्फ: _"आम बेचना है"_ — बाकी मैं पूछूँगा',
       '',
-      '1. प्रोडक्ट जोड़ें',
-      '   वॉइस में बोलिए: "टमाटर बीस रुपये किलो, पाँच किलो है"',
-      '   या सिर्फ बोलिए: "आम बेचना है" — बाकी मैं पूछूँगा',
+      '*📸 फोटो भेजें*',
+      'WhatsApp पर प्रोडक्ट की फोटो भेजिए',
+      'मैं बैकग्राउंड साफ़ करके प्रोफेशनल बना दूँगा',
       '',
-      '2. प्रोडक्ट की फोटो',
-      '   नाम और दाम देंगे तो मैं फोटो माँगूँगा',
-      '   सीधा फोटो भेज दीजिए WhatsApp पर',
+      '*💰 बाज़ार भाव*',
+      'बोलिए: _"टमाटर का भाव बताओ"_',
+      'लाइव मंडी भाव तुरंत मिलेगा',
       '',
-      '3. बाज़ार भाव जानें',
-      '   बोलिए: "टमाटर का आज का भाव क्या है?"',
-      '   मैं लाइव मंडी भाव बता दूँगा',
+      '*📊 बिक्री रिपोर्ट*',
+      'बोलिए: _"मेरी बिक्री बताओ"_ या _"रिपोर्ट भेजो"_',
+      'PDF रिपोर्ट भी मिलेगी सारी जानकारी के साथ',
       '',
-      '4. UPI सेटअप',
-      '   अपना UPI ID भेजिए जैसे: name@oksbi, phone@paytm, shop@ybl',
-      '   कस्टमर सीधा पेमेंट कर पाएँगे',
+      '*🔗 ऑनलाइन दुकान*',
+      'आपकी अपनी मार्केटप्लेस लिंक मिलेगी',
+      'कस्टमर्स को शेयर करें — वो ऑर्डर कर पाएँगे',
       '',
-      '5. मार्केटप्लेस लिंक',
-      '   आपकी अपनी ऑनलाइन दुकान का लिंक मिलेगा',
-      '   कस्टमर्स को शेयर कीजिए',
+      '*💳 UPI पेमेंट*',
+      'अपना UPI ID भेजिए: _name@oksbi_',
+      'कस्टमर सीधा पेमेंट कर पाएँगे',
       '',
-      '6. बिक्री देखें',
-      '   बोलिए: "मेरी बिक्री बताओ" या "टॉप प्रोडक्ट्स"',
+      '*🌤️ रोज़ाना अपडेट*',
+      'मौसम + बाज़ार भाव का अपडेट रोज़ सुबह',
+      'बोलिए: _"आज का अपडेट बताओ"_',
       '',
-      '7. प्रोडक्ट हटाना',
-      '   बोलिए: "टमाटर हटाओ" — तुरंत हटा देंगे',
+      '*✅ ऑर्डर मैनेज करें*',
+      'बोलिए: _"ऑर्डर दिखाओ"_ — एक्सेप्ट/रिजेक्ट करें',
       '',
-      'बस वॉइस में बोलिए, मैं समझ जाऊँगा!',
+      '*❌ प्रोडक्ट हटाएँ*',
+      'बोलिए: _"टमाटर हटाओ"_ — तुरंत हटा देंगे',
+      '',
+      '🗣️ *बस वॉइस में बोलिए — हिंदी, मराठी, English — मैं समझ जाऊँगा!*',
     ].join('\n'),
 
     'mr': [
-      'व्यापार वाणी — तुमचा AI बिझनेस असिस्टंट',
+      '*🙏 व्यापार वाणी मध्ये स्वागत आहे!*',
+      '_तुमचा AI बिझनेस असिस्टंट — बोला, बाकी मी बघतो_',
       '',
-      'तुम्ही हे सर्व करू शकता:',
+      '*🛒 प्रोडक्ट जोडा*',
+      'सांगा: _"टोमॅटो वीस रुपये किलो, पाच किलो"_',
+      'किंवा: _"आम विकायचा आहे"_ — बाकी मी विचारेन',
       '',
-      '1. प्रोडक्ट जोडा',
-      '   व्हॉइस मध्ये सांगा: "टोमॅटो वीस रुपये किलो, पाच किलो आहे"',
-      '   किंवा सांगा: "आम विकायचा आहे" — बाकी मी विचारेन',
+      '*📸 फोटो पाठवा*',
+      'WhatsApp वर प्रोडक्ट चा फोटो पाठवा',
+      'मी बॅकग्राउंड साफ करून प्रोफेशनल बनवेन',
       '',
-      '2. प्रोडक्ट चा फोटो',
-      '   नाव आणि किंमत दिल्यानंतर मी फोटो मागेन',
-      '   WhatsApp वर डायरेक्ट फोटो पाठवा',
+      '*💰 बाजार भाव*',
+      'सांगा: _"टोमॅटो चा भाव सांगा"_',
+      'लाइव मंडी भाव लगेच मिळेल',
       '',
-      '3. बाजार भाव',
-      '   सांगा: "टोमॅटो चा आजचा भाव काय आहे?"',
+      '*📊 विक्री रिपोर्ट*',
+      'सांगा: _"माझी विक्री सांगा"_ किंवा _"रिपोर्ट पाठवा"_',
+      'PDF रिपोर्ट पण मिळेल',
       '',
-      '4. UPI सेटअप',
-      '   तुमचा UPI ID पाठवा जसे: name@oksbi, phone@paytm, shop@ybl',
+      '*🔗 ऑनलाइन दुकान*',
+      'तुमची मार्केटप्लेस लिंक मिळेल — कस्टमर्सना शेअर करा',
       '',
-      '5. मार्केटप्लेस लिंक',
-      '   तुमच्या ऑनलाइन दुकानाचा लिंक मिळेल',
+      '*💳 UPI पेमेंट*',
+      'तुमचा UPI ID पाठवा: _name@oksbi_',
       '',
-      '6. विक्री पहा',
-      '   सांगा: "माझी विक्री सांगा"',
+      '*🌤️ रोजचा अपडेट*',
+      'हवामान + बाजारभाव रोज सकाळी',
+      'सांगा: _"आजचा अपडेट सांगा"_',
       '',
-      '7. प्रोडक्ट काढा',
-      '   सांगा: "टोमॅटो काढ" — लगेच काढून टाकतो',
+      '*✅ ऑर्डर मॅनेज करा*',
+      'सांगा: _"ऑर्डर दाखवा"_',
       '',
-      'सहज बोला, मी समजेन!',
+      '*❌ प्रोडक्ट काढा*',
+      'सांगा: _"टोमॅटो काढ"_ — लगेच काढतो',
+      '',
+      '🗣️ *सहज बोला — हिंदी, मराठी, English — मी समजेन!*',
     ].join('\n'),
 
     'en': [
-      'Vyapar Vaani - Your AI Business Assistant',
+      '*🙏 Welcome to Vyapar Vaani!*',
+      '_Your AI Business Assistant — just speak, I will handle the rest_',
       '',
-      'Here is what you can do:',
+      '*🛒 Add Products*',
+      'Say: _"Tomato 20 rupees per kg, 5 kg available"_',
+      'Or just: _"I want to sell mangoes"_ — I will ask the rest',
       '',
-      '1. Add Products',
-      '   Say: "Tomato 20 rupees per kg, 5 kg available"',
-      '   Or just say: "I want to sell mangoes" - I will ask the rest',
+      '*📸 Send Photos*',
+      'Send a product photo on WhatsApp',
+      'I will clean the background and make it professional',
       '',
-      '2. Product Photo',
-      '   After name and price, I will ask for a photo',
-      '   Just send the photo on WhatsApp',
+      '*💰 Market Prices*',
+      'Ask: _"What is the price of tomato?"_',
+      'Get live mandi rates instantly',
       '',
-      '3. Check Market Prices',
-      '   Ask: "What is today price of tomato?"',
-      '   I will get live mandi prices',
+      '*📊 Sales Reports*',
+      'Say: _"Show my sales"_ or _"Send me a report"_',
+      'Get a PDF report with full business insights',
       '',
-      '4. UPI Setup',
-      '   Send your UPI ID like: name@oksbi, phone@paytm, shop@ybl',
-      '   Customers can pay you directly',
+      '*🔗 Online Shop*',
+      'Get your own marketplace link to share with customers',
+      'They can browse and place orders directly',
       '',
-      '5. Marketplace Link',
-      '   Get your own online shop link',
-      '   Share with customers',
+      '*💳 UPI Payments*',
+      'Send your UPI ID like: _name@oksbi_',
+      'Customers can pay you directly',
       '',
-      '6. Analytics',
-      '   Ask: "Show my sales" or "Top products"',
+      '*🌤️ Daily Updates*',
+      'Weather + market prices every morning',
+      'Ask: _"Give me today update"_',
       '',
-      '7. Remove Products',
-      '   Say: "Remove tomato" - done instantly',
+      '*✅ Manage Orders*',
+      'Say: _"Show orders"_ — accept or reject them',
       '',
-      'Just speak naturally, I will understand!',
+      '*❌ Remove Products*',
+      'Say: _"Remove tomato"_ — done instantly',
+      '',
+      '🗣️ *Just speak naturally — Hindi, Marathi, English — I understand all!*',
     ].join('\n'),
   };
 
@@ -112,39 +134,35 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
   await sendTypingIndicator(phone);
 
   const voiceGuide: Record<string, string> = {
-    'hi': 'Chaliye, ab main aapko bata deta hoon ki Vyapar Vaani se aap kya kya kar sakte hain. '
-      + 'Sabse pehle, product add karna. Bas voice mein boliye ki kya bechna hai, kitne ka hai, kitna hai. '
-      + 'Jaise boliye "tamatar bees rupaye kilo, paanch kilo hai" aur main turant note kar lunga. '
-      + 'Phir main aapse photo maangunga, bus WhatsApp pe seedha bhej dijiye. '
-      + 'Agar aapko bazaar ka daam jaanna hai toh boliye "tamatar ka bhav batao" aur main live mandi price de dunga. '
-      + 'UPI ID setup karna chahte hain toh apna UPI ID bhej dijiye, customers seedha aapko pay kar payenge. '
-      + 'Aapki apni online dukaan ka link bhi milega jo aap customers ko share kar sakte hain. '
-      + 'Bikri ka hisaab jaanna hai toh boliye "meri bikri batao". '
-      + 'Product hatana hai toh boliye "tamatar hatao". '
-      + 'Bas itna yaad rakhiye, aap naturally boliye, main samajh jaunga. '
-      + 'Toh chaliye shuru karte hain, apna pehla product add karne ke liye product ka naam, daam aur quantity boliye!',
+    'hi': 'Namaste! Vyapar Vaani mein aapka swagat hai. Main hoon aapka AI business assistant. '
+      + 'Aap mujhse product add kar sakte hain — bas boliye "tamatar bees rupaye kilo, paanch kilo hai". '
+      + 'Product ki photo WhatsApp pe bhej dijiye, main background saaf karke professional banaa dunga. '
+      + 'Live mandi bhav jaanna ho toh boliye "tamatar ka bhav batao". '
+      + 'Bikri ki report chahiye toh boliye "report bhejo", PDF mil jayegi. '
+      + 'Aapki apni online dukaan ki link bhi milegi customers ke liye. '
+      + 'UPI ID set karenge toh customers seedha pay kar payenge. '
+      + 'Roz subah mausam aur bazaar ka update milega. '
+      + 'Toh chaliye shuru karte hain — apna pehla product ka naam, daam aur quantity boliye!',
 
-    'mr': 'Chalaa, aata mi tumhala sangto ki Vyapar Vaani madhye tumhi kay kay karu shakta. '
-      + 'Aadhee, product add karna. Voice madhye sangaa ki kay vikaycha aahe, kitya la aahe, kiti aahe. '
-      + 'Jase sangaa "tomato vees rupaye kilo, paach kilo" aur mi lagech note karen. '
-      + 'Nantar mi photo maagen, WhatsApp var direct pathva. '
-      + 'Bazaar cha bhav jaanun ghyaycha asel tar sangaa "tomato cha bhav sangaa". '
-      + 'UPI setup karaycha asel tar tumcha UPI ID pathva. '
-      + 'Tumchi online dukan cha link bhi milel. '
-      + 'Vikri cha hisob janun ghyaycha asel tar sangaa "mazhi vikri sangaa". '
-      + 'Naturally bolaa, mi samjhen. Chalaa shuru karu, pahila product add kara!',
+    'mr': 'Namaskar! Vyapar Vaani madhye tumcha swagat aahe. Mi tumcha AI business assistant. '
+      + 'Product add karaycha asel tar sangaa "tomato vees rupaye kilo, paach kilo". '
+      + 'Photo WhatsApp var pathva, mi background saaf karun professional banven. '
+      + 'Mandi bhav jaanun ghyaycha asel tar sangaa "tomato cha bhav sangaa". '
+      + 'Vikri chi report pahije tar sangaa "report pathva", PDF milel. '
+      + 'Tumchi online dukan chi link bhi milel. '
+      + 'UPI ID set kela tar customers direct pay karu shaktat. '
+      + 'Roz sakaali havamaan aani bazaar bhav cha update milel. '
+      + 'Chalaa shuru karu — tumcha pahila product sangaa!',
 
-    'en': 'Let me tell you what all you can do with Vyapar Vaani. '
-      + 'First, adding products. Just say what you want to sell, the price, and quantity. '
-      + 'For example, say "tomato twenty rupees per kilo, five kilos available" and I will note it down right away. '
-      + 'Then I will ask for a photo, just send it on WhatsApp. '
-      + 'If you want to know market prices, just ask "what is the price of tomato today" and I will get live mandi rates. '
-      + 'Want to set up UPI? Just send your UPI ID and customers can pay you directly. '
-      + 'You will also get your own online shop link to share with customers. '
-      + 'Want to see your sales? Just ask "show my sales". '
-      + 'Want to remove a product? Say "remove tomato". '
-      + 'Just speak naturally and I will understand. '
-      + 'So let us get started, tell me your first product name, price and quantity!',
+    'en': 'Welcome to Vyapar Vaani! I am your AI business assistant. '
+      + 'You can add products by just speaking — say "tomato twenty rupees per kilo, five kilos available". '
+      + 'Send a product photo on WhatsApp and I will clean the background to make it look professional. '
+      + 'Want live market prices? Ask "what is the price of tomato". '
+      + 'Need a sales report? Say "send me a report" and you will get a PDF. '
+      + 'You will also get your own online shop link that you can share with customers. '
+      + 'Set up your UPI ID so customers can pay you directly. '
+      + 'Every morning you will get weather and market price updates. '
+      + 'So let us get started — tell me your first product name, price and quantity!',
   };
 
   await sendVoiceOnly(phone, voiceGuide[lang] || voiceGuide['hi'], lang);

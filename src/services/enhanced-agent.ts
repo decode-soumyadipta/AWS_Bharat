@@ -94,9 +94,11 @@ export async function processWithEnhancedAgent(
   }
 
   const detectedLanguage = detectLanguageSwitch(userMessage, currentLanguage);
+  let switchedLanguage: LanguageCode | undefined;
   if (detectedLanguage !== currentLanguage) {
     console.log(`🌐 Language switch detected: ${currentLanguage} → ${detectedLanguage}`);
     await updateUserPreferences(phone, { language: detectedLanguage });
+    switchedLanguage = detectedLanguage;
     currentLanguage = detectedLanguage;
   }
 
@@ -246,6 +248,7 @@ export async function processWithEnhancedAgent(
         message: updateMessage,
         actions: [],
         responseMode: 'voice',
+        languageSwitch: switchedLanguage,
         confidence: 1.0,
         reasoning: 'On-demand daily update generated via background agent pipeline',
       };
@@ -260,6 +263,7 @@ export async function processWithEnhancedAgent(
       message: weatherErrorMsg,
       actions: [],
       responseMode: 'voice',
+      languageSwitch: switchedLanguage,
       confidence: 0.7,
       reasoning: 'On-demand daily update failed — generateOnDemandUpdate returned null',
     };
@@ -305,6 +309,7 @@ export async function processWithEnhancedAgent(
         message: result.voiceSummary,
         actions: [],
         responseMode: 'voice',
+        languageSwitch: switchedLanguage,
         confidence: 1.0,
         reasoning: `Generated ${reportIntent.reportType} PDF report and sent via WhatsApp`,
       };
@@ -321,6 +326,7 @@ export async function processWithEnhancedAgent(
         message: msg,
         actions: [],
         responseMode: 'voice',
+        languageSwitch: switchedLanguage,
         confidence: 0.8,
         reasoning: `Report generation failed: ${result.error}`,
       };
@@ -404,6 +410,10 @@ export async function processWithEnhancedAgent(
   }
 
   const agentResponse = parseEnhancedResponse(response, currentLanguage);
+
+  if (switchedLanguage) {
+    agentResponse.languageSwitch = switchedLanguage;
+  }
 
   await addConversationMessage(phone, {
     timestamp: Date.now(),

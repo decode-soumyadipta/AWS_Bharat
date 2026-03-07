@@ -146,7 +146,8 @@ export const handler = async (event: any): Promise<any> => {
 async function processAgentEvent(event: any): Promise<any> {
   try {
     const eventDetail = event.detail || event;
-    const { phone, messageType, content, language = 'hi-IN' } = eventDetail;
+    const { phone, messageType, content } = eventDetail;
+    let language = (eventDetail.language || 'hi-IN') as 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
 
     if (!phone) {
       throw new Error('Phone number is required');
@@ -270,6 +271,11 @@ async function processAgentEvent(event: any): Promise<any> {
       );
 
       console.log('🤖 Agent response:', agentResponse);
+
+      if (agentResponse.languageSwitch) {
+        console.log(`🌐 Applying language switch for voice: ${language} → ${agentResponse.languageSwitch}`);
+        language = agentResponse.languageSwitch;
+      }
 
       await sendTypingIndicator(phone, eventDetail.messageId);
 
