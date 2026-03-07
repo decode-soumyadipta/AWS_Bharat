@@ -352,7 +352,7 @@ function renderProducts(products) {
           <div class="p-name">${p.name}</div>
           <div class="p-seller">by ${p.seller ? p.seller.name : 'Unknown'}</div>
           ${desc ? `<div class="p-desc">${desc}</div>` : ''}
-          <div class="p-price">₹${p.price} <span class="unit">/ ${p.unit}</span></div>
+          <div class="p-price">₹${p.price} <span class="unit">${p.unit ? `(${p.unit})` : ''}</span></div>
           <div class="p-stock ${stockClass}">${stockText}</div>
           <div class="card-actions">
             <button class="btn-add-cart ${outOfStock ? 'btn-disabled' : ''}" ${outOfStock ? 'disabled' : ''} data-product='${JSON.stringify(p).replace(/'/g, "&apos;")}'>🛒 Add to Cart</button>
@@ -418,7 +418,7 @@ function renderCartSidebar() {
     <div class="cart-item-row">
       <div class="ci-info">
         <div class="ci-name">${it.name}</div>
-        <div class="ci-meta">${it.seller ? it.seller.name : ''} · ₹${it.price}/${it.unit}</div>
+        <div class="ci-meta">${it.seller ? it.seller.name : ''} · ₹${it.price}</div>
       </div>
       <div class="ci-qty">
         <button class="qty-btn" data-idx="${i}" data-dir="-1">−</button>

@@ -698,7 +698,7 @@ async function handleImageMessage(
       console.log('✅ Confirmation handler invoked successfully');
     } catch (confErr) {
       console.error('⚠️ Confirmation handler invoke failed, sending manual confirmation:', confErr);
-      const summary = `${updatedPartial.productName}, ${updatedPartial.price} rupaye per ${updatedPartial.unit}, ${updatedPartial.quantity} ${updatedPartial.unit}. Kya yeh sahi hai? Haan bolein ya badlav bataayein.`;
+      const summary = `${updatedPartial.productName}, ${updatedPartial.price} rupaye, ${updatedPartial.quantity} ${updatedPartial.unit}. Kya yeh sahi hai? Haan bolein ya badlav bataayein.`;
       await sendEnhancedAgentMessage(phone, summary, language as any, 'both');
     }
     return '__CONFIRMATION_TRIGGERED__';

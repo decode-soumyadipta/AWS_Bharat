@@ -127,7 +127,7 @@ Intent: CREATE_CATALOG
 
 Extract these fields ONLY if they are EXPLICITLY mentioned:
 - product_name: string (the name of the product)
-- price: number (per-unit price in INR, numeric value only)
+- price: number (total item selling price in INR, numeric value only — NOT a per-unit rate)
 - quantity: number (numeric value only - how many units available)
 - unit: string (one of: "kg", "liters", "pieces", "packets", "grams", "ml", "bottles", "dozen")
 - description: string (optional, any additional details)
@@ -200,13 +200,13 @@ Transcription: ${transcribedText}
 Intent: UPDATE_PRICE
 
 Extract these fields:
-- new_price: number (the new per-unit price in INR, numeric value only)
+- new_price: number (the new selling price in INR, numeric value only)
 - product_name: string (optional, product name if mentioned)
 
 CRITICAL RULES FOR PRICE EXTRACTION:
-- Extract ONLY the per-unit price, NOT the total price
+- Extract the selling price as stated by the user
 - If seller says "update price to 600" or "change price to 600", extract new_price as 600
-- If seller says "price should be 700 per kg", extract new_price as 700
+- If seller says "price should be 700", extract new_price as 700
 - Remove all currency symbols (₹, Rs, rupees) and extract only the number
 - If price includes decimals, keep them (e.g., 99.50 -> 99.5)
 

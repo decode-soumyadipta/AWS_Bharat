@@ -277,11 +277,11 @@ export async function generateConfirmation(
 
   let textSummary: string;
   if (lang === 'hi-IN') {
-    textSummary = `📦 *${productName}*\n\n💰 कीमत: ${price}/${unit}\n📊 मात्रा: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ सही है? बटन दबाएं या बोलकर बदलें`;
+    textSummary = `📦 *${productName}*\n\n💰 कीमत: ${price}\n📊 मात्रा: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ सही है? बटन दबाएं या बोलकर बदलें`;
   } else if (lang === 'mr-IN') {
-    textSummary = `📦 *${productName}*\n\n💰 किंमत: ${price}/${unit}\n📊 प्रमाण: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ बरोबर आहे? बटण दाबा किंवा बोलून बदला`;
+    textSummary = `📦 *${productName}*\n\n💰 किंमत: ${price}\n📊 प्रमाण: ${quantity}\n🏷️ श्रेणी: ${category}${marketPriceLine}\n\n✅ बरोबर आहे? बटण दाबा किंवा बोलून बदला`;
   } else {
-    textSummary = `📦 *${productName}*\n\n💰 Price: ${price}/${unit}\n📊 Qty: ${quantity}\n🏷️ Category: ${category}${marketPriceLine}\n\n✅ Correct? Tap button or say to change`;
+    textSummary = `📦 *${productName}*\n\n💰 Price: ${price}\n📊 Qty: ${quantity}\n🏷️ Category: ${category}${marketPriceLine}\n\n✅ Correct? Tap button or say to change`;
   }
 
   console.log('Generated concise confirmation with market price:', textSummary);
@@ -289,10 +289,10 @@ export async function generateConfirmation(
   let voiceUrl: string | undefined;
   try {
     const voiceText = lang === 'hi-IN'
-      ? `${productName}, कीमत ${price} प्रति ${unit}, मात्रा ${quantity}${marketVoiceLine}। सही है तो ठीक है बटन दबाएं, या बोलकर बदलें।`
+      ? `${productName}, कीमत ${price}, मात्रा ${quantity}${marketVoiceLine}। सही है तो ठीक है बटन दबाएं, या बोलकर बदलें।`
       : lang === 'mr-IN'
-      ? `${productName}, किंमत ${price} प्रति ${unit}, प्रमाण ${quantity}${marketVoiceLine}। बरोबर असल्यास स्वीकार करा बटण दाबा, किंवा बोलून बदला.`
-      : `${productName}, price ${price} per ${unit}, quantity ${quantity}${marketVoiceLine}. Tap approve if correct, or say what to change.`;
+      ? `${productName}, किंमत ${price}, प्रमाण ${quantity}${marketVoiceLine}। बरोबर असल्यास स्वीकार करा बटण दाबा, किंवा बोलून बदला.`
+      : `${productName}, price ${price}, quantity ${quantity}${marketVoiceLine}. Tap approve if correct, or say what to change.`;
 
     voiceUrl = await convertToSpeech(voiceText, lang);
     console.log('Voice confirmation generated');

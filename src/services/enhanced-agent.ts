@@ -1015,7 +1015,7 @@ async function executeCatalogLookup(
         : 'CATALOG_INFO: Your catalog is empty. Start by adding a product — just tell me what you want to sell.';
     }
 
-    const productList = items.map((i: any) => `${i.name}: ${i.price}/${i.unit}, stock ${i.quantity} ${i.unit} (${i.status})`).join(' | ');
+    const productList = items.map((i: any) => `${i.name}: ₹${i.price}, stock ${i.quantity} ${i.unit} (${i.status})`).join(' | ');
     return `CATALOG_INFO: ${items.length} products in catalog: ${productList}`;
   } catch (error: any) {
     console.error('Catalog lookup failed:', error);
@@ -1279,7 +1279,7 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
   if (partialData) {
     prompt += `\n\nCurrent order being tracked:
 Product: ${partialData.productName || 'Unknown'}
-Price: ${partialData.price ? `${partialData.price} per ${partialData.unit}` : 'Not set'}
+Price: ${partialData.price ? `₹${partialData.price}` : 'Not set'}
 Quantity: ${partialData.quantity ? `${partialData.quantity} ${partialData.unit}` : 'Not set'}
 Category: ${partialData.category || 'Unknown'}
 Photo: ${partialData.originalImageUrl ? 'Received' : 'Not received'}
@@ -1364,7 +1364,7 @@ If the seller asks about weather, prices, alerts, or "what was that message?" �
 
   if (partialData?.price && marketInfo) {
     prompt += `\n\nPROACTIVE PRICE CHECK:
-Seller's current price for ${partialData.productName || 'this product'}: ${partialData.price} per ${partialData.unit || 'unit'}
+Seller's current price for ${partialData.productName || 'this product'}: ₹${partialData.price}
 Market data: ${marketInfo}
 IF the seller's price is significantly below market average (more than 30 percent lower), gently recommend a higher price. Say something like: "Aapka bhav market se kam lag raha hai. Market mein ye [price range] pe bik raha hai. Kya aap price badhana chahenge?"
 IF significantly above market, give a gentle heads-up.
@@ -1472,20 +1472,28 @@ STORE_DATA RULES (MOST IMPORTANT — READ CAREFULLY):
 - When user describes a product, ALWAYS use STORE_DATA action to save the information
 - Extract ALL fields you can: productName, price, quantity, unit, category, description
 - ALWAYS auto-detect category from the product name using the map above. NEVER set category to Unknown or ask user for it.
-- Common units: "kilo"/"kg", "piece"/"pcs", "dozen", "liter", "packet", "bag", "bundle"
+- Common units: "kg", "piece"/"pcs", "dozen", "liter", "packet", "bag", "bundle", "bottle", "box", "jar"
+- For packaged items (bottle, packet, box, jar, dabba, pouch), ALWAYS use "piece" as unit and include size in product name
 - PIECE-BY-PIECE RULE: User often provides info across multiple messages. Each message may have just ONE field. ALWAYS use STORE_DATA to save that one field and ask for the NEXT missing field. Examples:
   * User says "tamatar" alone → STORE_DATA {"productName":"Tomato","category":"Vegetables"} + ask for price
   * User says "50" when productName is already set → STORE_DATA {"price":50} + ask for quantity  
   * User says "10 kilo" when price is set → STORE_DATA {"quantity":10,"unit":"kg"} (ready for photo)
   * NEVER call ASK_QUESTION for a number — it's always price or quantity depending on context
 - PRODUCT NAME RULE: The item/product the user mentions IS the productName. NEVER re-ask for the name when user already said what they want to sell.
+- PRICING RULE (VERY IMPORTANT): The "price" field is ALWAYS the TOTAL SELLING PRICE of the item — NOT a per-gram or per-ml rate. When user says "ghee 500g 40 rupaye", price is 40 (the whole item costs ₹40). NEVER interpret price as a per-unit rate.
+- UNIT RULE FOR PACKAGED ITEMS: For packaged/bottled/boxed items (bottle, packet, box, jar, can, dabba, pouch), use "piece" as the unit. The weight/volume (500g, 1L, 250ml) is a size descriptor — include it in the product name, NOT as the unit.
+  Examples: "ghee 500g bottle" → productName: "Ghee (500g)", unit: "piece". "1L oil bottle" → productName: "Oil (1L)", unit: "piece".
+- UNIT RULE FOR LOOSE ITEMS: For loose/bulk items sold by weight or volume (vegetables, grains, milk), use the weight/volume unit (kg, liter, etc.).
+  Examples: "tamatar 10 kilo" → productName: "Tomato", unit: "kg". "doodh 5 liter" → productName: "Milk", unit: "liter".
 - COMPOUND INPUT: When user provides product + price + quantity in ONE message, extract ALL fields at once.
   Examples of compound inputs to parse correctly:
-  * "tamatar 50 rupaye kilo, 10 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":10,"unit":"kg","category":"Vegetables"}
-  * "main 2 kg aam bechna chahta hoon" → DATA: {"productName":"आम","quantity":2,"unit":"kg","category":"Fruits"} — note: 2 kg is quantity, not price. Ask for price next.
-  * "मैं 2 kg आम बेचना चाहता हूँ" → DATA: {"productName":"आम","quantity":2,"unit":"kg","category":"Fruits"} — same in Devanagari
+  * "tamatar 50 rupaye, 10 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":10,"unit":"kg","category":"Vegetables"}
+  * "ghee 500g bottle 40 rupaye, 5 bottle" → DATA: {"productName":"Ghee (500g)","price":40,"quantity":5,"unit":"piece","category":"Dairy"}
+  * "main 2 kg aam bechna chahta hoon" → DATA: {"productName":"Aam","quantity":2,"unit":"kg","category":"Fruits"} — note: 2 kg is quantity, not price. Ask for price next.
+  * "मैं 2 kg आम बेचना चाहता हूँ" → DATA: {"productName":"Aam","quantity":2,"unit":"kg","category":"Fruits"} — same in Devanagari
   * "pyaz 30 rupaye, 20 kilo" → DATA: {"productName":"Onion","price":30,"quantity":20,"unit":"kg","category":"Vegetables"}
-  * "50 rupaye kilo tamatar 5 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":5,"unit":"kg","category":"Vegetables"}
+  * "tel 1 litre bottle 120 rupaye, 10 piece" → DATA: {"productName":"Oil (1L)","price":120,"quantity":10,"unit":"piece","category":"Grocery"}
+  * "honey 500g jar 250 rupees" → DATA: {"productName":"Honey (500g)","price":250,"quantity":1,"unit":"piece","category":"Grocery"} — quantity defaults to 1 for single packaged items
   KEY: When both a number+unit (e.g., "2 kg") AND a product name exist, the number+unit is QUANTITY. Price comes separately unless explicitly stated with "rupaye/rupees/rs".
 - NEVER use ASK_QUESTION when user has given ANY product information — ALWAYS use STORE_DATA
 - ALWAYS include ALL fields you can extract in a single STORE_DATA call, including auto-detected category
