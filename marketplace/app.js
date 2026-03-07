@@ -261,6 +261,7 @@ function initComponents() {
 // ── PRODUCTS ──
 let _productBackoff = 0; // seconds to wait after a rate-limit hit
 let _productBackoffTimer = null;
+let _productRetryCount = 0; // fast-retry counter for cold-start failures
 
 async function loadProducts() {
   // If we're in backoff, skip this poll cycle
@@ -279,6 +280,7 @@ async function loadProducts() {
     const d = await r.json();
     if (d.success && d.products) {
       _productBackoff = 0; // reset backoff on success
+      _productRetryCount = 0; // reset retry count on success
       const changed = productsChanged(d.products);
       if (changed || cachedProducts.length === 0) {
         cachedProducts = d.products;
@@ -293,6 +295,17 @@ async function loadProducts() {
         });
         cachedProducts = d.products;
       }
+    } else {
+      // API returned non-success JSON (e.g. cold-start 500) — fast retry
+      console.warn('Products API returned non-success:', d);
+      if (cachedProducts.length === 0 && _productRetryCount < 3) {
+        _productRetryCount++;
+        console.log(`Fast retry #${_productRetryCount} in 2s (Lambda may be cold-starting)...`);
+        setTimeout(loadProducts, 2000);
+      } else if (cachedProducts.length === 0) {
+        document.getElementById('productsGrid').innerHTML =
+          '<div class="empty-state"><div class="empty-icon">😞</div><p>Failed to load products. Pull down to refresh.</p></div>';
+      }
     }
   } catch (e) {
     console.error('Failed to load products:', e);
@@ -304,7 +317,7 @@ async function loadProducts() {
 
 function _startProductBackoff() {
   // Exponential backoff: 60s → 120s → 240s → max 600s
-  _productBackoff = Math.min((_productBackoff || 60) * 2, 600);
+  _productBackoff = _productBackoff === 0 ? 60 : Math.min(_productBackoff * 2, 600);
   clearTimeout(_productBackoffTimer);
   console.log(`Products API: retrying in ${_productBackoff}s`);
   _productBackoffTimer = setTimeout(() => {

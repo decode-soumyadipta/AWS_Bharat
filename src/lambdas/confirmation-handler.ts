@@ -99,6 +99,27 @@ export const handler = async (event: any): Promise<any> => {
 
     console.log('Processing confirmation action:', { phone, action, field });
 
+    // Fire typing indicator at the START for ALL actions (not just 'generate')
+    const msgIdForTypingGlobal = eventDetail.messageId || eventDetail.content?.messageId;
+    if (msgIdForTypingGlobal) {
+      try {
+        const { setLastMessageId, markMessageAsRead } = await import('./whatsapp-message-sender');
+        setLastMessageId(phone, msgIdForTypingGlobal);
+        await markMessageAsRead(msgIdForTypingGlobal, true);
+        console.log('✅ Typing indicator set at confirmation handler entry for action:', action);
+      } catch (typingErr) {
+        console.warn('Typing indicator at handler entry failed (non-fatal):', typingErr);
+      }
+    } else {
+      try {
+        const { sendTypingIndicator } = await import('./whatsapp-message-sender');
+        await sendTypingIndicator(phone);
+        console.log('✅ Typing indicator (no msgId) set at confirmation handler entry for action:', action);
+      } catch (typingErr) {
+        console.warn('Typing indicator fallback at handler entry failed (non-fatal):', typingErr);
+      }
+    }
+
     const userState = await getUserState(phone);
     if (!userState) {
       console.error('User state not found for phone:', phone);
@@ -149,17 +170,6 @@ export const handler = async (event: any): Promise<any> => {
           return { success: false, reason: 'placeholder_product_name' };
         }
 
-        const msgIdForTyping = eventDetail.messageId;
-        if (msgIdForTyping) {
-          try {
-            const { setLastMessageId, markMessageAsRead } = await import('./whatsapp-message-sender');
-            setLastMessageId(phone, msgIdForTyping);
-            await markMessageAsRead(msgIdForTyping, true);
-            console.log('✅ Typing indicator set at confirmation generate start');
-          } catch (typingErr) {
-            console.warn('Typing indicator in confirmation handler failed (non-fatal):', typingErr);
-          }
-        }
         return await generateConfirmation(phone, partialData, userState.language);
       }
 
@@ -219,10 +229,23 @@ export async function generateConfirmation(
     const { fetchLiveMarketPrice, getLocalMarketPrice } = await import('../tools/web-search');
     let marketPrice;
     try {
+      // Use cached market price if fresh (< 1 hour)
+      if (partialData.cachedMarketPrice && partialData.cachedMarketPrice.cachedAt) {
+        const cacheAge = Date.now() - partialData.cachedMarketPrice.cachedAt;
+        if (cacheAge < 60 * 60 * 1000) {
+          console.log('✅ Using cached market price (age:', Math.round(cacheAge / 60000), 'min)');
+          marketPrice = { found: true, ...partialData.cachedMarketPrice };
+        }
+      }
 
-      const liveResult = await fetchLiveMarketPrice(productName);
-      if (liveResult.found) {
-        marketPrice = liveResult;
+      // Only fetch live if no valid cache
+      if (!marketPrice) {
+        const livePromise = fetchLiveMarketPrice(productName);
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+        const liveResult = await Promise.race([livePromise, timeoutPromise]);
+        if (liveResult && (liveResult as any).found) {
+          marketPrice = liveResult;
+        }
       }
     } catch (liveErr) {
       console.warn('Live market price fetch failed, using fallback:', liveErr);
