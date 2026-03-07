@@ -3,7 +3,7 @@ import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { s3Client, bedrockClient, PRODUCTS_BUCKET_NAME } from '../config/aws-clients';
 import { Readable } from 'stream';
 import * as zlib from 'zlib';
-import Jimp from 'jimp';
+import * as jpeg from 'jpeg-js';
 
 const TITAN_IMAGE_MODEL_ID = 'amazon.titan-image-generator-v2:0';
 const TITAN_MAX_DIMENSION = 1408;
@@ -67,7 +67,7 @@ export const handler = async (
     const rawImageBuffer = await downloadImageFromS3(event.rawImageUrl);
     console.log(`Downloaded image: ${rawImageBuffer.length} bytes`);
 
-    const resizedBuffer = await resizeForTitan(rawImageBuffer);
+    const resizedBuffer = resizeForTitan(rawImageBuffer);
     const base64Image = resizedBuffer.toString('base64');
     console.log(`Image ready for Titan: ${base64Image.length} base64 chars`);
 
@@ -178,9 +178,9 @@ async function downloadImageFromS3(imageUrl: string): Promise<Buffer> {
   return streamToBuffer(response.Body as Readable);
 }
 
-async function resizeForTitan(imageBuffer: Buffer): Promise<Buffer> {
-  const image = await Jimp.read(imageBuffer);
-  const { width, height } = image.bitmap;
+function resizeForTitan(imageBuffer: Buffer): Buffer {
+  const decoded = jpeg.decode(imageBuffer, { useTArray: true, maxMemoryUsageInMB: 512 });
+  const { width, height } = decoded;
   console.log(`Original image dimensions: ${width}x${height}`);
 
   if (width <= TITAN_MAX_DIMENSION && height <= TITAN_MAX_DIMENSION) {
@@ -193,10 +193,37 @@ async function resizeForTitan(imageBuffer: Buffer): Promise<Buffer> {
   const newH = Math.round(height * scale);
   console.log(`Resizing for Titan: ${width}x${height} -> ${newW}x${newH}`);
 
-  image.resize(newW, newH);
-  const resizedBuffer = await image.getBufferAsync(Jimp.MIME_JPEG);
-  console.log(`Resized image: ${resizedBuffer.length} bytes`);
-  return resizedBuffer;
+  const srcData = decoded.data;
+  const dstData = Buffer.alloc(newW * newH * 4);
+
+  for (let y = 0; y < newH; y++) {
+    for (let x = 0; x < newW; x++) {
+      const srcX = (x / newW) * width;
+      const srcY = (y / newH) * height;
+      const x0 = Math.floor(srcX);
+      const y0 = Math.floor(srcY);
+      const x1 = Math.min(x0 + 1, width - 1);
+      const y1 = Math.min(y0 + 1, height - 1);
+      const fx = srcX - x0;
+      const fy = srcY - y0;
+
+      const i00 = (y0 * width + x0) * 4;
+      const i10 = (y0 * width + x1) * 4;
+      const i01 = (y1 * width + x0) * 4;
+      const i11 = (y1 * width + x1) * 4;
+      const di = (y * newW + x) * 4;
+
+      for (let c = 0; c < 4; c++) {
+        const top = srcData[i00 + c] * (1 - fx) + srcData[i10 + c] * fx;
+        const bot = srcData[i01 + c] * (1 - fx) + srcData[i11 + c] * fx;
+        dstData[di + c] = Math.round(top * (1 - fy) + bot * fy);
+      }
+    }
+  }
+
+  const resized = jpeg.encode({ data: dstData, width: newW, height: newH }, 85);
+  console.log(`Resized image: ${resized.data.length} bytes`);
+  return resized.data;
 }
 
 function parseS3Url(url: string): { bucket: string; key: string } {
