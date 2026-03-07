@@ -244,6 +244,23 @@ async function processAgentEvent(event: any): Promise<any> {
       return { success: true };
     }
 
+    const cancelStates = ['CONFIRMATION_PENDING', 'IMAGE_PENDING', 'VOICE_RECEIVED'];
+    if (cancelStates.includes(userState?.state || '') && detectCancelIntent(userMessage)) {
+      console.log('🚫 Cancel intent detected — clearing partial data and resetting state');
+      await deletePartialData(phone);
+      const resetState = userState?.state === 'CONFIRMATION_PENDING' || userState?.state === 'IMAGE_PENDING' || userState?.state === 'VOICE_RECEIVED'
+        ? (conversationContext?.messages?.some((m: any) => m.metadata?.event === 'kyc_verified') ? 'KYC_VERIFIED' : 'GUEST_ACTIVE')
+        : 'ACTIVE';
+      await updateUserState(phone, resetState as any);
+      const cancelMsg: Record<string, string> = {
+        'hi-IN': 'Product cancel kar diya! Naya product add karna ho toh naam aur price voice mein batayein.',
+        'mr-IN': 'Product cancel kela! Nava product add karaycha asel tar naav aani kimmat voice madhye sanga.',
+        'en-IN': 'Product cancelled! To add a new product, send the name and price via voice message.',
+      };
+      await sendEnhancedAgentMessage(phone, cancelMsg[language] || cancelMsg['hi-IN'], language as any, 'voice');
+      return { success: true, message: 'Cancel intent → partial data cleared' };
+    }
+
     if (userState?.state === 'CONFIRMATION_PENDING' && partialData) {
 
       if (detectVerbalConfirmation(userMessage)) {
@@ -362,6 +379,15 @@ export function detectVerbalConfirmation(message: string): boolean {
     if (shortAffirm.test(m)) return true;
   }
 
+  return false;
+}
+
+function detectCancelIntent(message: string): boolean {
+  const m = message.toLowerCase().trim();
+  const cancelPatterns = /\b(cancel|chhodo|chodo|hatao|hata\s*do|band\s*karo|nahi\s*chahiye|nahi\s*chaiye|mat\s*karo|mat\s*karo\s*ye|ruko|rok\s*do|rehne\s*do|naya\s*product|naya\s*item|doosra\s*product|new\s*product|dusra\s*product|naya\s*order|naya\s*cheez|cancel\s*karo|cancel\s*kar\s*do|cancel\s*it|ye\s*nahi|ye\s*mat|change\s*product)\b/i;
+  if (cancelPatterns.test(m)) return true;
+  const hindiCancel = /रद्द|छोड़ो|हटाओ|बंद\s*करो|नहीं\s*चाहिए|रहने\s*दो|नया\s*प्रोडक्ट|नया\s*product|दूसरा\s*प्रोडक्ट|कैंसल/;
+  if (hindiCancel.test(message)) return true;
   return false;
 }
 
@@ -1106,6 +1132,16 @@ async function executeAgentActions(
 
           await updateUserState(phone, 'GUEST_ACTIVE', { guideSent: true });
           break;
+
+        case 'CANCEL_LISTING': {
+          console.log('🚫 CANCEL_LISTING action — clearing partial data');
+          await deletePartialData(phone);
+          const currentState = await getUserState(phone);
+          const resetTo = currentState?.state === 'CONFIRMATION_PENDING' || currentState?.state === 'IMAGE_PENDING' || currentState?.state === 'VOICE_RECEIVED'
+            ? 'ACTIVE' : (currentState?.state || 'ACTIVE');
+          await updateUserState(phone, resetTo as any);
+          break;
+        }
 
         default:
           console.log('⚠️ Unknown action type:', action.type);

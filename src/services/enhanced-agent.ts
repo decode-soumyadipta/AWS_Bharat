@@ -51,7 +51,7 @@ interface EnhancedAgentResponse {
 }
 
 interface AgentAction {
-  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI' | 'SKIP_KYC';
+  type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI' | 'SKIP_KYC' | 'CANCEL_LISTING';
   data?: any;
 }
 
@@ -1296,19 +1296,22 @@ CRITICAL RULES for this state (follow exactly, no exceptions):
 6. General question (market price, analytics, help) = answer it directly. Then remind about the pending product at the end.
 7. NEVER use ASK_QUESTION in this state. NEVER say "ज़रा समझा दीजिए" or "thoda samjha dijiye" here.
 8. If transcription is garbled/unclear but contains ANY digit, treat it as a price update.
-9. Category must ALWAYS be auto-detected from the product name using the map below — never left as Unknown.`;
+9. Category must ALWAYS be auto-detected from the product name using the map below — never left as Unknown.
+10. CANCEL: "cancel", "chhodo", "hatao", "band karo", "nahi chahiye", "naya product", "doosra product", "new product", "रद्द" = use CANCEL_LISTING action. Respond: "पुराना product cancel kar diya. Naya product ka naam bataiye."`;
     } else if (userState?.state === 'IMAGE_PENDING') {
       prompt += `\n\nSTATE: IMAGE_PENDING - Waiting for product photo.
 - User needs to send a product photo next
 - If user asks something else, answer and gently remind to send a product photo
-- DO NOT say "product added" or "bahut badhiya" — product is NOT added yet, we need the photo first`;
+- DO NOT say "product added" or "bahut badhiya" — product is NOT added yet, we need the photo first
+- CANCEL: "cancel", "chhodo", "hatao", "band karo", "nahi chahiye", "naya product", "doosra product", "new product", "रद्द" = use CANCEL_LISTING action.`;
     } else if (userState?.state === 'VOICE_RECEIVED') {
       prompt += `\n\nSTATE: VOICE_RECEIVED — Product data is being collected (see above).
 CRITICAL CONTEXT-SWITCHING RULE:
 - If the user's NEW message is providing a MISSING FIELD (price, qty, unit) → use STORE_DATA to save it
 - If the user's NEW message is an UNRELATED question (analytics, weather, market price, general query, help, etc.) → ANSWER THAT QUESTION FULLY AND CORRECTLY first. Do NOT force it into the product flow. Mention the pending product briefly at the end: "वैसे आपका [product] अभी add हो रहा है, [missing field] बताइए तो आगे बढ़ें"
 - NEVER ignore the user's actual question just because partial data exists
-- NEVER confuse an analytics/strategy question with a product data field`;
+- NEVER confuse an analytics/strategy question with a product data field
+- CANCEL: "cancel", "chhodo", "hatao", "band karo", "nahi chahiye", "naya product" = use CANCEL_LISTING action. Clear all pending data and respond asking for the new product.`;
     }
   }
 

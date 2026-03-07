@@ -72,6 +72,7 @@ export const handler = async (
     console.log(`Image ready for Titan: ${base64Image.length} base64 chars`);
 
     let enhancedImageBuffer: Buffer | undefined;
+    let contentFilterBlocked = false;
 
     let cutoutBase64: string | undefined;
     try {
@@ -84,6 +85,23 @@ export const handler = async (
       console.log('Background removed successfully. Compositing on white canvas...');
     } catch (bgRemovalError: any) {
       console.warn('BACKGROUND_REMOVAL failed:', bgRemovalError.message);
+      if (bgRemovalError.message?.includes('content filters')) {
+        contentFilterBlocked = true;
+        console.log('Content filter blocked — trying center-cropped image...');
+        try {
+          const croppedBuffer = centerCrop(resizedBuffer, 0.7);
+          const croppedBase64 = croppedBuffer.toString('base64');
+          const retryRequest: TitanBackgroundRemovalRequest = {
+            taskType: 'BACKGROUND_REMOVAL',
+            backgroundRemovalParams: { image: croppedBase64 },
+          };
+          cutoutBase64 = await invokeTitanImageGenerator(retryRequest);
+          contentFilterBlocked = false;
+          console.log('Center-crop BACKGROUND_REMOVAL succeeded!');
+        } catch (retryError: any) {
+          console.warn('Center-crop retry also failed:', retryError.message);
+        }
+      }
     }
 
     if (cutoutBase64) {
@@ -102,7 +120,7 @@ export const handler = async (
       }
     }
 
-    if (!enhancedImageBuffer) {
+    if (!enhancedImageBuffer && !contentFilterBlocked) {
       const inpaintSourceBase64 = cutoutBase64 ?? base64Image;
       const sourceLabel = cutoutBase64 ? 'bg-removed cutout' : 'original image';
       console.log(`Step 2: Applying INPAINTING on ${sourceLabel}...`);
@@ -130,10 +148,13 @@ export const handler = async (
         console.log(`INPAINTING result: ${enhancedImageBuffer.length} bytes`);
       } catch (inpaintError: any) {
         console.error('INPAINTING also failed:', inpaintError.message);
-        throw new Error(
-          `Both BACKGROUND_REMOVAL and INPAINTING failed. Last error: ${inpaintError.message}`
-        );
       }
+    }
+
+    if (!enhancedImageBuffer) {
+      console.log('All Titan methods failed — creating white-padded fallback image');
+      enhancedImageBuffer = createWhitePaddedImage(resizedBuffer);
+      console.log(`White-padded fallback: ${enhancedImageBuffer.length} bytes`);
     }
 
     if (!enhancedImageBuffer) {
@@ -224,6 +245,48 @@ function resizeForTitan(imageBuffer: Buffer): Buffer {
   const resized = jpeg.encode({ data: dstData, width: newW, height: newH }, 85);
   console.log(`Resized image: ${resized.data.length} bytes`);
   return resized.data;
+}
+
+function centerCrop(imageBuffer: Buffer, ratio: number): Buffer {
+  const decoded = jpeg.decode(imageBuffer, { useTArray: true, maxMemoryUsageInMB: 512 });
+  const { width, height, data: srcData } = decoded;
+  const cropW = Math.round(width * ratio);
+  const cropH = Math.round(height * ratio);
+  const offsetX = Math.round((width - cropW) / 2);
+  const offsetY = Math.round((height - cropH) / 2);
+  console.log(`Center crop: ${width}x${height} -> ${cropW}x${cropH} (ratio ${ratio})`);
+  const dstData = Buffer.alloc(cropW * cropH * 4);
+  for (let y = 0; y < cropH; y++) {
+    for (let x = 0; x < cropW; x++) {
+      const si = ((y + offsetY) * width + (x + offsetX)) * 4;
+      const di = (y * cropW + x) * 4;
+      dstData[di] = srcData[si]; dstData[di + 1] = srcData[si + 1];
+      dstData[di + 2] = srcData[si + 2]; dstData[di + 3] = srcData[si + 3];
+    }
+  }
+  return jpeg.encode({ data: dstData, width: cropW, height: cropH }, 85).data;
+}
+
+function createWhitePaddedImage(imageBuffer: Buffer): Buffer {
+  const decoded = jpeg.decode(imageBuffer, { useTArray: true, maxMemoryUsageInMB: 512 });
+  const { width, height, data: srcData } = decoded;
+  const padding = Math.round(Math.max(width, height) * 0.08);
+  const canvasW = width + padding * 2;
+  const canvasH = height + padding * 2;
+  console.log(`White-padded: ${width}x${height} -> ${canvasW}x${canvasH} (padding ${padding}px)`);
+  const dstData = Buffer.alloc(canvasW * canvasH * 4);
+  for (let i = 0; i < dstData.length; i += 4) {
+    dstData[i] = 255; dstData[i + 1] = 255; dstData[i + 2] = 255; dstData[i + 3] = 255;
+  }
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const si = (y * width + x) * 4;
+      const di = ((y + padding) * canvasW + (x + padding)) * 4;
+      dstData[di] = srcData[si]; dstData[di + 1] = srcData[si + 1];
+      dstData[di + 2] = srcData[si + 2]; dstData[di + 3] = 255;
+    }
+  }
+  return jpeg.encode({ data: dstData, width: canvasW, height: canvasH }, 90).data;
 }
 
 function parseS3Url(url: string): { bucket: string; key: string } {
