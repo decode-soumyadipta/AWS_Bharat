@@ -78,6 +78,7 @@ export interface EntityExtractionResponse {
 export interface CatalogEntities {
   product_name: string | null;
   price: number | null;
+  price_per_unit?: boolean | null;
   quantity: number | null;
   unit: string | null;
   description?: string | null;

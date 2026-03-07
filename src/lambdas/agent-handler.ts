@@ -204,6 +204,7 @@ async function processAgentEvent(event: any): Promise<any> {
 
       case 'text':
         userMessage = content.text || '';
+        await sendTypingIndicator(phone, eventDetail.messageId);
         break;
 
       default:
@@ -504,11 +505,28 @@ async function detectAndApplyUpdate(
 
   if (newPrice === null && newQty === null) return null;
 
+  // Detect pricePerUnit: check if user said "per kg", "per kilo", "per piece", "per liter", "preti kilo", etc.
+  let newPricePerUnit: boolean | null = null;
+  if (newPrice !== null) {
+    const perUnitPatterns = /\b(per\s*(?:kg|kilo|kilogram|piece|pcs|liter|litre|dozen|packet|unit|bag|bundle)|preti\s*(?:kilo|kg)|har\s*(?:kilo|kg)|rupaye?\s*(?:per\s*)?(?:kg|kilo|kilogram|piece|liter|litre|dozen)|प्रति\s*(?:किलो|लीटर|पीस|दर्जन)|हर\s*किलो|रुपये?\s*(?:प्रति\s*)?किलो)\b/i;
+    const flatPatterns = /\b(total|flat|sab\s*mila|pura|poora|कुल|पूरा)\b/i;
+    if (perUnitPatterns.test(message)) {
+      newPricePerUnit = true;
+    } else if (flatPatterns.test(message)) {
+      newPricePerUnit = false;
+    } else if (newUnit) {
+      // If unit is a loose-goods unit (kg, liter, dozen), default to per-unit pricing
+      const looseUnits = ['kg', 'gram', 'liter', 'dozen'];
+      newPricePerUnit = looseUnits.includes(newUnit);
+    }
+  }
+
   const updates: Record<string, any> = { source: 'text' };
   const summary: string[] = [];
   if (newPrice !== null) { updates.price = newPrice; summary.push(`price=₹${newPrice}`); }
   if (newQty !== null)   { updates.quantity = newQty; summary.push(`qty=${newQty}`); }
   if (newUnit !== null)  { updates.unit = newUnit; }
+  if (newPricePerUnit !== null) { updates.pricePerUnit = newPricePerUnit; }
 
   console.log(`📝 Applying CONFIRMATION_PENDING updates:`, updates);
   await mergePartialData(phone, updates);
@@ -551,25 +569,41 @@ async function detectAndApplyUpdate(
 }
 
 async function handleVoiceMessage(eventDetail: any): Promise<string> {
-  console.log('Handling voice message:', eventDetail.content.mediaUrl);
+  const startTime = Date.now();
+  console.log('🎤 Handling voice message:', eventDetail.content.mediaUrl);
 
   const { downloadAudio } = await import('../services/media-download');
+  const { sendTypingIndicator } = await import('./whatsapp-message-sender');
   const bucketName = process.env.PRODUCTS_BUCKET_NAME;
+  const phone = eventDetail.phone;
+  const messageId = eventDetail.messageId;
 
   if (!bucketName) {
     console.error('PRODUCTS_BUCKET_NAME not configured for voice');
-    return ''; 
+    return '__VOICE_FAILED__';
   }
+
+  // Refresh typing indicator before download
+  await sendTypingIndicator(phone, messageId).catch(() => {});
 
   console.log('Downloading audio from WhatsApp...');
   const downloadResult = await downloadAudio(eventDetail.content.mediaUrl, bucketName);
 
   if (!downloadResult.success || !downloadResult.s3Url) {
     console.error('Audio download failed:', downloadResult.error);
-    return ''; 
+    return '__VOICE_FAILED__';
   }
 
-  console.log('Audio downloaded successfully:', downloadResult.s3Url);
+  // Validate S3 URL format before passing to transcription
+  if (!downloadResult.s3Url.startsWith('s3://') && !downloadResult.s3Url.includes('.amazonaws.com')) {
+    console.error('Invalid S3 URL from download:', downloadResult.s3Url);
+    return '__VOICE_FAILED__';
+  }
+
+  console.log(`Audio downloaded in ${Date.now() - startTime}ms:`, downloadResult.s3Url);
+
+  // Refresh typing indicator before transcription (long step)
+  await sendTypingIndicator(phone, messageId).catch(() => {});
 
   const { handler: transcriptionHandler } = await import('./voice-transcription');
 
@@ -587,10 +621,14 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
     console.error('Voice transcription failed:', transcriptionResult.error);
-    return '__VOICE_FAILED__'; 
+    return '__VOICE_FAILED__';
   }
 
-  console.log('Transcription successful:', transcriptionResult.transcription);
+  // Refresh typing indicator after transcription
+  await sendTypingIndicator(phone, messageId).catch(() => {});
+
+  const totalTime = Date.now() - startTime;
+  console.log(`🎤 Transcription successful in ${totalTime}ms:`, transcriptionResult.transcription);
 
   const normalizedText = normalizeHindiNumbers(transcriptionResult.transcription);
   return normalizedText;
@@ -698,7 +736,7 @@ async function handleImageMessage(
       console.log('✅ Confirmation handler invoked successfully');
     } catch (confErr) {
       console.error('⚠️ Confirmation handler invoke failed, sending manual confirmation:', confErr);
-      const summary = `${updatedPartial.productName}, ${updatedPartial.price} rupaye, ${updatedPartial.quantity} ${updatedPartial.unit}. Kya yeh sahi hai? Haan bolein ya badlav bataayein.`;
+      const summary = `${updatedPartial.productName}, ${updatedPartial.pricePerUnit && updatedPartial.unit ? updatedPartial.price + ' rupaye per ' + updatedPartial.unit : updatedPartial.price + ' rupaye'}, ${updatedPartial.quantity} ${updatedPartial.unit}. Kya yeh sahi hai? Haan bolein ya badlav bataayein.`;
       await sendEnhancedAgentMessage(phone, summary, language as any, 'both');
     }
     return '__CONFIRMATION_TRIGGERED__';
@@ -1019,6 +1057,7 @@ async function executeAgentActions(
             console.log('📦 STORE_DATA merged:', {
               productName: merged.productName,
               price: merged.price,
+              pricePerUnit: merged.pricePerUnit,
               quantity: merged.quantity,
               unit: merged.unit,
               missingFields: merged.missingFields,
@@ -1055,6 +1094,38 @@ async function executeAgentActions(
               !PLACEHOLDER_NAMES.includes(productNameLower) &&
               productNameLower.length >= 2;
 
+            // Detect if merge resolved fields that the AI action didn't contain.
+            // If so, the AI's response (already sent) may have asked for a field
+            // that was already stored. Send a corrective message.
+            const actionHadPrice = action.data.price !== undefined;
+            const actionHadQuantity = action.data.quantity !== undefined;
+            const actionHadUnit = action.data.unit !== undefined;
+            const mergeResolvedMissing = allFieldsPresent && (
+              (!actionHadPrice && merged.price !== undefined) ||
+              (!actionHadQuantity && merged.quantity !== undefined) ||
+              (!actionHadUnit && merged.unit !== undefined)
+            );
+
+            if (mergeResolvedMissing && hasRealProductName && !hasImage) {
+              console.log('🔄 Merge resolved all fields — AI response may have asked for already-stored data. Sending correction.');
+              const lang = language?.split('-')[0] || 'hi';
+              const priceLabel = merged.pricePerUnit && merged.unit
+                ? `₹${merged.price}/${merged.unit}`
+                : `₹${merged.price}`;
+              const corrections: Record<string, string> = {
+                'hi': `बहुत बढ़िया! ${merged.productName} — ${merged.quantity} ${merged.unit}, ${priceLabel} — सब details मिल गई हैं। अब कृपया ${merged.productName} की एक साफ फोटो भेजें।`,
+                'mr': `छान! ${merged.productName} — ${merged.quantity} ${merged.unit}, ${priceLabel} — सर्व माहिती मिळाली. आता कृपया ${merged.productName} चा फोटो पाठवा.`,
+                'en': `Got it! ${merged.productName} — ${merged.quantity} ${merged.unit}, ${priceLabel} — all details received. Now please send a clear photo of ${merged.productName}.`,
+              };
+              const correctionMsg = corrections[lang] || corrections['hi'];
+              try {
+                await sendEnhancedAgentMessage(phone, correctionMsg, language as any, 'voice');
+                console.log('✅ Sent corrective message after merge resolved all fields');
+              } catch (corrErr) {
+                console.warn('Failed to send corrective message:', corrErr);
+              }
+            }
+
             if (allFieldsPresent && hasRealProductName && hasImage) {
 
               console.log('✅ All fields + image complete, triggering confirmation');
@@ -1074,6 +1145,42 @@ async function executeAgentActions(
 
               console.log('📸 All fields present, moving to IMAGE_PENDING');
               await updateUserState(phone, 'IMAGE_PENDING');
+
+              // Cache market price for later use in confirmation — but do NOT send a
+              // separate voice message here. The agent's conversational response
+              // (sent via sendEnhancedAgentMessage above) already asks for the photo.
+              // Sending another voice message causes duplicate audio replies.
+              try {
+                const { fetchLiveMarketPrice, getLocalMarketPrice } = await import('../tools/web-search');
+                const productNameForMarket = merged.productName || '';
+
+                let marketPrice;
+                try {
+                  const liveResult = await fetchLiveMarketPrice(productNameForMarket);
+                  if (liveResult.found) marketPrice = liveResult;
+                } catch (liveErr) {
+                  console.warn('Live market price for IMAGE_PENDING failed:', liveErr);
+                }
+                if (!marketPrice) {
+                  const fallback = getLocalMarketPrice(productNameForMarket);
+                  if (fallback.found) marketPrice = { found: true, priceInfo: fallback.priceInfo, isLive: false };
+                }
+
+                if (marketPrice && marketPrice.found && merged.price) {
+                  await mergePartialData(phone, {
+                    cachedMarketPrice: {
+                      priceInfo: marketPrice.priceInfo,
+                      sourceName: marketPrice.sourceName || '',
+                      sourceUrl: marketPrice.sourceUrl || '',
+                      isLive: marketPrice.isLive === true,
+                      cachedAt: Date.now(),
+                    },
+                  } as any);
+                  console.log('📊 Cached market price for', productNameForMarket);
+                }
+              } catch (mpErr) {
+                console.warn('Market price cache for IMAGE_PENDING failed (non-fatal):', mpErr);
+              }
             } else if (currentState === 'KYC_VERIFIED' || currentState === 'ACTIVE' || currentState === 'GUEST_ACTIVE') {
 
               console.log('📝 Partial data or placeholder name, moving to VOICE_RECEIVED');
@@ -1126,7 +1233,15 @@ async function executeAgentActions(
             console.warn('Guest seller profile creation failed (non-blocking):', e);
           }
 
+          try {
+            const { sendTypingIndicator: sendTypKyc } = await import('./whatsapp-message-sender');
+            await sendTypKyc(phone);
+          } catch (_) {}
           await new Promise(resolve => setTimeout(resolve, 2000));
+          try {
+            const { sendTypingIndicator: sendTypKyc2 } = await import('./whatsapp-message-sender');
+            await sendTypKyc2(phone);
+          } catch (_) {}
           const { sendOnboardingGuide } = await import('../services/onboarding-guide');
           await sendOnboardingGuide(phone, language);
 
@@ -1173,6 +1288,7 @@ async function createCatalog(phone: string, language: string): Promise<void> {
       entities: {
         product_name: partialData.productName,
         price: partialData.price,
+        price_per_unit: partialData.pricePerUnit || false,
         quantity: partialData.quantity,
         unit: partialData.unit,
         category: partialData.category || 'other',

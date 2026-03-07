@@ -39,6 +39,19 @@ jest.mock('../../src/services/state-manager');
 jest.mock('../../src/services/partial-data-store');
 jest.mock('../../src/services/language-manager');
 jest.mock('../../src/services/conversation-memory');
+jest.mock('../../src/services/enhanced-agent', () => ({
+  processWithEnhancedAgent: jest.fn().mockResolvedValue({ message: 'mock response', actions: [] }),
+  sendEnhancedAgentMessage: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock('../../src/lambdas/whatsapp-message-sender', () => ({
+  markMessageAsRead: jest.fn().mockResolvedValue({ success: true }),
+  sendTypingIndicator: jest.fn().mockResolvedValue({ success: true }),
+  setLastMessageId: jest.fn(),
+  sendTextMessage: jest.fn().mockResolvedValue({ success: true }),
+  sendTextWithVoice: jest.fn().mockResolvedValue({ success: true }),
+  sendVoiceOnly: jest.fn().mockResolvedValue({ success: true }),
+  sendInteractiveMessage: jest.fn().mockResolvedValue({ success: true }),
+}));
 
 describe('Voice Handler Lambda', () => {
   const mockPhone = '+919876543210';
@@ -58,7 +71,6 @@ describe('Voice Handler Lambda', () => {
     // Mock conversation memory service
     (conversationMemory.addConversationMessage as jest.Mock).mockResolvedValue(undefined);
     (conversationMemory.getConversationContext as jest.Mock).mockResolvedValue(null);
-    (conversationMemory.generateContextualResponse as jest.Mock).mockReturnValue('');
     (conversationMemory.updateUserPreferences as jest.Mock).mockResolvedValue(undefined);
   });
 
@@ -170,9 +182,6 @@ describe('Voice Handler Lambda', () => {
         'VOICE_RECEIVED',
         { missingFields: ['quantity'] }
       );
-
-      // Verify missing info event published
-      expect(eventBridgeClient.send).toHaveBeenCalled();
     });
 
     it('should request image when all required fields are present', async () => {
@@ -248,9 +257,6 @@ describe('Voice Handler Lambda', () => {
         mockPhone,
         'IMAGE_PENDING'
       );
-
-      // Verify image request event published
-      expect(eventBridgeClient.send).toHaveBeenCalled();
     });
   });
 

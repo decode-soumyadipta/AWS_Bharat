@@ -256,6 +256,10 @@ async function constructBecknCatalogItem(
       {
         code: 'unit',
         list: [{ code: 'value', value: entities.unit! }]
+      },
+      {
+        code: 'price_per_unit',
+        list: [{ code: 'value', value: entities.price_per_unit ? 'true' : 'false' }]
       }
     ],
     '@ondc/org/returnable': false,

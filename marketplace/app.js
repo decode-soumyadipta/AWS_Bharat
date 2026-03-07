@@ -352,7 +352,7 @@ function renderProducts(products) {
           <div class="p-name">${p.name}</div>
           <div class="p-seller">by ${p.seller ? p.seller.name : 'Unknown'}</div>
           ${desc ? `<div class="p-desc">${desc}</div>` : ''}
-          <div class="p-price">₹${p.price} <span class="unit">${p.unit ? `(${p.unit})` : ''}</span></div>
+          <div class="p-price">₹${p.price}${p.pricePerUnit && p.unit ? '/' + p.unit : ''} <span class="unit">${!p.pricePerUnit && p.unit ? `(${p.unit})` : ''}</span></div>
           <div class="p-stock ${stockClass}">${stockText}</div>
           <div class="card-actions">
             <button class="btn-add-cart ${outOfStock ? 'btn-disabled' : ''}" ${outOfStock ? 'disabled' : ''} data-product='${JSON.stringify(p).replace(/'/g, "&apos;")}'>🛒 Add to Cart</button>
@@ -368,7 +368,7 @@ function renderProducts(products) {
 
 function handleAddToCart(e) {
   const p = JSON.parse(e.target.closest('.btn-add-cart').dataset.product);
-  cart.addItem(p.productId, 1, { name: p.name, price: p.price, seller: p.seller, unit: p.unit, imageUrl: p.imageUrl || '' });
+  cart.addItem(p.productId, 1, { name: p.name, price: p.price, seller: p.seller, unit: p.unit, pricePerUnit: p.pricePerUnit || false, imageUrl: p.imageUrl || '' });
   cart.saveToStorage();
   updateCartBadge();
   showToast(`${p.name} added to cart!`);
@@ -377,7 +377,7 @@ function handleAddToCart(e) {
 function handleBuyNow(e) {
   const p = JSON.parse(e.target.closest('.btn-buy-now').dataset.product);
   cart.clear();
-  cart.addItem(p.productId, 1, { name: p.name, price: p.price, seller: p.seller, unit: p.unit, imageUrl: p.imageUrl || '' });
+  cart.addItem(p.productId, 1, { name: p.name, price: p.price, seller: p.seller, unit: p.unit, pricePerUnit: p.pricePerUnit || false, imageUrl: p.imageUrl || '' });
   cart.saveToStorage();
   updateCartBadge();
   showCheckout();
@@ -418,7 +418,7 @@ function renderCartSidebar() {
     <div class="cart-item-row">
       <div class="ci-info">
         <div class="ci-name">${it.name}</div>
-        <div class="ci-meta">${it.seller ? it.seller.name : ''} · ₹${it.price}</div>
+        <div class="ci-meta">${it.seller ? it.seller.name : ''} · ₹${it.price}${it.pricePerUnit && it.unit ? '/' + it.unit : ''}</div>
       </div>
       <div class="ci-qty">
         <button class="qty-btn" data-idx="${i}" data-dir="-1">−</button>

@@ -79,11 +79,21 @@ export const handler = async (
 
     await sendTypingIndicator(phone, messageId);
 
-    const transcriptionResult = await invokeVoiceTranscription({
-      audioUrl: downloadResult.s3Url,
-      messageId,
-      languageCode: state?.language,
-    });
+    // Set up periodic typing indicator refresh during long transcription
+    const typingRefreshInterval = setInterval(async () => {
+      try { await sendTypingIndicator(phone, messageId); } catch (_) {}
+    }, 4000);
+
+    let transcriptionResult;
+    try {
+      transcriptionResult = await invokeVoiceTranscription({
+        audioUrl: downloadResult.s3Url,
+        messageId,
+        languageCode: state?.language,
+      });
+    } finally {
+      clearInterval(typingRefreshInterval);
+    }
     const transcriptionEndTime = Date.now();
     const transcriptionDuration = transcriptionEndTime - transcriptionStartTime;
     console.log(`Transcription completed in ${transcriptionDuration}ms`);
@@ -115,6 +125,9 @@ export const handler = async (
     const intentStartTime = Date.now();
     console.log('Invoking intent-classification Lambda...');
 
+    // Refresh typing indicator before intent classification
+    await sendTypingIndicator(phone, messageId);
+
     const intentResult = await invokeIntentClassification({
       transcribedText: transcription,
       phoneNumber: phone,
@@ -134,6 +147,9 @@ export const handler = async (
 
     const entityStartTime = Date.now();
     console.log('Invoking entity-extraction Lambda...');
+
+    // Refresh typing indicator before entity extraction
+    await sendTypingIndicator(phone, messageId);
 
     const entityResult = await invokeEntityExtraction({
       transcribedText: transcription,

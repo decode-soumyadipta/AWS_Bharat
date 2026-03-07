@@ -549,11 +549,17 @@ export class VyaparVaaniStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(intentClassificationLambda, { deadLetterQueue: eventBridgeDlq })],
     });
 
+    // VoiceMessageRule: Only trigger standalone voiceTranscriptionLambda for
+    // VOICE-handled messages. Agent-handled voice messages are transcribed
+    // inline by agent-handler, so this prevents duplicate processing.
     new events.Rule(this, 'VoiceMessageRule', {
       eventBus: this.eventBus,
       eventPattern: {
         source: [EVENT_SOURCES.WHATSAPP],
         detailType: [WHATSAPP_EVENT_TYPES.MESSAGE_RECEIVED_VOICE],
+        detail: {
+          handler: ['VOICE'],
+        },
       },
       targets: [new targets.LambdaFunction(voiceTranscriptionLambda, { deadLetterQueue: eventBridgeDlq })],
     });
@@ -812,6 +818,7 @@ export class VyaparVaaniStack extends cdk.Stack {
         PRODUCTS_BUCKET_NAME: this.productsBucket.bucketName,
         EVENT_BUS_NAME: this.eventBus.eventBusName,
         KMS_KEY_ID: this.encryptionKey.keyId,
+        WHATSAPP_API_ENDPOINT: process.env.WHATSAPP_API_ENDPOINT || 'https://graph.facebook.com/v22.0',
         WHATSAPP_ACCESS_TOKEN: process.env.WHATSAPP_ACCESS_TOKEN || '',
         WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
         MAX_AUDIO_SIZE_MB: process.env.MAX_AUDIO_SIZE_MB || '16',

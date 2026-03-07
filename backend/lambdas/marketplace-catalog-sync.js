@@ -290,6 +290,7 @@ async function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) 
 
   // Extract unit from tags or quantity.unitized
   let unit = 'piece';
+  let pricePerUnit = false;
   if (catalogItem.quantity && catalogItem.quantity.unitized && catalogItem.quantity.unitized.measure) {
     unit = catalogItem.quantity.unitized.measure.unit;
   } else if (catalogItem.tags) {
@@ -301,12 +302,22 @@ async function transformToMarketplaceProduct(catalogItem, sellerId, sellerInfo) 
       }
     }
   }
+  if (catalogItem.tags) {
+    const ppuTag = catalogItem.tags.find(tag => tag.code === 'price_per_unit');
+    if (ppuTag && ppuTag.list) {
+      const ppuValue = ppuTag.list.find(item => item.code === 'value');
+      if (ppuValue) {
+        pricePerUnit = ppuValue.value === 'true';
+      }
+    }
+  }
 
   return {
     productId: catalogItem.id,
     name: catalogItem.descriptor.name,
     description: catalogItem.descriptor.long_desc || catalogItem.descriptor.short_desc || '',
     price: parseFloat(catalogItem.price.value),
+    pricePerUnit: pricePerUnit,
     quantity: catalogItem.quantity.available.count,
     unit: unit,
     category: catalogItem.category_id || 'Other',

@@ -128,43 +128,24 @@ export function setLastMessageId(phone: string, messageId: string): void {
   lastMessageIdByPhone[phone] = messageId;
 }
 
-async function resendTypingWithMessageId(
-  messageId: string
-): Promise<{ success: boolean; data?: any; error?: string }> {
-
-  return markMessageAsRead(messageId, true);
-}
-
+/**
+ * Send typing indicator via WhatsApp Cloud API.
+ * WhatsApp requires typing_indicator to be bundled with the mark-as-read payload.
+ * Re-sending mark-as-read on already-read messages is harmless and still triggers typing.
+ */
 export async function sendTypingIndicator(
   to: string,
   messageId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const msgId = messageId || lastMessageIdByPhone[to];
-
-  if (msgId && alreadyReadMessageIds.has(msgId)) {
-    console.log('📝 Message already read, re-sending typing with message_id for', to);
-    return resendTypingWithMessageId(msgId);
+  if (!msgId) {
+    console.warn('⌨️ No message ID available for typing indicator, skipping');
+    return { success: false, error: 'No message ID available' };
   }
 
-  if (msgId) {
-    try {
-      const result = await markMessageAsRead(msgId, true);
-      if (result.success) {
-        alreadyReadMessageIds.add(msgId);
-      }
-      return result;
-    } catch (err) {
-      console.warn('Typing indicator exception:', err);
-      return { success: false, error: err instanceof Error ? err.message : 'Unknown typing error' };
-    }
-  }
-
-  if (to) {
-    console.log('⚠️ No messageId for typing indicator — typing requires a message_id per WhatsApp API');
-  }
-
-  console.warn('⚠️ No messageId or phone for typing indicator — skipping');
-  return { success: false, error: 'No messageId or phone available' };
+  console.log('⌨️ Sending typing indicator to:', to, 'via mark-as-read with messageId:', msgId);
+  const result = await markMessageAsRead(msgId, true);
+  return { success: result.success, error: result.error };
 }
 
 export async function sendTextMessage(

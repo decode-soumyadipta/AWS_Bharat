@@ -206,7 +206,9 @@ export async function generateConfirmation(
   const lang = getLanguagePreference(language);
 
   const productName = partialData.productName || 'Product';
-  const price = partialData.price ? `₹${partialData.price}` : '—';
+  const price = partialData.price
+    ? (partialData.pricePerUnit && partialData.unit ? `₹${partialData.price}/${partialData.unit}` : `₹${partialData.price}`)
+    : '—';
   const unit = partialData.unit || 'unit';
   const quantity = partialData.quantity ? `${partialData.quantity} ${unit}` : '—';
   const category = partialData.category || '—';

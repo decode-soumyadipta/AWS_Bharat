@@ -56,10 +56,10 @@ describe('WhatsApp Message Sender', () => {
       expect(result.success).toBe(true);
       expect(result.messageId).toBe('msg-123');
       expect(global.fetch).toHaveBeenCalledWith(
-        'https://api.whatsapp.test/messages',
+        'https://api.whatsapp.test/test-phone-id/messages',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
         })
       );
     });

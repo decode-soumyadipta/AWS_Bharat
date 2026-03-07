@@ -120,7 +120,7 @@ export async function processWithEnhancedAgent(
   }
 
   if (!priceQuery && partialData?.productName && !partialData.price) {
-    console.log('💰 Auto-fetching LIVE market price for product being added:', partialData.productName);
+    console.log('💰 Auto-fetching LIVE market price for product being added (no price yet):', partialData.productName);
     try {
       const livePrice = await fetchLiveMarketPrice(partialData.productName);
       if (livePrice.found) {
@@ -140,6 +140,36 @@ export async function processWithEnhancedAgent(
       }
     } catch (e: any) {
       console.warn('Live price fetch failed, using fallback:', e.message);
+      const fallbackPrice = getLocalMarketPrice(partialData.productName);
+      if (fallbackPrice.found) {
+        marketInfo = `📋 अनुमानित बाज़ार भाव ${partialData.productName}: ${fallbackPrice.priceInfo} (${fallbackPrice.sourceName})`;
+      }
+    }
+  }
+
+  // Also fetch market price when price IS set but no cached market price yet
+  // This enables the PROACTIVE PRICE CHECK in the prompt to compare seller's price vs market
+  if (!priceQuery && !marketInfo && partialData?.productName && partialData.price && !partialData.cachedMarketPrice) {
+    console.log('💰 Auto-fetching market price for PROACTIVE PRICE CHECK:', partialData.productName);
+    try {
+      const livePrice = await fetchLiveMarketPrice(partialData.productName);
+      if (livePrice.found) {
+        const liveTag = livePrice.isLive ? '🟢 LIVE' : '📋';
+        marketInfo = `${liveTag} आज का बाज़ार भाव ${partialData.productName}: ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
+        if (livePrice.isLive) {
+          await mergePartialData(phone, {
+            cachedMarketPrice: {
+              priceInfo: livePrice.priceInfo,
+              sourceName: livePrice.sourceName,
+              sourceUrl: livePrice.sourceUrl,
+              isLive: true,
+              cachedAt: Date.now(),
+            },
+          } as any).catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      console.warn('Proactive price check fetch failed, using fallback:', e.message);
       const fallbackPrice = getLocalMarketPrice(partialData.productName);
       if (fallbackPrice.found) {
         marketInfo = `📋 अनुमानित बाज़ार भाव ${partialData.productName}: ${fallbackPrice.priceInfo} (${fallbackPrice.sourceName})`;
@@ -1015,7 +1045,10 @@ async function executeCatalogLookup(
         : 'CATALOG_INFO: Your catalog is empty. Start by adding a product — just tell me what you want to sell.';
     }
 
-    const productList = items.map((i: any) => `${i.name}: ₹${i.price}, stock ${i.quantity} ${i.unit} (${i.status})`).join(' | ');
+    const productList = items.map((i: any) => {
+      const pDisplay = i.pricePerUnit && i.unit ? `₹${i.price}/${i.unit}` : `₹${i.price}`;
+      return `${i.name}: ${pDisplay}, stock ${i.quantity} ${i.unit} (${i.status})`;
+    }).join(' | ');
     return `CATALOG_INFO: ${items.length} products in catalog: ${productList}`;
   } catch (error: any) {
     console.error('Catalog lookup failed:', error);
@@ -1277,13 +1310,18 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
   }
 
   if (partialData) {
+    const priceDisplay = partialData.price
+      ? (partialData.pricePerUnit && partialData.unit ? `₹${partialData.price}/${partialData.unit}` : `₹${partialData.price}`)
+      : 'Not set';
     prompt += `\n\nCurrent order being tracked:
 Product: ${partialData.productName || 'Unknown'}
-Price: ${partialData.price ? `₹${partialData.price}` : 'Not set'}
+Price: ${priceDisplay}
 Quantity: ${partialData.quantity ? `${partialData.quantity} ${partialData.unit}` : 'Not set'}
 Category: ${partialData.category || 'Unknown'}
 Photo: ${partialData.originalImageUrl ? 'Received' : 'Not received'}
-Missing fields: ${partialData.missingFields?.length ? partialData.missingFields.join(', ') : 'NONE - all fields complete'}`;
+Missing fields: ${partialData.missingFields?.length ? partialData.missingFields.join(', ') : 'NONE - all fields complete'}
+
+CRITICAL: Fields shown above as ALREADY SET (not 'Not set') are ALREADY STORED in the database. Do NOT re-ask for them. Your STORE_DATA action should ONLY include the NEW field(s) from the user's current message. The system will automatically merge with existing data. In your response MESSAGE, only ask for fields that are 'Not set' above. If only one field is missing, ask ONLY for that one field.`;
 
     if (userState?.state === 'CONFIRMATION_PENDING') {
       prompt += `\n\nSTATE: CONFIRMATION_PENDING — User is reviewing the product shown above.
@@ -1363,8 +1401,11 @@ If the seller asks about weather, prices, alerts, or "what was that message?" �
   }
 
   if (partialData?.price && marketInfo) {
+    const priceLabel = partialData.pricePerUnit && partialData.unit
+      ? `₹${partialData.price}/${partialData.unit}`
+      : `₹${partialData.price}`;
     prompt += `\n\nPROACTIVE PRICE CHECK:
-Seller's current price for ${partialData.productName || 'this product'}: ₹${partialData.price}
+Seller's current price for ${partialData.productName || 'this product'}: ${priceLabel}
 Market data: ${marketInfo}
 IF the seller's price is significantly below market average (more than 30 percent lower), gently recommend a higher price. Say something like: "Aapka bhav market se kam lag raha hai. Market mein ye [price range] pe bik raha hai. Kya aap price badhana chahenge?"
 IF significantly above market, give a gentle heads-up.
@@ -1480,20 +1521,28 @@ STORE_DATA RULES (MOST IMPORTANT — READ CAREFULLY):
   * User says "10 kilo" when price is set → STORE_DATA {"quantity":10,"unit":"kg"} (ready for photo)
   * NEVER call ASK_QUESTION for a number — it's always price or quantity depending on context
 - PRODUCT NAME RULE: The item/product the user mentions IS the productName. NEVER re-ask for the name when user already said what they want to sell.
-- PRICING RULE (VERY IMPORTANT): The "price" field is ALWAYS the TOTAL SELLING PRICE of the item — NOT a per-gram or per-ml rate. When user says "ghee 500g 40 rupaye", price is 40 (the whole item costs ₹40). NEVER interpret price as a per-unit rate.
+- PRICING RULE (VERY IMPORTANT): Understand the seller's INTENT for pricing:
+  * If user says "per kilo", "per kg", "per piece", "per liter", "per packet", "per bottle", "per dozen", "preti kilo", "har kilo", "प्रति किलो", "per unit" → price is PER-UNIT. Set pricePerUnit: true.
+    Examples: "aam 50 rupaye per kilo" → price: 50, pricePerUnit: true. "tomato 30 rupaye kilo" → price: 30, pricePerUnit: true (implied per kilo). "doodh 60 rupaye per liter" → price: 60, pricePerUnit: true.
+  * If user gives a FLAT total price for the product (no "per" or rate language) → price is FLAT/TOTAL. Set pricePerUnit: false.
+    Examples: "ghee 500g bottle 40 rupaye" → price: 40, pricePerUnit: false. "honey jar 250 rupees" → price: 250, pricePerUnit: false. "packet 120 rupaye" → price: 120, pricePerUnit: false.
+  * DEFAULT: If unclear, default pricePerUnit to false (flat price) for packaged items (bottle, jar, packet, box, dabba, pouch) and true (per-unit) for loose items (kg, liter, dozen).
+  * ALWAYS include pricePerUnit in STORE_DATA. NEVER omit it when price is being stored.
 - UNIT RULE FOR PACKAGED ITEMS: For packaged/bottled/boxed items (bottle, packet, box, jar, can, dabba, pouch), use "piece" as the unit. The weight/volume (500g, 1L, 250ml) is a size descriptor — include it in the product name, NOT as the unit.
   Examples: "ghee 500g bottle" → productName: "Ghee (500g)", unit: "piece". "1L oil bottle" → productName: "Oil (1L)", unit: "piece".
 - UNIT RULE FOR LOOSE ITEMS: For loose/bulk items sold by weight or volume (vegetables, grains, milk), use the weight/volume unit (kg, liter, etc.).
   Examples: "tamatar 10 kilo" → productName: "Tomato", unit: "kg". "doodh 5 liter" → productName: "Milk", unit: "liter".
 - COMPOUND INPUT: When user provides product + price + quantity in ONE message, extract ALL fields at once.
   Examples of compound inputs to parse correctly:
-  * "tamatar 50 rupaye, 10 kilo" → DATA: {"productName":"Tomato","price":50,"quantity":10,"unit":"kg","category":"Vegetables"}
-  * "ghee 500g bottle 40 rupaye, 5 bottle" → DATA: {"productName":"Ghee (500g)","price":40,"quantity":5,"unit":"piece","category":"Dairy"}
+  * "tamatar 50 rupaye, 10 kilo" → DATA: {"productName":"Tomato","price":50,"pricePerUnit":true,"quantity":10,"unit":"kg","category":"Vegetables"}
+  * "ghee 500g bottle 40 rupaye, 5 bottle" → DATA: {"productName":"Ghee (500g)","price":40,"pricePerUnit":false,"quantity":5,"unit":"piece","category":"Dairy"}
   * "main 2 kg aam bechna chahta hoon" → DATA: {"productName":"Aam","quantity":2,"unit":"kg","category":"Fruits"} — note: 2 kg is quantity, not price. Ask for price next.
   * "मैं 2 kg आम बेचना चाहता हूँ" → DATA: {"productName":"Aam","quantity":2,"unit":"kg","category":"Fruits"} — same in Devanagari
-  * "pyaz 30 rupaye, 20 kilo" → DATA: {"productName":"Onion","price":30,"quantity":20,"unit":"kg","category":"Vegetables"}
-  * "tel 1 litre bottle 120 rupaye, 10 piece" → DATA: {"productName":"Oil (1L)","price":120,"quantity":10,"unit":"piece","category":"Grocery"}
-  * "honey 500g jar 250 rupees" → DATA: {"productName":"Honey (500g)","price":250,"quantity":1,"unit":"piece","category":"Grocery"} — quantity defaults to 1 for single packaged items
+  * "pyaz 30 rupaye per kilo, 20 kilo" → DATA: {"productName":"Onion","price":30,"pricePerUnit":true,"quantity":20,"unit":"kg","category":"Vegetables"}
+  * "aam 50 rupaye per kilo, 2 kilo" → DATA: {"productName":"Aam","price":50,"pricePerUnit":true,"quantity":2,"unit":"kg","category":"Fruits"}
+  * "tel 1 litre bottle 120 rupaye, 10 piece" → DATA: {"productName":"Oil (1L)","price":120,"pricePerUnit":false,"quantity":10,"unit":"piece","category":"Grocery"}
+  * "honey 500g jar 250 rupees" → DATA: {"productName":"Honey (500g)","price":250,"pricePerUnit":false,"quantity":1,"unit":"piece","category":"Grocery"} — quantity defaults to 1 for single packaged items
+  * "doodh 60 rupaye per liter, 10 liter" → DATA: {"productName":"Milk","price":60,"pricePerUnit":true,"quantity":10,"unit":"liter","category":"Dairy"}
   KEY: When both a number+unit (e.g., "2 kg") AND a product name exist, the number+unit is QUANTITY. Price comes separately unless explicitly stated with "rupaye/rupees/rs".
 - NEVER use ASK_QUESTION when user has given ANY product information — ALWAYS use STORE_DATA
 - ALWAYS include ALL fields you can extract in a single STORE_DATA call, including auto-detected category
@@ -1559,7 +1608,7 @@ ANTI-HALLUCINATION RULES:
 Response format:
 MESSAGE: [Your concise answer in ${langName}]
 ACTION: [NONE/STORE_DATA/CREATE_CATALOG/ASK_QUESTION/DELETE_PRODUCT/REGISTER_UPI/SKIP_KYC]
-DATA: {"productName": "<name>", "price": <num>, "quantity": <num>, "unit": "<unit>", "category": "<cat>", "upiId": "<upi@id>"}
+DATA: {"productName": "<name>", "price": <num>, "pricePerUnit": <true/false>, "quantity": <num>, "unit": "<unit>", "category": "<cat>", "upiId": "<upi@id>"}
 RESPONSE_MODE: [voice/text/both]
 CONFIDENCE: [0-100]
 REASONING: [Brief reason]
@@ -1733,6 +1782,10 @@ function parseEnhancedResponse(response: string, language: LanguageCode): Enhanc
         const unitMatch = dataStr.match(/unit["\s:]*"?(\w+)"?/i);
         if (unitMatch && action === 'STORE_DATA') {
           actionData = { ...(actionData || {}), unit: unitMatch[1] };
+        }
+        const ppuMatch = dataStr.match(/pricePerUnit["\s:]*(true|false)/i);
+        if (ppuMatch && action === 'STORE_DATA') {
+          actionData = { ...(actionData || {}), pricePerUnit: ppuMatch[1].toLowerCase() === 'true' };
         }
       }
     }

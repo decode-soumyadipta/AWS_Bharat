@@ -127,7 +127,8 @@ Intent: CREATE_CATALOG
 
 Extract these fields ONLY if they are EXPLICITLY mentioned:
 - product_name: string (the name of the product)
-- price: number (total item selling price in INR, numeric value only — NOT a per-unit rate)
+- price: number (selling price in INR, numeric value only)
+- price_per_unit: boolean (true if user says "per kilo", "per kg", "per piece", "per liter", "per packet", "preti kilo", "प्रति किलो", or any per-unit rate language; false if user gives a flat/total price for the item; null if price not mentioned)
 - quantity: number (numeric value only - how many units available)
 - unit: string (one of: "kg", "liters", "pieces", "packets", "grams", "ml", "bottles", "dozen")
 - description: string (optional, any additional details)
@@ -151,26 +152,34 @@ Before responding, ask yourself for EACH field:
 
 CORRECT EXAMPLES:
 Input: "मैं 2 kg आम ₹500 प्रति केजी के दर में बेचना चाहता हूँ"
-✓ Correct: {"product_name": "आम", "price": 500, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
-Why: ALL values (product, price, quantity, unit) are EXPLICITLY mentioned
+✓ Correct: {"product_name": "आम", "price": 500, "price_per_unit": true, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
+Why: ALL values (product, price, quantity, unit) are EXPLICITLY mentioned. "प्रति केजी" means per kilo → price_per_unit is true.
 
 Input: "मैं आम बेचना चाहता हूँ"
-✓ Correct: {"product_name": "आम", "price": null, "quantity": null, "unit": null, "description": null, "category": "food"}
+✓ Correct: {"product_name": "आम", "price": null, "price_per_unit": null, "quantity": null, "unit": null, "description": null, "category": "food"}
 Why: ONLY product name mentioned, everything else is null
 
 Input: "I want to sell honey"
-✓ Correct: {"product_name": "honey", "price": null, "quantity": null, "unit": null, "description": null, "category": "food"}
+✓ Correct: {"product_name": "honey", "price": null, "price_per_unit": null, "quantity": null, "unit": null, "description": null, "category": "food"}
 Why: ONLY product name mentioned
 
 Input: "10 pieces of handicraft items for 1500 per piece"
-✓ Correct: {"product_name": "handicraft items", "price": 1500, "quantity": 10, "unit": "pieces", "description": null, "category": "handicraft"}
+✓ Correct: {"product_name": "handicraft items", "price": 1500, "price_per_unit": true, "quantity": 10, "unit": "pieces", "description": null, "category": "handicraft"}
+
+Input: "ghee 500g bottle 40 rupaye, 5 bottles"
+✓ Correct: {"product_name": "ghee (500g)", "price": 40, "price_per_unit": false, "quantity": 5, "unit": "bottles", "description": null, "category": "food"}
+Why: Flat price for a packaged item, no "per" language.
+
+Input: "aam 50 rupaye per kilo, 2 kilo"
+✓ Correct: {"product_name": "aam", "price": 50, "price_per_unit": true, "quantity": 2, "unit": "kg", "description": null, "category": "food"}
+Why: "per kilo" means price is per unit.
 
 Input: "price 500 and quantity 10"
-✓ Correct: {"product_name": null, "price": 500, "quantity": 10, "unit": null, "description": null, "category": null}
+✓ Correct: {"product_name": null, "price": 500, "price_per_unit": false, "quantity": 10, "unit": null, "description": null, "category": null}
 Why: BOTH price AND quantity mentioned together
 
 Input: "कीमत 600 और मात्रा 20 kg"
-✓ Correct: {"product_name": null, "price": 600, "quantity": 20, "unit": "kg", "description": null, "category": null}
+✓ Correct: {"product_name": null, "price": 600, "price_per_unit": false, "quantity": 20, "unit": "kg", "description": null, "category": null}
 Why: Price, quantity, AND unit mentioned together
 
 WRONG EXAMPLES - NEVER DO THIS:
@@ -186,6 +195,7 @@ Respond with ONLY a JSON object (no additional text):
 {
   "product_name": "...",
   "price": null,
+  "price_per_unit": null,
   "quantity": null,
   "unit": null,
   "description": null,

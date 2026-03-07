@@ -18,9 +18,9 @@ import {
 
 const SUPPORTED_LANGUAGES: SupportedLanguage[] = ['hi-IN', 'mr-IN', 'en-IN'];
 
-const MAX_POLLING_ATTEMPTS = 30; 
+const MAX_POLLING_ATTEMPTS = 60; 
 
-const POLLING_INTERVAL_MS = 2000; 
+const POLLING_INTERVAL_MS = 1000; 
 
 export const handler = async (
   event: VoiceTranscriptionRequest

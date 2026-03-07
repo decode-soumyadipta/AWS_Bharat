@@ -137,7 +137,7 @@ class CartUI {
           <div class="cart-item-name">${htmlEscapedName}</div>
           <div class="cart-item-seller">Seller: ${htmlEscapedSeller}</div>
           <div class="cart-item-pricing">
-            <span class="cart-item-unit-price">₹${item.price} × ${item.quantity} ${item.unit}</span>
+            <span class="cart-item-unit-price">₹${item.price}${item.pricePerUnit && item.unit ? '/' + item.unit : ''} × ${item.quantity} ${item.unit}</span>
             <span class="cart-item-line-total">= ₹${lineTotal.toFixed(2)}</span>
           </div>
         </div>

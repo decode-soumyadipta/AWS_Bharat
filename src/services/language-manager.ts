@@ -272,7 +272,8 @@ export function formatCatalogDetails(
     parts.push(`${l.product}: ${item.productName}`);
   }
   if (item.price !== undefined) {
-    parts.push(`${l.price}: ₹${item.price}`);
+    const priceDisplay = (item as any).pricePerUnit && item.unit ? `₹${item.price}/${item.unit}` : `₹${item.price}`;
+    parts.push(`${l.price}: ${priceDisplay}`);
   }
   if (item.quantity !== undefined && item.unit) {
     parts.push(`${l.quantity}: ${item.quantity} ${item.unit}`);

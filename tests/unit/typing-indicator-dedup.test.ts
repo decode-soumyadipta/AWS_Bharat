@@ -30,16 +30,8 @@ describe("Typing indicator dedup — source contracts", () => {
     expect(messageSender).toMatch(/new Set/);
   });
 
-  it("has resendTypingWithMessageId function for repeated typing", () => {
-    expect(messageSender).toMatch(/async function resendTypingWithMessageId/);
-  });
-
-  it("resendTypingWithMessageId calls markMessageAsRead with typing=true", () => {
-    expect(messageSender).toContain("markMessageAsRead(messageId, true)");
-  });
-
-  it("sendTypingIndicator checks alreadyReadMessageIds before calling markMessageAsRead", () => {
-    expect(messageSender).toContain("alreadyReadMessageIds.has(msgId)");
+  it("sendTypingIndicator calls markMessageAsRead with typing=true", () => {
+    expect(messageSender).toContain("markMessageAsRead(msgId, true)");
   });
 
   it("markMessageAsRead adds to alreadyReadMessageIds on success", () => {

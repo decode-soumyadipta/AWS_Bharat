@@ -46,3 +46,4 @@ cdk-outputs.json
 # Logs
 logs/
 *.log
+benchmark.sh

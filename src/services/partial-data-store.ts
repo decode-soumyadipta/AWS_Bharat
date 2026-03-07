@@ -14,6 +14,7 @@ export interface PartialCatalogItem {
   phone: string;
   productName?: string;
   price?: number;
+  pricePerUnit?: boolean;
   quantity?: number;
   unit?: string;
   category?: string;
@@ -110,6 +111,7 @@ export async function getPartialData(phone: string): Promise<PartialCatalogItem 
     phone: record.phone,
     productName: record.productName,
     price: record.price,
+    pricePerUnit: record.pricePerUnit,
     quantity: record.quantity,
     unit: record.unit,
     category: record.category,
@@ -205,6 +207,7 @@ export async function mergePartialData(
     phone: record.phone,
     productName: record.productName,
     price: record.price,
+    pricePerUnit: record.pricePerUnit,
     quantity: record.quantity,
     unit: record.unit,
     category: record.category,

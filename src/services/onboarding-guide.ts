@@ -4,6 +4,8 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
   const { sendTextMessage, sendVoiceOnly, sendTypingIndicator } = await import('../lambdas/whatsapp-message-sender');
 
   await sendTypingIndicator(phone);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  await sendTypingIndicator(phone);
 
   const textGuide: Record<string, string> = {
     'hi': [
@@ -131,6 +133,8 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
   await sendTextMessage(phone, textGuide[lang] || textGuide['hi']);
 
   await new Promise(resolve => setTimeout(resolve, 1500));
+  await sendTypingIndicator(phone);
+  await new Promise(resolve => setTimeout(resolve, 300));
   await sendTypingIndicator(phone);
 
   const voiceGuide: Record<string, string> = {
