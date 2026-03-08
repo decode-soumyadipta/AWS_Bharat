@@ -18,8 +18,8 @@
 
 [![AWS](https://img.shields.io/badge/AWS-13%20Services-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 [![Bedrock](https://img.shields.io/badge/Bedrock-Nova%20Pro%20%2B%20Lite%20%2B%20Titan-232F3E?logo=amazonaws&logoColor=white)](https://aws.amazon.com/bedrock/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-18.5K%20LOC-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-909%20passed-4CAF50?logo=vitest&logoColor=white)](tests/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-19K%2B%20LOC-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tests](https://img.shields.io/badge/Tests-1000%2B%20cases-4CAF50?logo=vitest&logoColor=white)](tests/)
 [![ONDC](https://img.shields.io/badge/ONDC-Beckn%20Protocol-0055A4)](https://ondc.org/)
 [![WhatsApp](https://img.shields.io/badge/WhatsApp_Cloud_API-v22.0-25D366?logo=whatsapp&logoColor=white)](https://business.whatsapp.com/)
 
@@ -56,7 +56,7 @@ Vyapar Vaani removes the interface entirely. A seller speaks a voice message on 
 | **Payments** — screenshot verification | Manual, error-prone | **Nova Pro** verifies UPI payment screenshots |
 | **Business insight** — no analytics | Operates blind | **Nova Lite** generates PDF reports with AI recommendations |
 
-In a typical session (listing one product), AI is invoked **7 times**: Transcribe → Nova Pro (intent) → Nova Pro (entities) → Nova Lite (description) → Titan (image) → Nova Lite (price) → Polly (voice confirmation).
+In a typical session (listing one product), AI is invoked **7+ times**: Transcribe → Nova Pro (ReAct agent — intent + entity extraction + tool calls) → Nova Lite (fallback) → Titan (image enhancement) → Nova Lite (price recommendation) → Polly (voice confirmation). The ReAct agent may chain additional tool calls (market price lookup, catalog check) within a single turn.
 
 ---
 
@@ -69,9 +69,9 @@ In a typical session (listing one product), AI is invoked **7 times**: Transcrib
 **4-Layer Event-Driven Design** (Left → Right):
 
 - **External**: WhatsApp Cloud API · API Gateway (HTTP + REST) · Sellers + Buyers
-- **Event & Compute**: EventBridge (17 rules) · Lambda (23 functions) · Step Functions (KYC)
-- **AI/ML**: Bedrock (Nova Pro/Lite + Titan) · Transcribe · Textract · Polly
-- **Data & Security**: DynamoDB (2 tables, 7 GSIs) · S3 (3 buckets) · CloudFront · KMS · IAM (23 roles)
+- **Event & Compute**: EventBridge (17 rules) · Lambda (19 functions) · Step Functions (KYC)
+- **AI/ML**: Bedrock (Nova Pro/Lite + Titan) · Transcribe · Textract · Polly · **ReAct Agent Loop**
+- **Data & Security**: DynamoDB (2 tables, 7 GSIs) · S3 (3 buckets) · CloudFront · KMS · IAM
 
 **Color-Coded Flows**: Blue (Seller) · Purple (AI) · Red (Storage) · Orange (KYC) · Green (Marketplace) · Teal (CDN) · Gray (Security)
 
@@ -81,15 +81,26 @@ In a typical session (listing one product), AI is invoked **7 times**: Transcrib
 
 ### 1. Seller Voice to Product Listing
 
-Seller speaks in Hindi/Marathi → AI extracts product details → Photo enhancement → Live on marketplace
+Seller speaks in Hindi/Marathi → Transcribe converts to text → ReAct agent extracts product details → Photo enhancement via Titan → Confirmation with voice + buttons → Live on marketplace
 
 <div align="center">
 <img src="generated-diagrams/seller-voice-flow.png" alt="Seller Voice Flow" width="100%"/>
 </div>
 
-### 2. AI Agent Processing
+### 2. ReAct AI Agent Processing
 
-Every message goes through intent classification → entity extraction → response generation → voice output
+Every message enters the **ReAct (Reasoning + Acting) agent loop** — the LLM dynamically reasons about what data it needs, calls tools (catalog lookup, order fetch, market price search, analytics, web search, stock update), observes results, and formulates a response. Up to 5 chained tool calls per turn. Multi-turn conversation history is maintained via a smart sliding window.
+
+```
+User Message → ReAct Loop (up to 5 steps)
+                ├─ THINK: What does the user need?
+                ├─ TOOL_CALL: lookup_catalog / search_market_price / get_analytics / ...
+                ├─ OBSERVATION: Tool result
+                ├─ THINK: Do I have enough data?
+                └─ FINAL ANSWER: Response + Action (STORE_DATA / CREATE_CATALOG / NONE)
+```
+
+**6 Agent Tools**: `lookup_catalog` · `lookup_orders` · `get_analytics` · `search_market_price` · `update_stock` · `web_search`
 
 <div align="center">
 <img src="generated-diagrams/ai-agent-processing.png" alt="AI Agent Processing" width="100%"/>
@@ -141,7 +152,7 @@ Every day at 7 PM IST → Fetch weather + mandi prices → AI generates Hindi su
 
 | # | Service | Role | Scale |
 |---|---|---|---|
-| 1 | **Lambda** | All compute — webhook, AI agents, voice, image, KYC, orders | 23 functions |
+| 1 | **Lambda** | All compute — webhook, ReAct AI agent, voice, image, KYC, orders | 19 functions |
 | 2 | **Bedrock** | LLM (Nova Pro + Lite) + Titan image generation | 4 model IDs |
 | 3 | **DynamoDB** | Sellers, products, orders, sessions, state | 2 tables, 7 GSIs |
 | 4 | **S3** | Product images, voice files, PDF reports, KYC docs, SPA | 3 buckets |
@@ -161,8 +172,8 @@ Every day at 7 PM IST → Fetch weather + mandi prices → AI generates Hindi su
 
 | Model | ID | Used For |
 |---|---|---|
-| **Nova Pro** | `amazon.nova-pro-v1:0` | Intent classification (10 types), entity extraction, UPI payment screenshot verification |
-| **Nova Lite** | `us.amazon.nova-lite-v1:0` | Product descriptions, price recommendations, daily alert generation |
+| **Nova Pro** | `amazon.nova-pro-v1:0` | ReAct agent (reasoning + tool calls), intent classification, entity extraction, UPI screenshot verification |
+| **Nova Lite** | `us.amazon.nova-lite-v1:0` | ReAct agent fallback, product descriptions, price recommendations, daily alert generation |
 | **Nova Lite** | `amazon.nova-lite-v1:0` | PDF report AI recommendations + voice summary |
 | **Titan Image v2** | `amazon.titan-image-generator-v2:0` | Product photo background removal + white background inpainting |
 
@@ -198,7 +209,7 @@ All endpoints are ONDC-compliant with `@ondc/org` extensions for catalog, orders
 | Encryption in transit | TLS — API Gateway, CloudFront, WhatsApp API |
 | KYC documents | Separate encrypted bucket · Glacier after 90 days · Delete after 7 years |
 | API authentication | WhatsApp webhook signature verification + Marketplace API key |
-| IAM | Per-Lambda scoped policies (23 role policies, least privilege) |
+| IAM | Per-Lambda scoped policies (least privilege) |
 | Reliability | SQS DLQ (14-day) + 30-day EventBridge archive |
 
 ---
@@ -207,19 +218,19 @@ All endpoints are ONDC-compliant with `@ondc/org` extensions for catalog, orders
 
 | Component | Files | LOC |
 |---|---|---|
-| `src/` — Lambdas, services, models, utils | 49 TypeScript files | 18,543 |
-| `infrastructure/` — CDK stacks | 2 files | 1,640 |
-| `tests/` — Unit + integration | 69 test files | 909 cases |
+| `src/` — Lambdas, services, models, utils | 49 TypeScript files | 19,096 |
+| `infrastructure/` — CDK stacks | 2 files | 1,664 |
+| `tests/` — Unit + integration + property | 73 test files | 1,000+ cases |
 | `marketplace/` — Buyer SPA | 4 files (HTML/JS/CSS) | — |
 | `backend/` — Marketplace API handlers | 4 JS files | — |
 
 ```
 src/
-├── lambdas/    17 Lambda handlers
-├── services/   17 modules (AI agent, analytics, TTS, reports…)
+├── lambdas/    17 handlers (webhook, agent, confirmation, voice, image, KYC…)
+├── services/   17 modules (ReAct agent [1.7K LOC], analytics, TTS, reports, state…)
 ├── models/      8 data models (order, intent, seller, catalog…)
 ├── config/      3 files (AWS clients, constants, env)
-├── tools/       1 module (web search, market prices)
+├── tools/       1 module (web search, live mandi prices via data.gov.in)
 └── utils/       3 utilities (formatting, validation, Hindi number normalisation)
 ```
 
