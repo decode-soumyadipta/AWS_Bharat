@@ -70,8 +70,8 @@ export const handler = async (event: any): Promise<any> => {
         console.log('Mapped button to action: approve');
       } else if (buttonPayload === 'edit_quantity') {
         action = 'edit';
-        field = 'quantity';
-        console.log('Mapped button to action: edit (quantity)');
+        field = undefined;
+        console.log('Mapped button to action: edit (general)');
       } else if (buttonPayload === 'view_products') {
         action = 'view_products';
         console.log('Mapped button to action: view_products');
@@ -334,10 +334,6 @@ export async function generateConfirmation(
     {
       id: 'edit_quantity',
       title: lang === 'hi-IN' ? '✏️ बदलें' : lang === 'mr-IN' ? '✏️ बदला' : '✏️ Edit',
-    },
-    {
-      id: 'view_products',
-      title: lang === 'hi-IN' ? '📋 मेरे उत्पाद' : lang === 'mr-IN' ? '📋 माझी उत्पादने' : '📋 My Products',
     },
   ];
 

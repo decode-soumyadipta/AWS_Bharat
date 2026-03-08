@@ -822,13 +822,19 @@ async function handleButtonClick(
       await createCatalog(phone, language);
       return '__HANDLED__';
 
-    case 'edit_quantity':
-      userMessage = 'I want to edit the quantity';
-      break;
+    case 'edit_quantity': {
+      const { processEdit } = await import('./confirmation-handler');
+      const userState = await getUserState(phone);
+      await processEdit(phone, undefined, userState?.language);
+      return '__HANDLED__';
+    }
 
-    case 'view_products':
-      userMessage = 'I want to view my products';
-      break;
+    case 'view_products': {
+      const { processEdit: processEditFallback } = await import('./confirmation-handler');
+      const userStateFb = await getUserState(phone);
+      await processEditFallback(phone, undefined, userStateFb?.language);
+      return '__HANDLED__';
+    }
 
     default:
       userMessage = `Button clicked: ${buttonPayload}`;
