@@ -132,9 +132,10 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
 
   await sendTextMessage(phone, textGuide[lang] || textGuide['hi']);
 
+  await sendTypingIndicator(phone);
   await new Promise(resolve => setTimeout(resolve, 1500));
   await sendTypingIndicator(phone);
-  await new Promise(resolve => setTimeout(resolve, 300));
+  await new Promise(resolve => setTimeout(resolve, 500));
   await sendTypingIndicator(phone);
 
   const voiceGuide: Record<string, string> = {
@@ -169,6 +170,7 @@ export async function sendOnboardingGuide(phone: string, language: string): Prom
       + 'So let us get started — tell me your first product name, price and quantity!',
   };
 
+  await sendTypingIndicator(phone);
   await sendVoiceOnly(phone, voiceGuide[lang] || voiceGuide['hi'], lang);
   console.log('📋 Onboarding guide sent to', phone);
 }

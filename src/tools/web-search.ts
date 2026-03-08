@@ -59,6 +59,50 @@ const COMMODITY_NAME_MAP: Record<string, string> = {
   'capsicum': 'Capsicum', 'coconut': 'Coconut', 'guava': 'Guava',
 
   'कांदा': 'Onion', 'बटाटा': 'Potato', 'भाजी': 'Spinach',
+  // Additional Hindi/transliterated variations
+  'aaloo': 'Potato', 'alu': 'Potato', 'aalu': 'Potato',
+  'tamater': 'Tomato', 'tamaatar': 'Tomato',
+  'piaz': 'Onion', 'pyaaj': 'Onion', 'piyaz': 'Onion', 'piyaaz': 'Onion',
+  'gobhi': 'Cauliflower', 'phool gobhi': 'Cauliflower', 'phool gobi': 'Cauliflower',
+  'mirchi': 'Green Chilli', 'hari mirch': 'Green Chilli', 'hari mirchi': 'Green Chilli',
+  'baigan': 'Brinjal', 'bengan': 'Brinjal',
+  'gehu': 'Wheat', 'gehoon': 'Wheat',
+  'chaval': 'Rice', 'chaaval': 'Rice',
+  'arhar': 'Arhar (Tur/Red Gram)(Whole)', 'toor dal': 'Arhar (Tur/Red Gram)(Whole)', 'tur dal': 'Arhar (Tur/Red Gram)(Whole)', 'arhar dal': 'Arhar (Tur/Red Gram)(Whole)',
+  'chane': 'Bengal Gram(Gram)(Whole)', 'chole': 'Bengal Gram(Gram)(Whole)', 'kabuli chana': 'Bengal Gram(Gram)(Whole)',
+  'dudh': 'Milk', 'dooth': 'Milk',
+  'jira': 'Cumin Seed(Jeera)', 'zeera': 'Cumin Seed(Jeera)',
+  'adarak': 'Ginger(Green)', 'adrakh': 'Ginger(Green)',
+  'lehsun': 'Garlic', 'lasan': 'Garlic',
+  'kele': 'Banana', 'kelaa': 'Banana',
+  'sev': 'Apple', 'saib': 'Apple',
+  'santara': 'Orange', 'narangi': 'Orange', 'mosambi': 'Orange',
+  'angur': 'Grapes', 'draksh': 'Grapes',
+  'tarbuj': 'Watermelon', 'tarbuz': 'Watermelon',
+  'sarso': 'Mustard', 'sarson ka tel': 'Mustard',
+  'gaajar': 'Carrot',
+  'mattar': 'Green Peas', 'mutter': 'Green Peas',
+  'paalak': 'Spinach', 'saag': 'Spinach',
+  'muli': 'Raddish',
+  'simla mirch': 'Capsicum', 'bell pepper': 'Capsicum',
+  'narikel': 'Coconut',
+  'amrud': 'Guava', 'peru': 'Guava',
+  'litchi': 'Litchi', 'lychee': 'Litchi',
+  'badam': 'Almond(Badam)',
+  // Additional English synonyms
+  'ladies finger': 'Bhindi(Ladies Finger)', 'lady finger': 'Bhindi(Ladies Finger)',
+  'green chili': 'Green Chilli', 'green pepper': 'Capsicum',
+  'sweet potato': 'Sweet Potato', 'shakarkand': 'Sweet Potato',
+  'cabbage': 'Cabbage', 'patta gobhi': 'Cabbage', 'band gobhi': 'Cabbage', 'पत्ता गोभी': 'Cabbage',
+  'lemon': 'Lemon', 'nimbu': 'Lemon', 'नींबू': 'Lemon',
+  'cucumber': 'Cucumber', 'kheera': 'Cucumber', 'खीरा': 'Cucumber',
+  'bitter gourd': 'Bitter gourd', 'karela': 'Bitter gourd', 'करेला': 'Bitter gourd',
+  'bottle gourd': 'Bottle gourd', 'lauki': 'Bottle gourd', 'लौकी': 'Bottle gourd',
+  'ridge gourd': 'Ridge gourd(Tori)', 'tori': 'Ridge gourd(Tori)', 'तोरी': 'Ridge gourd(Tori)',
+  'drumstick': 'Drumstick', 'sahjan': 'Drumstick', 'सहजन': 'Drumstick',
+  'pumpkin': 'Pumpkin', 'kaddu': 'Pumpkin', 'कद्दू': 'Pumpkin',
+  'coriander': 'Coriander(Leaves)', 'dhaniya': 'Coriander(Leaves)', 'धनिया': 'Coriander(Leaves)',
+  'mint': 'Mint(Pudina)', 'pudina': 'Mint(Pudina)', 'पुदीना': 'Mint(Pudina)',
 };
 
 const FALLBACK_PRICES: Record<string, { min: number; max: number; unit: string; season?: string; category: string }> = {
@@ -94,6 +138,19 @@ const FALLBACK_PRICES: Record<string, { min: number; max: number; unit: string; 
   'Guava': { min: 30, max: 80, unit: 'kg', category: 'fruits' },
   'Groundnut': { min: 50, max: 120, unit: 'kg', category: 'grains' },
   'Mustard': { min: 40, max: 90, unit: 'kg', category: 'grains' },
+  'Litchi': { min: 60, max: 150, unit: 'kg', season: 'May-Jul', category: 'fruits' },
+  'Almond(Badam)': { min: 600, max: 1200, unit: 'kg', category: 'dry fruits' },
+  'Sweet Potato': { min: 20, max: 45, unit: 'kg', category: 'vegetables' },
+  'Cabbage': { min: 10, max: 30, unit: 'kg', category: 'vegetables' },
+  'Lemon': { min: 30, max: 100, unit: 'kg', category: 'fruits' },
+  'Cucumber': { min: 15, max: 40, unit: 'kg', category: 'vegetables' },
+  'Bitter gourd': { min: 25, max: 60, unit: 'kg', category: 'vegetables' },
+  'Bottle gourd': { min: 15, max: 35, unit: 'kg', category: 'vegetables' },
+  'Ridge gourd(Tori)': { min: 20, max: 50, unit: 'kg', category: 'vegetables' },
+  'Drumstick': { min: 30, max: 80, unit: 'kg', category: 'vegetables' },
+  'Pumpkin': { min: 15, max: 35, unit: 'kg', category: 'vegetables' },
+  'Coriander(Leaves)': { min: 20, max: 60, unit: 'kg', category: 'vegetables' },
+  'Mint(Pudina)': { min: 30, max: 80, unit: 'kg', category: 'vegetables' },
 };
 
 const DATA_GOV_API_URL = 'https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070';
@@ -102,7 +159,14 @@ const AGMARKNET_URL = 'https://agmarknet.gov.in';
 
 export async function fetchLiveMarketPrice(productName: string): Promise<MarketPriceResult> {
   const key = productName.toLowerCase().trim();
-  const commodity = COMMODITY_NAME_MAP[key] || productName;
+  // Direct lookup, then fuzzy partial match on COMMODITY_NAME_MAP keys
+  let commodity = COMMODITY_NAME_MAP[key];
+  if (!commodity) {
+    // Try partial/fuzzy match: find keys that contain the search term or vice versa
+    const mapKeys = Object.keys(COMMODITY_NAME_MAP);
+    const fuzzyMatch = mapKeys.find(k => key.includes(k) || k.includes(key));
+    commodity = fuzzyMatch ? COMMODITY_NAME_MAP[fuzzyMatch] : productName;
+  }
 
   console.log(`📊 Fetching live price for: "${productName}" → commodity: "${commodity}"`);
 
@@ -124,7 +188,7 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
       for (let attempt = 0; attempt < 2; attempt++) {
         response = await fetch(url, {
           headers: { 'Accept': 'application/json' },
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(8000),
         });
         if (response.status === 429) {
           const backoff = (attempt + 1) * 1000; 
@@ -199,7 +263,7 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
     for (let attempt = 0; attempt < 2; attempt++) {
       fallbackResponse = await fetch(fallbackUrl, {
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(8000),
       });
       if (fallbackResponse.status === 429) {
         const backoff = (attempt + 1) * 1000;
@@ -272,7 +336,15 @@ export async function fetchLiveMarketPrice(productName: string): Promise<MarketP
 }
 
 function getFallbackPrice(productName: string, commodity: string): MarketPriceResult {
-  const priceData = FALLBACK_PRICES[commodity];
+  let priceData = FALLBACK_PRICES[commodity];
+  // Fuzzy match fallback prices if exact key not found
+  if (!priceData) {
+    const lc = commodity.toLowerCase();
+    const fallbackKey = Object.keys(FALLBACK_PRICES).find(k => 
+      k.toLowerCase().includes(lc) || lc.includes(k.toLowerCase())
+    );
+    if (fallbackKey) priceData = FALLBACK_PRICES[fallbackKey];
+  }
 
   if (!priceData) {
     return {

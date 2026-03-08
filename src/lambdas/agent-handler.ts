@@ -166,6 +166,9 @@ async function processAgentEvent(event: any): Promise<any> {
     const conversationContext = await getConversationContext(phone);
     const partialData = await getPartialData(phone);
 
+    // Refresh typing indicator after DB lookups
+    await sendTypingIndicator(phone, eventDetail.messageId);
+
     console.log('📊 Current state:', {
       state: userState?.state,
       hasPartialData: !!partialData,
@@ -280,13 +283,23 @@ async function processAgentEvent(event: any): Promise<any> {
     await sendTypingIndicator(phone, eventDetail.messageId);
 
     if (shouldProcessWithAgent) {
-      const agentResponse = await processWithEnhancedAgent(
-        phone,
-        userMessage,
-        messageType,
-        language,
-        eventDetail.messageId
-      );
+      // Keep typing indicator alive during the entire ReAct agent loop
+      const typingInterval = setInterval(async () => {
+        try { await sendTypingIndicator(phone, eventDetail.messageId); } catch (_) {}
+      }, 4000);
+
+      let agentResponse;
+      try {
+        agentResponse = await processWithEnhancedAgent(
+          phone,
+          userMessage,
+          messageType,
+          language,
+          eventDetail.messageId
+        );
+      } finally {
+        clearInterval(typingInterval);
+      }
 
       console.log('🤖 Agent response:', agentResponse);
 
@@ -297,16 +310,26 @@ async function processAgentEvent(event: any): Promise<any> {
 
       await sendTypingIndicator(phone, eventDetail.messageId);
 
-      await sendEnhancedAgentMessage(
-        phone, 
-        agentResponse.message, 
-        language, 
-        agentResponse.responseMode || 'voice',
-        eventDetail.messageId
-      );
-
+      // Execute actions FIRST — if STORE_DATA triggers confirmation or sends
+      // a corrective message, we skip the agent's conversational reply to
+      // avoid conflicting messages (e.g. "send photo" + confirmation card).
+      let actionResult = { confirmationTriggered: false, correctionSent: false };
       if (agentResponse.actions && agentResponse.actions.length > 0) {
-        await executeAgentActions(phone, agentResponse.actions, language);
+        await sendTypingIndicator(phone, eventDetail.messageId);
+        actionResult = await executeAgentActions(phone, agentResponse.actions, language);
+      }
+
+      if (!actionResult.confirmationTriggered && !actionResult.correctionSent) {
+        await sendTypingIndicator(phone, eventDetail.messageId);
+        await sendEnhancedAgentMessage(
+          phone, 
+          agentResponse.message, 
+          language, 
+          agentResponse.responseMode || 'voice',
+          eventDetail.messageId
+        );
+      } else {
+        console.log('⏭️ Skipping agent message — confirmation or correction already sent');
       }
     }
 
@@ -321,10 +344,11 @@ async function processAgentEvent(event: any): Promise<any> {
       const phone = event.detail?.phone || event.phone;
       const language = event.detail?.language || event.language || 'hi-IN';
       if (phone) {
+        const msgId = (event.detail || event)?.messageId;
 
         try { 
           const { sendTypingIndicator: sendTyp } = await import('./whatsapp-message-sender');
-          await sendTyp(phone, (event.detail || event)?.messageId); 
+          await sendTyp(phone, msgId); 
         } catch (_) {}
 
         let errorMessage = '';
@@ -620,8 +644,25 @@ async function handleVoiceMessage(eventDetail: any): Promise<string> {
   });
 
   if (!transcriptionResult.success || !transcriptionResult.transcription) {
-    console.error('Voice transcription failed:', transcriptionResult.error);
-    return '__VOICE_FAILED__';
+    console.warn('⚠️ Voice transcription attempt 1 failed, retrying with alternate language hint...');
+    await sendTypingIndicator(phone, messageId).catch(() => {});
+
+    // Retry with alternate language: if primary was Hindi, try English and vice versa
+    const altLang = eventDetail.language === 'hi-IN' ? 'en-IN' : 'hi-IN';
+    const retryResult = await transcriptionHandler({
+      audioUrl: downloadResult.s3Url,
+      messageId: eventDetail.messageId,
+      languageCode: altLang,
+    });
+
+    if (!retryResult.success || !retryResult.transcription) {
+      console.error('Voice transcription retry also failed:', retryResult.error);
+      return '__VOICE_FAILED__';
+    }
+
+    console.log('🎤 Transcription succeeded on retry with', altLang, ':', retryResult.transcription);
+    await sendTypingIndicator(phone, messageId).catch(() => {});
+    return normalizeHindiNumbers(retryResult.transcription);
   }
 
   // Refresh typing indicator after transcription
@@ -1031,7 +1072,10 @@ async function executeAgentActions(
   phone: string,
   actions: any[],
   language: string
-): Promise<void> {
+): Promise<{ confirmationTriggered: boolean; correctionSent: boolean }> {
+  let confirmationTriggered = false;
+  let correctionSent = false;
+
   for (const action of actions) {
     console.log('🎬 Executing action:', action.type, 'data:', JSON.stringify(action.data));
 
@@ -1121,6 +1165,7 @@ async function executeAgentActions(
               try {
                 await sendEnhancedAgentMessage(phone, correctionMsg, language as any, 'voice');
                 console.log('✅ Sent corrective message after merge resolved all fields');
+                correctionSent = true;
               } catch (corrErr) {
                 console.warn('Failed to send corrective message:', corrErr);
               }
@@ -1129,6 +1174,7 @@ async function executeAgentActions(
             if (allFieldsPresent && hasRealProductName && hasImage) {
 
               console.log('✅ All fields + image complete, triggering confirmation');
+              confirmationTriggered = true;
               await updateUserState(phone, 'CONFIRMATION_PENDING');
               try {
                 const confFn = process.env.CONFIRMATION_HANDLER_FUNCTION_NAME || 'vyapar-vaani-confirmation-handler';
@@ -1200,6 +1246,10 @@ async function executeAgentActions(
         case 'SKIP_KYC':
 
           console.log('Guest mode: skipping KYC for', phone);
+          try {
+            const { sendTypingIndicator: sendTypSkip } = await import('./whatsapp-message-sender');
+            await sendTypSkip(phone);
+          } catch (_) {}
           await updateUserState(phone, 'GUEST_ACTIVE');
 
           try {
@@ -1266,6 +1316,8 @@ async function executeAgentActions(
 
     }
   }
+
+  return { confirmationTriggered, correctionSent };
 }
 
 async function createCatalog(phone: string, language: string): Promise<void> {

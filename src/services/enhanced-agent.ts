@@ -1,6 +1,5 @@
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { BedrockAgentRuntimeClient, InvokeAgentCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { 
@@ -9,7 +8,10 @@ import {
   updateUserPreferences,
   getConversationSummary,
   getConversationHistory,
-  UserConversationContext
+  UserConversationContext,
+  getSmartConversationWindow,
+  SmartConversationWindow,
+  StructuredSellerFacts
 } from './conversation-memory';
 import { getPartialData, mergePartialData, PartialCatalogItem } from './partial-data-store';
 import { getUserState } from './state-manager';
@@ -25,12 +27,9 @@ import {
 } from './analytics-service';
 
 const bedrockClient = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
-const agentRuntimeClient = new BedrockAgentRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const ddbDocClient = DynamoDBDocumentClient.from(new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' }));
 const NOVA_PRO_MODEL_ID = 'amazon.nova-pro-v1:0';
-const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0'; 
-const BEDROCK_AGENT_ID = process.env.BEDROCK_AGENT_ID || '';
-const BEDROCK_AGENT_ALIAS_ID = process.env.BEDROCK_AGENT_ALIAS_ID || 'TSTALIASID';
+const NOVA_LITE_MODEL_ID = 'us.amazon.nova-lite-v1:0';
 const DDB_TABLE_NAME = process.env.TABLE_NAME || 'vyapar-vaani-data';
 const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace-products';
 
@@ -46,13 +45,272 @@ interface EnhancedAgentResponse {
   languageSwitch?: LanguageCode;
   confidence: number;
   reasoning: string;
-
   responseMode: 'voice' | 'text' | 'both';
 }
 
 interface AgentAction {
   type: 'STORE_DATA' | 'REQUEST_IMAGE' | 'CREATE_CATALOG' | 'ASK_QUESTION' | 'LANGUAGE_SWITCH' | 'DELETE_PRODUCT' | 'REGISTER_UPI' | 'SKIP_KYC' | 'CANCEL_LISTING';
   data?: any;
+}
+
+// ─── ReAct Agent Tool Definitions ───────────────────────────────────────────
+const REACT_MAX_STEPS = 5;
+
+interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, { type: string; description: string; required?: boolean }>;
+}
+
+const AGENT_TOOLS: ToolDefinition[] = [
+  {
+    name: 'lookup_catalog',
+    description: 'Fetch the seller\'s current product catalog from the database. Returns all products with their CURRENT prices, quantities, and statuses. Use this when the user asks what they are selling, what\'s in their store, or what prices they have set.',
+    parameters: {
+      query: { type: 'string', description: 'Optional filter — product name or category substring. Omit for all products.', required: false },
+    },
+  },
+  {
+    name: 'lookup_orders',
+    description: 'Fetch the seller\'s recent orders or a specific order by ID. Shows order status, items, amounts, payment info. Use this when the user asks about orders, sales, deliveries, or "kitna bika".',
+    parameters: {
+      orderId: { type: 'string', description: 'Specific order ID to look up. Omit for last 5 orders.', required: false },
+    },
+  },
+  {
+    name: 'get_analytics',
+    description: 'Fetch sales analytics — top selling products, total revenue, sales summary, date-range analytics. Use this when the user asks about sales performance, profit, kamai, hisab, what sold most, revenue, or business advice.',
+    parameters: {
+      type: { type: 'string', description: 'One of: top_selling, sales_summary, yesterday, today, this_week, this_month, last_week, last_month', required: true },
+      product: { type: 'string', description: 'Optional product filter', required: false },
+    },
+  },
+  {
+    name: 'search_market_price',
+    description: 'Get today\'s LIVE mandi market price for a product. Sources: data.gov.in AgMarkNet, web search. Use when user asks "bhav kya hai", "rate batao", "market price", or when you need to compare a seller\'s price against market rates.',
+    parameters: {
+      product: { type: 'string', description: 'Product name (e.g., tamatar, onion, wheat)', required: true },
+    },
+  },
+  {
+    name: 'update_stock',
+    description: 'Update inventory stock quantity for a product in the catalog AND marketplace. Use only when the user explicitly says "stock update karo", "inventory badhao/kam karo".',
+    parameters: {
+      productName: { type: 'string', description: 'Name of product to update', required: true },
+      quantity: { type: 'number', description: 'New quantity value', required: true },
+      unit: { type: 'string', description: 'Unit (kg, piece, liter, etc.)', required: false },
+    },
+  },
+  {
+    name: 'web_search',
+    description: 'Search the web for real-time information. Use for questions about general knowledge, agriculture tips, government schemes, weather, or anything not covered by other tools.',
+    parameters: {
+      query: { type: 'string', description: 'Search query', required: true },
+    },
+  },
+];
+
+function getToolDescriptionsForPrompt(): string {
+  return AGENT_TOOLS.map(tool => {
+    const params = Object.entries(tool.parameters)
+      .map(([name, info]) => `  - ${name} (${info.type}${info.required ? ', required' : ', optional'}): ${info.description}`)
+      .join('\n');
+    return `TOOL: ${tool.name}\n  ${tool.description}\n  Parameters:\n${params}`;
+  }).join('\n\n');
+}
+
+async function executeToolCall(
+  toolName: string,
+  args: Record<string, any>,
+  phone: string,
+  language: LanguageCode
+): Promise<string> {
+  console.log(`🔧 ReAct tool call: ${toolName}`, args);
+  await showTypingIndicator(phone);
+
+  try {
+    switch (toolName) {
+      case 'lookup_catalog':
+        return await executeCatalogLookup(phone, args.query);
+
+      case 'lookup_orders':
+        return await executeOrderLookup(phone, args.orderId);
+
+      case 'get_analytics':
+        return await getAnalyticsInfo(phone, { type: args.type, product: args.product }, language);
+
+      case 'search_market_price':
+        return await searchMarketPrice(args.product, language);
+
+      case 'update_stock':
+        if (!args.productName || args.quantity === undefined) {
+          return 'ERROR: update_stock requires productName and quantity parameters.';
+        }
+        return await executeStockUpdate(phone, args.productName, args.quantity, args.unit);
+
+      case 'web_search':
+        if (!args.query) return 'ERROR: web_search requires a query parameter.';
+        const results = await remote_web_search({ query: args.query });
+        if (results && results.length > 0) {
+          return results.slice(0, 3).map(r => `${r.title}: ${r.snippet} (${r.url})`).join('\n');
+        }
+        return 'No web results found for this query.';
+
+      default:
+        return `ERROR: Unknown tool "${toolName}". Available tools: ${AGENT_TOOLS.map(t => t.name).join(', ')}`;
+    }
+  } catch (error: any) {
+    console.error(`Tool ${toolName} error:`, error.message);
+    return `ERROR: Tool "${toolName}" failed — ${error.message}. Try a different approach or answer based on what you already know.`;
+  }
+}
+
+// Parse tool call from LLM output
+function parseToolCall(text: string): { toolName: string; args: Record<string, any> } | null {
+  // Match TOOL_CALL: {"tool": "name", "args": {...}}
+  const toolCallMatch = text.match(/TOOL_CALL:\s*(\{[\s\S]*?\})\s*$/m);
+  if (!toolCallMatch) return null;
+
+  try {
+    const parsed = JSON.parse(toolCallMatch[1]);
+    if (parsed.tool && typeof parsed.tool === 'string') {
+      return { toolName: parsed.tool, args: parsed.args || {} };
+    }
+  } catch {
+    // Try relaxed parsing
+    const toolMatch = text.match(/TOOL_CALL:.*?"tool"\s*:\s*"(\w+)"/);
+    const argsMatch = text.match(/"args"\s*:\s*(\{[^}]*\})/);
+    if (toolMatch) {
+      let args: Record<string, any> = {};
+      if (argsMatch) {
+        try { args = JSON.parse(argsMatch[1]); } catch { }
+      }
+      return { toolName: toolMatch[1], args };
+    }
+  }
+  return null;
+}
+
+// ─── ReAct Agent Loop ───────────────────────────────────────────────────────
+async function runAgentLoop(
+  phone: string,
+  userMessage: string,
+  messageType: string,
+  language: LanguageCode,
+  conversationContext: UserConversationContext | null,
+  partialData: PartialCatalogItem | null,
+  userState: any,
+  sellerInfo: { upiId?: string; name?: string; location?: any; cropsGrown?: string[]; language?: string },
+  conversationSummary: string,
+  recentAlerts: string,
+  smartWindow: SmartConversationWindow | null,
+): Promise<EnhancedAgentResponse> {
+  // Build the base prompt (without pre-fetched data — the LLM will fetch via tools)
+  const basePrompt = buildEnhancedPrompt(
+    userMessage, messageType, conversationContext, partialData,
+    userState, language, '', '', sellerInfo, '', '', '',
+    conversationSummary, recentAlerts, smartWindow
+  );
+
+  const observations: Array<{ step: number; tool: string; args: Record<string, any>; result: string }> = [];
+  let lastResponse = '';
+
+  for (let step = 1; step <= REACT_MAX_STEPS; step++) {
+    console.log(`🔄 ReAct step ${step}/${REACT_MAX_STEPS}`);
+    await showTypingIndicator(phone);
+
+    // Build the step prompt with accumulated observations
+    let stepPrompt = basePrompt;
+
+    // Inject tool descriptions
+    stepPrompt += `\n\n─── AVAILABLE TOOLS ───
+You can call tools to fetch real-time data before answering. To call a tool, respond ONLY with:
+TOOL_CALL: {"tool": "<tool_name>", "args": {<parameters>}}
+
+${getToolDescriptionsForPrompt()}
+
+CHAIN OF THOUGHT INSTRUCTIONS:
+1. THINK about what the user is asking. What data do you need?
+2. If you need data you don't have, call a tool using TOOL_CALL.
+3. After seeing the OBSERVATION, decide if you have enough info to answer.
+4. If you have enough data, give your FINAL ANSWER in the standard format.
+5. If a tool returns an error or unexpected result, try a different tool or approach.
+6. NEVER guess data — always use tools to fetch real information.
+7. You can call tools UP TO ${REACT_MAX_STEPS} times total.
+8. For simple greetings, product additions (STORE_DATA), confirmations — you don't need tools. Answer directly.
+9. When user asks about their products, prices, sales — ALWAYS call a tool first.`;
+
+    // Add accumulated observations from previous steps
+    if (observations.length > 0) {
+      stepPrompt += '\n\n─── PREVIOUS TOOL CALLS AND OBSERVATIONS ───';
+      for (const obs of observations) {
+        stepPrompt += `\n[Step ${obs.step}] Called: ${obs.tool}(${JSON.stringify(obs.args)})`;
+        stepPrompt += `\nOBSERVATION: ${obs.result}`;
+      }
+      stepPrompt += `\n\nYou now have ${observations.length} observation(s). Use this data to formulate your FINAL ANSWER.`;
+      stepPrompt += `\nIf you still need more data, call another tool. Otherwise, give your final answer NOW.`;
+    }
+
+    // Call the model
+    const response = await callAgentModel(stepPrompt, smartWindow?.recentVerbatim);
+    lastResponse = response;
+
+    // Check if this is a tool call
+    const toolCall = parseToolCall(response);
+
+    if (toolCall) {
+      // Validate tool exists
+      const validTool = AGENT_TOOLS.find(t => t.name === toolCall.toolName);
+      if (!validTool) {
+        observations.push({
+          step,
+          tool: toolCall.toolName,
+          args: toolCall.args,
+          result: `ERROR: Unknown tool "${toolCall.toolName}". Available: ${AGENT_TOOLS.map(t => t.name).join(', ')}`,
+        });
+        continue;
+      }
+
+      // Execute tool
+      const toolResult = await executeToolCall(toolCall.toolName, toolCall.args, phone, language);
+      observations.push({ step, tool: toolCall.toolName, args: toolCall.args, result: toolResult });
+      console.log(`🔧 Step ${step} observation (${toolCall.toolName}):`, toolResult.substring(0, 200));
+      continue;
+    }
+
+    // Not a tool call — this is the final answer
+    const parsed = parseEnhancedResponse(response, language);
+    // If confidence is very low and we haven't used any tools yet, nudge to use one
+    if (parsed.confidence < 40 && observations.length === 0 && step < REACT_MAX_STEPS) {
+      observations.push({
+        step,
+        tool: '_self_correction',
+        args: {},
+        result: 'Your confidence is low. Consider using a tool to fetch data before answering. The user deserves an accurate response.',
+      });
+      continue;
+    }
+
+    return parsed;
+  }
+
+  // Max steps reached — force final answer from last response + observations
+  console.log(`⚠️ ReAct loop hit max steps (${REACT_MAX_STEPS}), forcing final answer`);
+
+  // One final call with all observations, forcing a final answer
+  let finalPrompt = basePrompt;
+  if (observations.length > 0) {
+    finalPrompt += '\n\n─── DATA FROM TOOL CALLS ───';
+    for (const obs of observations) {
+      if (obs.tool !== '_self_correction') {
+        finalPrompt += `\n${obs.tool} result: ${obs.result}`;
+      }
+    }
+    finalPrompt += '\n\nUsing the data above, give your FINAL ANSWER now. Do NOT call any more tools.';
+  }
+
+  const finalResponse = await callAgentModel(finalPrompt, smartWindow?.recentVerbatim);
+  return parseEnhancedResponse(finalResponse, language);
 }
 
 export async function processWithEnhancedAgent(
@@ -69,6 +327,13 @@ export async function processWithEnhancedAgent(
   await showTypingIndicator(phone);
 
   const conversationContext = await getConversationContext(phone);
+  // Change 3/4: Fetch smart window with summarized old + verbatim recent + structured facts
+  let smartWindow: SmartConversationWindow | null = null;
+  try {
+    smartWindow = await getSmartConversationWindow(phone, 20, 5);
+  } catch (e) {
+    console.warn('Could not fetch smart context window:', e);
+  }
   const partialData = await getPartialData(phone);
   const userState = await getUserState(phone);
   const currentUserState = userState?.state || 'UNKNOWN';
@@ -109,135 +374,7 @@ export async function processWithEnhancedAgent(
     messageType,
   });
 
-  const priceQuery = detectPriceQuery(userMessage, currentLanguage);
-  let marketInfo = '';
-
-  if (priceQuery) {
-    console.log('💰 Market price query detected:', priceQuery);
-    await showTypingIndicator(phone); 
-    marketInfo = await searchMarketPrice(priceQuery, currentLanguage);
-    await showTypingIndicator(phone); 
-  }
-
-  if (!priceQuery && partialData?.productName && !partialData.price) {
-    console.log('💰 Auto-fetching LIVE market price for product being added (no price yet):', partialData.productName);
-    try {
-      const livePrice = await fetchLiveMarketPrice(partialData.productName);
-      if (livePrice.found) {
-        const liveTag = livePrice.isLive ? '🟢 LIVE' : '📋';
-        marketInfo = `${liveTag} आज का बाज़ार भाव ${partialData.productName}: ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
-        if (livePrice.isLive) {
-          await mergePartialData(phone, {
-            cachedMarketPrice: {
-              priceInfo: livePrice.priceInfo,
-              sourceName: livePrice.sourceName,
-              sourceUrl: livePrice.sourceUrl,
-              isLive: true,
-              cachedAt: Date.now(),
-            },
-          } as any).catch(() => {});
-        }
-      }
-    } catch (e: any) {
-      console.warn('Live price fetch failed, using fallback:', e.message);
-      const fallbackPrice = getLocalMarketPrice(partialData.productName);
-      if (fallbackPrice.found) {
-        marketInfo = `📋 अनुमानित बाज़ार भाव ${partialData.productName}: ${fallbackPrice.priceInfo} (${fallbackPrice.sourceName})`;
-      }
-    }
-  }
-
-  // Also fetch market price when price IS set but no cached market price yet
-  // This enables the PROACTIVE PRICE CHECK in the prompt to compare seller's price vs market
-  if (!priceQuery && !marketInfo && partialData?.productName && partialData.price && !partialData.cachedMarketPrice) {
-    console.log('💰 Auto-fetching market price for PROACTIVE PRICE CHECK:', partialData.productName);
-    try {
-      const livePrice = await fetchLiveMarketPrice(partialData.productName);
-      if (livePrice.found) {
-        const liveTag = livePrice.isLive ? '🟢 LIVE' : '📋';
-        marketInfo = `${liveTag} आज का बाज़ार भाव ${partialData.productName}: ${livePrice.priceInfo}\n🏛️ स्रोत: ${livePrice.sourceName}\n🔗 ${livePrice.sourceUrl}`;
-        if (livePrice.isLive) {
-          await mergePartialData(phone, {
-            cachedMarketPrice: {
-              priceInfo: livePrice.priceInfo,
-              sourceName: livePrice.sourceName,
-              sourceUrl: livePrice.sourceUrl,
-              isLive: true,
-              cachedAt: Date.now(),
-            },
-          } as any).catch(() => {});
-        }
-      }
-    } catch (e: any) {
-      console.warn('Proactive price check fetch failed, using fallback:', e.message);
-      const fallbackPrice = getLocalMarketPrice(partialData.productName);
-      if (fallbackPrice.found) {
-        marketInfo = `📋 अनुमानित बाज़ार भाव ${partialData.productName}: ${fallbackPrice.priceInfo} (${fallbackPrice.sourceName})`;
-      }
-    }
-  }
-
-  const analyticsQuery = detectAnalyticsQuery(userMessage, currentLanguage);
-  let analyticsInfo = '';
-
-  if (analyticsQuery) {
-    console.log('📊 Analytics query detected:', analyticsQuery);
-    await showTypingIndicator(phone);
-    analyticsInfo = await getAnalyticsInfo(phone, analyticsQuery, currentLanguage);
-
-    if (!marketInfo && analyticsQuery.type === 'top_selling') {
-      try {
-        const { getSellerByPhone } = await import('./dynamodb-repository');
-        const seller = await getSellerByPhone(phone);
-        if (seller?.cropsGrown?.length) {
-          const priceLines: string[] = [];
-          for (const crop of seller.cropsGrown.slice(0, 4)) {
-            try {
-              const livePrice = await fetchLiveMarketPrice(crop);
-              if (livePrice.found) {
-                priceLines.push(`${crop}: ${livePrice.priceInfo}`);
-              }
-            } catch {  }
-          }
-          if (priceLines.length > 0) {
-            marketInfo = `आज के बाज़ार भाव (seller के products): ${priceLines.join('; ')}`;
-            console.log('📊 Auto-fetched market prices for analytics context:', marketInfo);
-          }
-        }
-      } catch (e) {
-        console.warn('Could not auto-fetch market prices for analytics:', e);
-      }
-    }
-  }
-
-  let stockUpdateResult = '';
-  let orderInfo = '';
-  let catalogInfo = '';
-
-  const stockIntent = detectStockUpdateIntent(userMessage);
-  if (stockIntent) {
-    console.log('📦 Stock update intent detected:', stockIntent);
-    await showTypingIndicator(phone);
-    stockUpdateResult = await executeStockUpdate(phone, stockIntent.productName, stockIntent.quantity, stockIntent.unit);
-    console.log('📦 Stock update result:', stockUpdateResult);
-  }
-
-  const orderQuery = detectOrderQuery(userMessage);
-  if (orderQuery) {
-    console.log('📋 Order query detected:', orderQuery);
-    await showTypingIndicator(phone);
-    orderInfo = await executeOrderLookup(phone, orderQuery.orderId);
-    console.log('📋 Order lookup result:', orderInfo);
-  }
-
-  const catalogQuery = detectCatalogQuery(userMessage);
-  if (catalogQuery !== null) {
-    console.log('🗂️ Catalog query detected:', catalogQuery);
-    await showTypingIndicator(phone);
-    catalogInfo = await executeCatalogLookup(phone, catalogQuery.query);
-    console.log('🗂️ Catalog lookup result:', catalogInfo);
-  }
-
+  // ─── Fetch seller info (needed for fast-paths and ReAct loop) ───
   let sellerInfo: { upiId?: string; name?: string; location?: any; cropsGrown?: string[]; language?: string } = {};
   try {
     const { getSellerByPhone } = await import('./dynamodb-repository');
@@ -249,6 +386,7 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch seller info for prompt:', e);
   }
 
+  // ─── Fast-path: Daily update query (deterministic, no LLM needed) ───
   if (detectDailyUpdateQuery(userMessage) && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
     console.log('📢 On-demand daily update query detected');
     await showTypingIndicator(phone);
@@ -264,7 +402,6 @@ export async function processWithEnhancedAgent(
 
     if (updateMessage) {
       await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: updateMessage, messageType: 'text' });
-
       try {
         await addConversationMessage(phone, {
           timestamp: Date.now(),
@@ -273,7 +410,6 @@ export async function processWithEnhancedAgent(
           metadata: { event: 'background_alert', alertType: 'on_demand', source: 'on-demand-update' },
         });
       } catch (e) {  }
-
       return {
         message: updateMessage,
         actions: [],
@@ -299,6 +435,7 @@ export async function processWithEnhancedAgent(
     };
   }
 
+  // ─── Fast-path: Report generation (deterministic, no LLM needed) ───
   const { detectReportIntent, generateReport } = await import('./report-generator');
   const reportIntent = detectReportIntent(userMessage);
   if (reportIntent && (currentUserState === 'ACTIVE' || currentUserState === 'GUEST_ACTIVE')) {
@@ -323,7 +460,6 @@ export async function processWithEnhancedAgent(
     });
 
     if (result.success && result.pdfUrl && result.voiceSummary) {
-
       const { sendDocumentMessage } = await import('../lambdas/whatsapp-message-sender');
       const filename = `vyapar-vaani-${reportIntent.reportType}-report.pdf`;
       const captionMsg: Record<string, string> = {
@@ -332,9 +468,7 @@ export async function processWithEnhancedAgent(
         'en': `📊 ${reportIntent.reportType.charAt(0).toUpperCase() + reportIntent.reportType.slice(1)} Business Report`,
       };
       await sendDocumentMessage(phone, result.pdfUrl, filename, captionMsg[lang] || captionMsg['en'], lang);
-
       await addConversationMessage(phone, { timestamp: Date.now(), role: 'assistant', content: result.voiceSummary, messageType: 'text' });
-
       return {
         message: result.voiceSummary,
         actions: [],
@@ -344,7 +478,6 @@ export async function processWithEnhancedAgent(
         reasoning: `Generated ${reportIntent.reportType} PDF report and sent via WhatsApp`,
       };
     } else {
-
       const errorMsg: Record<string, string> = {
         'hi': 'माफ़ करें, रिपोर्ट बनाने में दिक्कत आई। कृपया थोड़ी देर बाद फिर से कोशिश करें।',
         'mr': 'माफ करा, रिपोर्ट तयार करण्यात अडचण आली. कृपया थोड्या वेळाने पुन्हा प्रयत्न करा.',
@@ -363,6 +496,7 @@ export async function processWithEnhancedAgent(
     }
   }
 
+  // ─── Fetch conversation summary and recent alerts ───
   let conversationSummary = '';
   try {
     conversationSummary = await getConversationSummary(phone);
@@ -375,7 +509,7 @@ export async function processWithEnhancedAgent(
     const history = await getConversationHistory(phone, 50);
     const alerts = history.filter(m => m.role === 'system' && m.metadata?.event === 'background_alert');
     if (alerts.length > 0) {
-      const latest = alerts.slice(0, 3); 
+      const latest = alerts.slice(0, 3);
       recentAlerts = latest.map(a => {
         const ago = Math.floor((Date.now() - a.timestamp) / (1000 * 60 * 60));
         const timeLabel = ago < 1 ? 'just now' : ago < 24 ? `${ago}h ago` : `${Math.floor(ago / 24)}d ago`;
@@ -386,60 +520,43 @@ export async function processWithEnhancedAgent(
     console.warn('Could not fetch recent alerts:', e);
   }
 
-  const agentPrompt = buildEnhancedPrompt(
-    userMessage,
-    messageType,
-    conversationContext,
-    partialData,
-    userState,
-    currentLanguage,
-    marketInfo,
-    analyticsInfo,
-    sellerInfo,
-    stockUpdateResult,
-    orderInfo,
-    catalogInfo,
-    conversationSummary,
-    recentAlerts
-  );
-
-  await showTypingIndicator(phone);
-
-  let response: string;
-
-  const skipBedrockAgentStates = ['NEW', 'KYC_PENDING', 'GUEST_ACTIVE', 'KYC_VERIFIED', 'VOICE_RECEIVED', 'IMAGE_PENDING', 'CONFIRMATION_PENDING'];
-
-  const isNewProductIntent = detectNewProductIntent(userMessage);
-
-  if (skipBedrockAgentStates.includes(currentUserState) || isNewProductIntent) {
-    if (isNewProductIntent && !skipBedrockAgentStates.includes(currentUserState)) {
-      console.log('🆕 New-product intent detected in ACTIVE state — using enhanced prompt (skip Bedrock Agent)');
-    } else {
-      console.log(`🆕 ${currentUserState} user — using enhanced prompt (skip Bedrock Agent)`);
-    }
-    response = await callAgentModel(agentPrompt);
-  } else {
-
-    const agentResult = await callBedrockAgentIfAvailable(
-      userMessage,
-      phone,
-      `Language: ${currentLanguage}, State: ${currentUserState}, Market: ${marketInfo ? 'available' : 'none'}, Analytics: ${analyticsInfo ? 'available' : 'none'}`
-    );
-
-    if (agentResult.usedAgent && agentResult.text) {
-      console.log('✅ Using Bedrock Agent tool-use response');
-      if (agentResult.text.includes('MESSAGE:') || agentResult.text.includes('ACTION:')) {
-        response = agentResult.text;
-      } else {
-        const refinedPrompt = agentPrompt + `\n\n[Bedrock Agent tool-use data]: ${agentResult.text}\nUse this data in your response. Format properly with MESSAGE/ACTION/DATA.`;
-        response = await callAgentModel(refinedPrompt);
+  // ─── Auto-fetch market price for product being added (proactive context) ───
+  // This is a quick pre-fetch for partial data context, NOT replacing the ReAct tool
+  let proactiveMarketInfo = '';
+  if (partialData?.productName) {
+    try {
+      const livePrice = await fetchLiveMarketPrice(partialData.productName);
+      if (livePrice.found) {
+        proactiveMarketInfo = `${livePrice.isLive ? 'LIVE' : 'Estimated'} market price for ${partialData.productName}: ${livePrice.priceInfo} (Source: ${livePrice.sourceName})`;
+        if (livePrice.isLive && !partialData.cachedMarketPrice) {
+          await mergePartialData(phone, {
+            cachedMarketPrice: {
+              priceInfo: livePrice.priceInfo,
+              sourceName: livePrice.sourceName,
+              sourceUrl: livePrice.sourceUrl,
+              isLive: true,
+              cachedAt: Date.now(),
+            },
+          } as any).catch(() => {});
+        }
       }
-    } else {
-      response = await callAgentModel(agentPrompt);
+    } catch (e: any) {
+      const fallbackPrice = getLocalMarketPrice(partialData.productName);
+      if (fallbackPrice.found) {
+        proactiveMarketInfo = `Estimated market price for ${partialData.productName}: ${fallbackPrice.priceInfo}`;
+      }
     }
   }
 
-  const agentResponse = parseEnhancedResponse(response, currentLanguage);
+  await showTypingIndicator(phone);
+
+  // ─── ReAct Agent Loop: LLM dynamically decides what tools to call ───
+  console.log('🔄 Entering ReAct agent loop...');
+  const agentResponse = await runAgentLoop(
+    phone, userMessage, messageType, currentLanguage,
+    conversationContext, partialData, userState, sellerInfo,
+    conversationSummary, recentAlerts, smartWindow,
+  );
 
   if (switchedLanguage) {
     agentResponse.languageSwitch = switchedLanguage;
@@ -474,21 +591,6 @@ function detectSkipKycIntent(message: string, userState: string): boolean {
   return false;
 }
 
-function detectNewProductIntent(message: string): boolean {
-  const m = message.toLowerCase();
-
-  const hindiNewProduct = /बेचना\s*चाहत|बेचूँगा|बेचेंगे|नया\s*(उत्पाद|सामान|प्रोडक्ट)|उत्पाद\s*जोड़|सामान\s*जोड़|नया\s*आइटम|लिस्ट\s*करना/;
-  if (hindiNewProduct.test(message)) return true;
-
-  const romanizedNewProduct = /\b(bech(na|uga|unga|enge|na\s*chahta?|na\s*chahti?)|naya?\s*(product|saman|aaitem|item|product)|add\s*karna?|jodna?|list\s*karna?|nayi?\s*cheez)\b/i;
-  if (romanizedNewProduct.test(m)) return true;
-
-  const englishNewProduct = /\b(want\s+to\s+sell|i\s+want\s+to\s+add|add\s+a\s+new|new\s+product|list\s+(a|my|new)|i\s+will\s+sell|i\s+want\s+to\s+list)\b/i;
-  if (englishNewProduct.test(m)) return true;
-
-  return false;
-}
-
 function detectDailyUpdateQuery(message: string): boolean {
   const m = message.toLowerCase();
 
@@ -505,118 +607,6 @@ function detectDailyUpdateQuery(message: string): boolean {
   if (marathi.test(message)) return true;
 
   return false;
-}
-
-function detectStockUpdateIntent(message: string): { productName: string; quantity: number; unit?: string } | null {
-  const m = message.toLowerCase();
-
-  const stockKeyword = /\b(stock|stok|स्टॉक|inventory)\b/i;
-  const stockAction = /\b(update|change|set|badh[ao]|kam\s*kar|kar\s*do|karo|badlo|rakh|रख|बदल|कर\s*दो|बढ़ा|कम\s*कर|अपडेट)\b/i;
-
-  if (!stockKeyword.test(message) && !stockKeyword.test(m)) return null;
-  if (!stockAction.test(message) && !stockAction.test(m)) return null;
-
-  const qtyPatterns = [
-
-    /(\d+)\s*(kg|kilo|किलो|piece|pcs|पीस|dozen|दर्जन|liter|लीटर|packet|पैकेट|quintal|क्विंटल)/i,
-
-    /\b(\d+)\b/,
-  ];
-
-  let quantity: number | null = null;
-  let unit: string | undefined;
-
-  for (const pattern of qtyPatterns) {
-    const match = message.match(pattern) || m.match(pattern);
-    if (match) {
-      quantity = parseInt(match[1]);
-      if (match[2]) {
-        const u = match[2].toLowerCase();
-        if (/kg|kilo|किलो/.test(u)) unit = 'kg';
-        else if (/piece|pcs|पीस/.test(u)) unit = 'piece';
-        else if (/dozen|दर्जन/.test(u)) unit = 'dozen';
-        else if (/liter|लीटर/.test(u)) unit = 'liter';
-        else if (/packet|पैकेट/.test(u)) unit = 'packet';
-        else if (/quintal|क्विंटल/.test(u)) unit = 'quintal';
-      }
-      break;
-    }
-  }
-
-  if (quantity === null || quantity < 0) return null;
-
-  const namePatterns = [
-
-    /([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का|की|के)\s*(?:stock|stok|स्टॉक)/i,
-
-    /(?:stock|stok|स्टॉक)\s*(?:mein|me|of|में)?\s*([\w\u0900-\u097F\u0980-\u09FF]+)/i,
-
-    /(?:mera|meri|mere|मेरा|मेरी|मेरे)\s+([\w\u0900-\u097F\u0980-\u09FF]+)\s*(?:ka|ki|ke|का)?\s*(?:stock|stok|स्टॉक)/i,
-  ];
-
-  let productName: string | null = null;
-  const noiseWords = new Set(['ka', 'ki', 'ke', 'ko', 'mein', 'me', 'mera', 'meri', 'mere', 'karo', 'kardo', 'do', 'hai', 'update', 'change', 'set', 'stock', 'stok', 'inventory', 'का', 'की', 'के', 'में', 'मेरा', 'स्टॉक', 'करो', 'कर']);
-
-  for (const pattern of namePatterns) {
-    const match = message.match(pattern) || m.match(pattern);
-    if (match && match[1] && !noiseWords.has(match[1].toLowerCase())) {
-      productName = match[1];
-      break;
-    }
-  }
-
-  if (!productName) return null;
-
-  return { productName, quantity, unit };
-}
-
-function detectOrderQuery(message: string): { orderId?: string; type: 'specific' | 'recent' } | null {
-  const m = message.toLowerCase();
-
-  const orderKeyword = /\b(order|ऑर्डर|ord)\b/i;
-  if (!orderKeyword.test(message) && !orderKeyword.test(m)) return null;
-
-  const orderIdPatterns = [
-    /(?:order|ऑर्डर|ord)[\s#\-]*([A-Za-z0-9\-]{6,})/i,
-    /#([A-Za-z0-9\-]{6,})/,
-    /\b(ORD[\-_]?\w{4,})\b/i,
-  ];
-
-  for (const pattern of orderIdPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      return { orderId: match[1], type: 'specific' };
-    }
-  }
-
-  const generalOrderQuery = /\b(order\s*(status|dikhao|batao|kahan|kaha|details|info)|mera\s*order|mere\s*order|show\s*order|ऑर्डर\s*(दिखाओ|बताओ|कहाँ|स्टेटस))\b/i;
-  if (generalOrderQuery.test(message) || generalOrderQuery.test(m)) {
-    return { type: 'recent' };
-  }
-
-  return null;
-}
-
-function detectCatalogQuery(message: string): { query?: string } | null {
-  const m = message.toLowerCase();
-
-  const catalogPatterns = /\b(mere?\s*(product|saman|catalog|item|cheez)|my\s*(product|catalog|item)|catalog\s*(dikhao|batao|mein|me|show)|product\s*(list|dikhao|batao|show)|kitne?\s*(product|saman|item)|सामान\s*दिखाओ|प्रोडक्ट\s*(दिखाओ|बताओ|लिस्ट)|कैटलॉग|कितने\s*(प्रोडक्ट|सामान)|show\s*catalog|list\s*products?|what.*my.*products?|what.*in.*catalog)\b/i;
-
-  if (!catalogPatterns.test(message) && !catalogPatterns.test(m)) return null;
-
-  const searchPatterns = [
-    /(?:catalog|products?)\s*(?:mein|me|in)\s+([\w\u0900-\u097F]+)/i,
-    /(?:mere?|my)\s+([\w\u0900-\u097F]+)\s+(?:product|saman|item)/i,
-  ];
-
-  for (const pattern of searchPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1] && !['kitne', 'kitna', 'sab', 'all', 'कितने', 'सब'].includes(match[1].toLowerCase())) {
-      return { query: match[1] };
-    }
-  }
-
-  return {};
 }
 
 function detectLanguageSwitch(message: string, currentLang: LanguageCode): LanguageCode {
@@ -641,72 +631,6 @@ function detectLanguageSwitch(message: string, currentLang: LanguageCode): Langu
   }
 
   return currentLang;
-}
-
-function detectAnalyticsQuery(message: string, language: LanguageCode): { type: string; product?: string } | null {
-  const lower = message.toLowerCase();
-
-  const romanizedYesterday = /\b(kal|yesterday|parso|beeta\s*kal|pichhla\s*din)\b/i;
-  const romanizedToday = /\b(aaj|today|abhi)\b/i;
-  const romanizedWeek = /\b(hafta|hafte|week|pichh?le?\s*(hafta|hafte|week)|last\s*week|saptah)\b/i;
-  const romanizedMonth = /\b(mahina|mahine|month|pichh?le?\s*(mahina|mahine|month)|last\s*month)\b/i;
-  const romanizedSoldPatterns = /\b(bik[ae]|bech[ae]|sol[de]|kitna|kitne|kitni|bikri|sell|sales|revenue|kamai|earning|order|hisab)\b/i;
-  const romanizedTopSelling = /\b(sabse\s*(zyada|jyada|acch[ha])|top\s*sell|best\s*sell|konsa\s*(acch[ha]|zyada|sabse)|kya\s*(acch[ha]|zyada).*bik|popular|faayda|fayda|profit|recommend|suggest|kya\s*jod[uo]n|kya\s*bech[uo]n|maximize|zyada\s*kamai|jyada\s*kamai|strategy|business\s*advice|acch[ha]\s*product|best\s*product)\b/i;
-
-  const hindiYesterday = /कल|बीता\s*कल|पिछला\s*दिन|परसों/;
-  const hindiToday = /आज/;
-  const hindiWeek = /हफ्त[ाे]|सप्ताह|पिछल[ेा]\s*हफ्त[ाे]/;
-  const hindiMonth = /महीन[ाे]|पिछल[ेा]\s*महीन[ाे]/;
-  const hindiSoldPatterns = /बिक[ाी]|बेच[ाी]|कितन[ाीे]|बिक्री|ऑर्डर|कमाई|हिसाब/;
-  const hindiTopSelling = /सबसे\s*(ज़्यादा|ज्यादा|अच्छ[ाी])|कौन\s*सा.*(अच्छ|ज़्यादा|बिक|फायद|जोड़)|क्या.*बिक|टॉप\s*सेलिंग|बेस्ट\s*सेलिंग|फायद[ाे]|मुनाफ|ज़्यादा\s*कमाई|कौन.*जोड़|क्या\s*जोड़|कौन.*बेच|सबसे.*फायद/;
-
-  const marathiYesterday = /काल|कालच[ाीे]/;
-  const marathiToday = /आज|आजच[ाीे]/;
-  const marathiSold = /विक[ले]|किती|विक्री|ऑर्डर|कमाई/;
-  const marathiTopSelling = /सर्वात\s*जास्त|चांगल[ेाी].*विक|टॉप|फायदा|नफा/;
-
-  const englishStrategy = /\b(what\s*should\s*i\s*(sell|add|stock)|which\s*product|most\s*profit|max(imize|imum)?\s*profit|recommend|suggest|best\s*to\s*sell|should\s*i\s*add)\b/i;
-
-  const isSalesQuery = romanizedSoldPatterns.test(lower) || hindiSoldPatterns.test(message) || marathiSold.test(message);
-  const isTopSellingQuery = romanizedTopSelling.test(lower) || hindiTopSelling.test(message) || marathiTopSelling.test(message) || englishStrategy.test(lower);
-
-  let product: string | undefined;
-  const productPatterns = [
-
-    /(?:kal|yesterday|aaj|today)\s+(\w+)\s+(?:kitna|kitne|kitni|how\s*much|how\s*many)/i,
-    /(\w+)\s+(?:kitna|kitne|kitni|how\s*much|how\s*many)\s+(?:bik[ae]|sell|sol[de])/i,
-    /([\u0900-\u097F]+)\s+(?:कितन[ाीे]|की)\s+(?:बिक[ाी]|बेच[ाी])/,
-    /(?:कल|आज)\s+([\u0900-\u097F]+)\s+(?:कितन[ाीे])/,
-  ];
-
-  for (const pattern of productPatterns) {
-    const match = message.match(pattern);
-    if (match && match[1]) {
-      product = match[1];
-      break;
-    }
-  }
-
-  if (isTopSellingQuery) {
-    return { type: 'top_selling', product };
-  }
-
-  if (!isSalesQuery) return null;
-
-  if (romanizedYesterday.test(lower) || hindiYesterday.test(message) || marathiYesterday.test(message)) {
-    return { type: 'yesterday', product };
-  }
-  if (romanizedToday.test(lower) || hindiToday.test(message) || marathiToday.test(message)) {
-    return { type: 'today', product };
-  }
-  if (romanizedWeek.test(lower) || hindiWeek.test(message)) {
-    return { type: 'last_week', product };
-  }
-  if (romanizedMonth.test(lower) || hindiMonth.test(message)) {
-    return { type: 'last_month', product };
-  }
-
-  return { type: 'sales_summary', product };
 }
 
 async function getAnalyticsInfo(
@@ -797,61 +721,6 @@ async function getAnalyticsInfo(
       ? 'विक्री माहिती मिळवण्यात अडचण आली. कृपया थोड्या वेळाने विचारा.'
       : 'Had trouble fetching sales info. Please try again shortly.';
   }
-}
-
-function detectPriceQuery(message: string, language: LanguageCode): string | null {
-  const lower = message.toLowerCase();
-
-  const romanizedPricePatterns = [
-    /(\w+)\s*(?:ka|ki|ke)\s*(?:bhav|keemat|rate|price|daam|dam)/i,
-    /(?:bhav|keemat|rate|price|daam|dam)\s*(?:kya|kitna|kitni)?\s*(?:hai|he)?\s*(?:of\s+)?(\w+)/i,
-    /(?:aaj|today)\s+(\w+)\s*(?:ka|ki|ke)?\s*(?:bhav|keemat|rate|price)/i,
-    /(?:aaj|today)\s*(?:ka|ki|ke)?\s*(?:bhav|keemat|rate|price|daam|dam)\s+(\w+)/i,
-    /market\s*price\s*(?:of\s+)?(\w+)/i,
-    /(\w+)\s+(?:market\s*)?price/i,
-    /(\w+)\s+(?:mandi|mandee)\s*(?:bhav|rate)/i,
-    /(?:asli|real|live)\s*(?:bhav|price|rate|daam)\s*(?:of\s+)?(\w+)/i,
-    /(\w+)\s*(?:ka|ki|ke)\s*(?:asli|real|live)\s*(?:bhav|price|rate)/i,
-  ];
-
-  for (const pattern of romanizedPricePatterns) {
-    const match = lower.match(pattern);
-    if (match) {
-      const product = (match[1] || match[2])?.trim();
-
-      if (product && !['kya', 'hai', 'he', 'aaj', 'kal', 'the', 'what', 'is', 'of', 'ka', 'ki', 'ke', 'real', 'asli', 'live'].includes(product)) {
-        return product;
-      }
-    }
-  }
-
-  const hindiMatch = message.match(/([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|रेट|दाम)/);
-  if (hindiMatch) return hindiMatch[1];
-
-  const hindiAajMatch = message.match(/आज\s+([\u0900-\u097F]+)\s*(का|की|के)?\s*(भाव|कीमत|दाम)/);
-  if (hindiAajMatch) return hindiAajMatch[1];
-
-  const hindiAajMatch2 = message.match(/आज\s*(का|की|के)?\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
-  if (hindiAajMatch2) return hindiAajMatch2[3];
-
-  const hindiLiveMatch = message.match(/(असली|लाइव|रियल)\s*(भाव|कीमत|दाम)\s+([\u0900-\u097F]+)/);
-  if (hindiLiveMatch) return hindiLiveMatch[3];
-
-  const hindiMatch2 = message.match(/(भाव|कीमत|दाम)\s*(क्या|कितन[ाीे])?\s*(है)?\s*([\u0900-\u097F]+)/);
-  if (hindiMatch2) return hindiMatch2[4];
-
-  const marathiMatch = message.match(/([\u0900-\u097F]+)\s*(चा|ची|चे)?\s*(भाव|किंमत)/);
-  if (marathiMatch) return marathiMatch[1];
-
-  const bengaliMatch = message.match(/([\u0980-\u09FF]+)\s*(এর)?\s*(দাম|মূল্য)/);
-  if (bengaliMatch) return bengaliMatch[1];
-
-  if (lower.includes('price') || lower.includes('rate') || lower.includes('market')) {
-    const engMatch = message.match(/price\s+of\s+(\w+)|(\w+)\s+price|market\s+(?:price|rate)\s+(?:of\s+)?(\w+)/i);
-    if (engMatch) return engMatch[1] || engMatch[2] || engMatch[3];
-  }
-
-  return null;
 }
 
 async function executeStockUpdate(
@@ -1118,7 +987,8 @@ function buildEnhancedPrompt(
   orderInfo: string = '',
   catalogInfo: string = '',
   conversationSummary: string = '',
-  recentAlerts: string = ''
+  recentAlerts: string = '',
+  smartWindow: SmartConversationWindow | null = null
 ): string {
   const langName = {
     'hi-IN': 'Hindi',
@@ -1281,19 +1151,54 @@ This is the user's very first message. Give a warm, natural welcome in Bengali.
   }
 
   if (conversationContext && conversationContext.messages.length > 0) {
-    const recentMessages = conversationContext.messages.slice(-20);
-    const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
-    const filteredMessages = recentMessages.filter(msg => !panFilterRegex.test(msg.content));
-    if (filteredMessages.length > 0) {
-      prompt += `\n\nRecent conversation:\n`;
-      filteredMessages.forEach(msg => {
-        const role = msg.role === 'user' ? 'User' : 'You';
-        prompt += `${role}: ${msg.content}\n`;
-      });
+    // Change 3: Smart context window — summarize old, keep last 5 verbatim
+    if (smartWindow) {
+      if (smartWindow.summary) {
+        prompt += `\n\nConversation summary (older messages): ${smartWindow.summary}`;
+      }
+      if (smartWindow.recentVerbatim.length > 0) {
+        const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
+        const filtered = smartWindow.recentVerbatim.filter(msg => !panFilterRegex.test(msg.content));
+        if (filtered.length > 0) {
+          prompt += `\n\nRecent conversation (last ${filtered.length} messages, verbatim):\n`;
+          filtered.forEach(msg => {
+            const role = msg.role === 'user' ? 'User' : 'You';
+            prompt += `${role}: ${msg.content}\n`;
+          });
+        }
+      }
+      // Change 4: Structured seller facts
+      const facts = smartWindow.structuredFacts;
+      prompt += `\n\nSeller profile facts:`;
+      prompt += `\n- Experience: ${facts.experienceLevel} seller (${facts.totalInteractions} interactions, ${facts.successfulCatalogs} products added)`;
+      if (facts.productNames.length > 0) prompt += `\n- Known products: ${facts.productNames.join(', ')}`;
+      if (facts.topCategories.length > 0) prompt += `\n- Preferred categories: ${facts.topCategories.join(', ')}`;
+      if (facts.priceRange) prompt += `\n- Typical price range: Rs ${facts.priceRange.min} - Rs ${facts.priceRange.max}`;
+      if (facts.recentActivity !== 'none') prompt += `\n- Recent activity: ${facts.recentActivity}`;
+      if (facts.experienceLevel === 'returning') {
+        prompt += `\n- This is a returning seller who knows the system well. Keep responses efficient and skip basic explanations.`;
+      } else if (facts.experienceLevel === 'some') {
+        prompt += `\n- This seller has some experience. Be helpful but don't over-explain basics.`;
+      } else {
+        prompt += `\n- This is a relatively new seller. Be extra patient and guide step-by-step.`;
+      }
+    } else {
+      // Fallback to old approach if smart window failed
+      const recentMessages = conversationContext.messages.slice(-20);
+      const panFilterRegex = /PAN|pan card|पैन|verification|वेरिफिकेशन|skip.*guest|guest.*mode|KYC/i;
+      const filteredMessages = recentMessages.filter(msg => !panFilterRegex.test(msg.content));
+      if (filteredMessages.length > 0) {
+        prompt += `\n\nRecent conversation:\n`;
+        filteredMessages.forEach(msg => {
+          const role = msg.role === 'user' ? 'User' : 'You';
+          prompt += `${role}: ${msg.content}\n`;
+        });
+      }
     }
   }
 
-  if (conversationContext && conversationContext.patterns.totalInteractions > 0) {
+  if (conversationContext && conversationContext.patterns.totalInteractions > 0 && !smartWindow) {
+    // Only inject old-style personalization if smart window wasn't available
     const { patterns, preferences } = conversationContext;
     prompt += `\n\nUser personalization context:`;
     prompt += `\n- Total conversations: ${patterns.totalInteractions}, Successful products added: ${patterns.successfulCatalogs}`;
@@ -1618,15 +1523,70 @@ Respond now in ${langName}:`;
   return prompt;
 }
 
-async function callAgentModel(prompt: string): Promise<string> {
-  const buildRequest = (modelId: string, maxTokens: number) => ({
-    messages: [{ role: 'user' as const, content: [{ text: prompt }] }],
-    inferenceConfig: {
-      max_new_tokens: maxTokens,
-      temperature: 0.7,
-      top_p: 0.92,
-    },
-  });
+async function callAgentModel(
+  prompt: string,
+  recentTurns?: Array<{ role: string; content: string; timestamp: number }> | null
+): Promise<string> {
+  // Change 5: Build multi-turn messages[] when conversation history is available
+  const buildRequest = (modelId: string, maxTokens: number) => {
+    const messages: Array<{ role: 'user' | 'assistant'; content: Array<{ text: string }> }> = [];
+
+    if (recentTurns && recentTurns.length > 0) {
+      // System instructions go as first user message
+      // Then inject conversation turns as proper multi-turn structure
+      // Finally the current prompt (which includes user's new message) as last user turn
+      
+      // Add conversation history as proper turns
+      for (const turn of recentTurns) {
+        const role = turn.role === 'user' ? 'user' as const : 'assistant' as const;
+        // Skip system messages in multi-turn (they're in the prompt already)
+        if (turn.role === 'system') continue;
+        messages.push({ role, content: [{ text: turn.content }] });
+      }
+      // Ensure last message is from user (the full prompt with instructions + current message)
+      // If the last turn was from user, merge with prompt
+      if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+        messages[messages.length - 1] = { role: 'user', content: [{ text: prompt }] };
+      } else {
+        messages.push({ role: 'user', content: [{ text: prompt }] });
+      }
+      
+      // Nova models require messages to start with 'user' and alternate
+      // Clean up: ensure alternating roles and starts with user
+      const cleaned: typeof messages = [];
+      for (const msg of messages) {
+        if (cleaned.length === 0) {
+          if (msg.role === 'user') cleaned.push(msg);
+          // Skip leading assistant messages
+        } else {
+          const lastRole = cleaned[cleaned.length - 1].role;
+          if (msg.role !== lastRole) {
+            cleaned.push(msg);
+          } else {
+            // Same role consecutive — merge content
+            cleaned[cleaned.length - 1].content[0].text += '\n' + msg.content[0].text;
+          }
+        }
+      }
+      // Ensure ends with user
+      if (cleaned.length > 0 && cleaned[cleaned.length - 1].role !== 'user') {
+        cleaned.push({ role: 'user', content: [{ text: prompt }] });
+      }
+      
+      if (cleaned.length > 0) {
+        return {
+          messages: cleaned,
+          inferenceConfig: { max_new_tokens: maxTokens, temperature: 0.7, top_p: 0.92 },
+        };
+      }
+    }
+    
+    // Fallback: single-turn (same as before)
+    return {
+      messages: [{ role: 'user' as const, content: [{ text: prompt }] }],
+      inferenceConfig: { max_new_tokens: maxTokens, temperature: 0.7, top_p: 0.92 },
+    };
+  };
 
   const invokeWithTimeout = async (modelId: string, timeoutMs: number, maxTokens: number): Promise<string> => {
     const command = new InvokeModelCommand({
@@ -1649,71 +1609,23 @@ async function callAgentModel(prompt: string): Promise<string> {
   };
 
   try {
-    return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 12000, 600);
+    return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 15000, 800);
   } catch (err1: any) {
     console.warn('⚠️ Nova Pro attempt 1 failed:', err1.message);
 
     try {
-      return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 8000, 400);
+      return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 12000, 600);
     } catch (err2: any) {
       console.warn('⚠️ Nova Pro attempt 2 failed:', err2.message);
 
       try {
         console.log('🔄 Falling back to Nova Lite model');
-        return await invokeWithTimeout(NOVA_LITE_MODEL_ID, 10000, 400);
+        return await invokeWithTimeout(NOVA_LITE_MODEL_ID, 12000, 600);
       } catch (err3: any) {
         console.error('❌ All model attempts failed:', err3.message);
         return 'MESSAGE: माफ़ करें, जवाब में थोड़ी देर हो गई। कृपया फिर से पूछें।\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 50\nREASONING: All model attempts failed';
       }
     }
-  }
-}
-
-async function callBedrockAgentIfAvailable(
-  userMessage: string,
-  phone: string,
-  sessionContext: string
-): Promise<{ text: string; usedAgent: boolean }> {
-  if (!BEDROCK_AGENT_ID) {
-    return { text: '', usedAgent: false };
-  }
-
-  try {
-    console.log('🤖 Invoking Bedrock Agent with tool-use...');
-    const sessionId = `session-${phone.replace(/\+/g, '')}`; 
-
-    const command = new InvokeAgentCommand({
-      agentId: BEDROCK_AGENT_ID,
-      agentAliasId: BEDROCK_AGENT_ALIAS_ID,
-      sessionId,
-      inputText: `[Seller Phone: ${phone}] ${userMessage}\n\n[Context: ${sessionContext}]`,
-    });
-
-    const response = await Promise.race([
-      agentRuntimeClient.send(command),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Bedrock Agent timeout')), 20000)
-      ),
-    ]);
-
-    let fullText = '';
-    if (response.completion) {
-      for await (const chunk of response.completion) {
-        if (chunk.chunk?.bytes) {
-          fullText += new TextDecoder().decode(chunk.chunk.bytes);
-        }
-      }
-    }
-
-    if (fullText.trim()) {
-      console.log('✅ Bedrock Agent responded with tool-use result');
-      return { text: fullText.trim(), usedAgent: true };
-    }
-
-    return { text: '', usedAgent: false };
-  } catch (err: any) {
-    console.warn('⚠️ Bedrock Agent call failed, falling back to direct model:', err.message);
-    return { text: '', usedAgent: false };
   }
 }
 

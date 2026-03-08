@@ -26,17 +26,23 @@ export const handler = async (
     let transcribedText: string;
     let phoneNumber: string;
     let messageId: string;
+    let currentState: string = 'UNKNOWN';
+    let recentMessages: string[] = [];
 
     if (event.detail && event.detail.content) {
 
       transcribedText = event.detail.content.text || event.detail.content.transcribedText || '';
       phoneNumber = event.detail.phone || '';
       messageId = event.detail.messageId || '';
+      currentState = event.detail.currentState || 'UNKNOWN';
+      recentMessages = event.detail.recentMessages || [];
     } else if (event.transcribedText) {
 
       transcribedText = event.transcribedText;
       phoneNumber = event.phoneNumber || '';
       messageId = event.messageId || '';
+      currentState = event.currentState || 'UNKNOWN';
+      recentMessages = event.recentMessages || [];
     } else {
       throw new Error('No text content found in event');
     }
@@ -45,7 +51,7 @@ export const handler = async (
       throw new Error('Transcribed text is required');
     }
 
-    const prompt = constructIntentClassificationPrompt(transcribedText);
+    const prompt = constructIntentClassificationPrompt(transcribedText, currentState, recentMessages);
     console.log('Constructed prompt for Claude');
 
     const claudeResponse = await invokeClaudeModel(prompt);
@@ -93,9 +99,23 @@ export const handler = async (
   }
 };
 
-function constructIntentClassificationPrompt(transcribedText: string): string {
+function constructIntentClassificationPrompt(transcribedText: string, currentState: string = 'UNKNOWN', recentMessages: string[] = []): string {
+  let stateContext = '';
+  if (currentState !== 'UNKNOWN') {
+    stateContext = `\nCurrent user state: ${currentState}`;
+    if (currentState === 'CONFIRMATION_PENDING') {
+      stateContext += '\nIMPORTANT: User is reviewing a product. Short confirmations like "haan", "yes", "ok", "theek hai" should be CONFIRM_CATALOG. Numbers are likely price/quantity updates (CREATE_CATALOG). "cancel", "nahi" should be CANCEL_ORDER.';
+    } else if (currentState === 'VOICE_RECEIVED' || currentState === 'IMAGE_PENDING') {
+      stateContext += '\nIMPORTANT: User is in product creation flow. Numbers or product details should be CREATE_CATALOG.';
+    }
+  }
+  let recentContext = '';
+  if (recentMessages.length > 0) {
+    recentContext = '\nRecent conversation (for disambiguation):\n' + recentMessages.join('\n');
+  }
+
   return `You are an intent classifier for an ONDC seller management system. 
-The user is a rural merchant speaking in Hindi, Marathi, or English.
+The user is a rural merchant speaking in Hindi, Marathi, or English.${stateContext}${recentContext}
 
 Classify the following transcribed voice note into ONE of these intents:
 - CREATE_CATALOG: User wants to add a new product OR is providing product details (name, price, quantity, unit) for catalog creation

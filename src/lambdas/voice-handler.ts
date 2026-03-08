@@ -128,10 +128,14 @@ export const handler = async (
     // Refresh typing indicator before intent classification
     await sendTypingIndicator(phone, messageId);
 
+    // Pass state + recent messages for context-aware classification
+    const recentMsgs = conversationContext?.messages?.slice(-2)?.map(m => `${m.role}: ${m.content}`) || [];
     const intentResult = await invokeIntentClassification({
       transcribedText: transcription,
       phoneNumber: phone,
       messageId,
+      currentState: currentState?.state || 'UNKNOWN',
+      recentMessages: recentMsgs,
     });
 
     const intentEndTime = Date.now();
@@ -151,12 +155,22 @@ export const handler = async (
     // Refresh typing indicator before entity extraction
     await sendTypingIndicator(phone, messageId);
 
+    // Pass partial data context for multi-turn entity resolution
+    const existingPartial = await getPartialData(phone);
     const entityResult = await invokeEntityExtraction({
       transcribedText: transcription,
       intent: intent,
       phoneNumber: phone,
       messageId,
       language: detectedLanguage?.split('-')[0] || 'en',
+      currentState: currentState?.state || 'UNKNOWN',
+      partialContext: existingPartial ? {
+        productName: existingPartial.productName || null,
+        price: existingPartial.price || null,
+        quantity: existingPartial.quantity || null,
+        unit: existingPartial.unit || null,
+        missingFields: existingPartial.missingFields || [],
+      } : null,
     });
 
     const entityEndTime = Date.now();
@@ -683,6 +697,8 @@ async function invokeIntentClassification(params: {
   transcribedText: string;
   phoneNumber: string;
   messageId: string;
+  currentState?: string;
+  recentMessages?: string[];
 }): Promise<any> {
   const functionName = process.env.INTENT_CLASSIFICATION_FUNCTION_NAME || 'vyapar-vaani-intent-classification';
 
@@ -692,6 +708,8 @@ async function invokeIntentClassification(params: {
       transcribedText: params.transcribedText,
       phoneNumber: params.phoneNumber,
       messageId: params.messageId,
+      currentState: params.currentState,
+      recentMessages: params.recentMessages,
     }),
   });
 
@@ -711,6 +729,8 @@ async function invokeEntityExtraction(params: {
   phoneNumber: string;
   messageId: string;
   language: string;
+  currentState?: string;
+  partialContext?: { productName: string | null; price: number | null; quantity: number | null; unit: string | null; missingFields: string[] } | null;
 }): Promise<any> {
   const functionName = process.env.ENTITY_EXTRACTION_FUNCTION_NAME || 'vyapar-vaani-entity-extraction';
 
@@ -722,6 +742,8 @@ async function invokeEntityExtraction(params: {
       phoneNumber: params.phoneNumber,
       messageId: params.messageId,
       language: params.language,
+      currentState: params.currentState,
+      partialContext: params.partialContext,
     }),
   });
 

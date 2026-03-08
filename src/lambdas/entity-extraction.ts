@@ -30,6 +30,8 @@ export const handler = async (
     let phoneNumber: string;
     let messageId: string;
     let language: string;
+    let currentState: string = 'UNKNOWN';
+    let partialContext: { productName: string | null; price: number | null; quantity: number | null; unit: string | null; missingFields: string[] } | null = null;
 
     if (event.detail) {
 
@@ -38,6 +40,8 @@ export const handler = async (
       phoneNumber = event.detail.phone || '';
       messageId = event.detail.messageId || '';
       language = event.detail.language || 'en';
+      currentState = event.detail.currentState || 'UNKNOWN';
+      partialContext = event.detail.partialContext || null;
     } else {
 
       transcribedText = event.transcribedText || '';
@@ -45,6 +49,8 @@ export const handler = async (
       phoneNumber = event.phoneNumber || '';
       messageId = event.messageId || '';
       language = event.language || 'en';
+      currentState = event.currentState || 'UNKNOWN';
+      partialContext = event.partialContext || null;
     }
 
     if (!transcribedText || transcribedText.trim().length === 0) {
@@ -57,7 +63,9 @@ export const handler = async (
 
     const prompt = constructEntityExtractionPrompt(
       transcribedText,
-      intent
+      intent,
+      currentState,
+      partialContext
     );
     console.log('Constructed prompt for Claude');
 
@@ -97,18 +105,31 @@ export const handler = async (
 
 function constructEntityExtractionPrompt(
   transcribedText: string,
-  intent: IntentType
+  intent: IntentType,
+  currentState: string = 'UNKNOWN',
+  partialContext: { productName: string | null; price: number | null; quantity: number | null; unit: string | null; missingFields: string[] } | null = null
 ): string {
+  // Build state context hint for multi-turn resolution
+  let stateHint = '';
+  if (partialContext && (partialContext.productName || partialContext.price !== null)) {
+    stateHint = `\n\nEXISTING PARTIAL DATA (from previous messages in this conversation):`;
+    if (partialContext.productName) stateHint += `\n- Product being discussed: ${partialContext.productName}`;
+    if (partialContext.price !== null) stateHint += `\n- Price already set: ${partialContext.price}`;
+    if (partialContext.quantity !== null) stateHint += `\n- Quantity already set: ${partialContext.quantity} ${partialContext.unit || ''}`;
+    if (partialContext.missingFields.length > 0) stateHint += `\n- Fields still needed: ${partialContext.missingFields.join(', ')}`;
+    stateHint += `\nIMPORTANT: If the current transcription mentions a value without a product name, it likely refers to "${partialContext.productName || 'the product being discussed'}". Resolve ambiguous references (like "aur 5 kilo", "iska price") using this context.`;
+  }
+
   switch (intent) {
     case 'CREATE_CATALOG':
     case 'CONFIRM_CATALOG': 
-      return constructCatalogPrompt(transcribedText);
+      return constructCatalogPrompt(transcribedText) + stateHint;
     case 'UPDATE_PRICE':
-      return constructPriceUpdatePrompt(transcribedText);
+      return constructPriceUpdatePrompt(transcribedText) + stateHint;
     case 'UPDATE_QUANTITY':
-      return constructQuantityUpdatePrompt(transcribedText);
+      return constructQuantityUpdatePrompt(transcribedText) + stateHint;
     case 'UPDATE_INVENTORY':
-      return constructInventoryPrompt(transcribedText);
+      return constructInventoryPrompt(transcribedText) + stateHint;
     case 'ACCEPT_ORDER':
     case 'REJECT_ORDER':
     case 'UPDATE_FULFILLMENT':
