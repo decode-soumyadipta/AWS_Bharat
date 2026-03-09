@@ -15,6 +15,7 @@ import {
 } from './conversation-memory';
 import { getPartialData, mergePartialData, PartialCatalogItem } from './partial-data-store';
 import { getUserState } from './state-manager';
+import { calculateBackoffDelay } from '../utils/error-handler';
 import { sendTextMessage, sendTypingIndicator, sendTextWithVoice, sendVoiceOnly } from '../lambdas/whatsapp-message-sender';
 import { remote_web_search, getLocalMarketPrice, fetchLiveMarketPrice } from '../tools/web-search';
 import { generateOnDemandUpdate } from './background-agent';
@@ -1598,23 +1599,50 @@ async function callAgentModel(
     return responseBody.output.message.content[0].text.trim();
   };
 
-  try {
-    return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 15000, 800);
-  } catch (err1: any) {
-    console.warn('⚠️ Nova Pro attempt 1 failed:', err1.message);
+  // Check if an error is throttle/transient (worth retrying with backoff)
+  const isThrottleOrTransient = (err: any): boolean => {
+    const name = err.name || err.code || '';
+    const msg = err.message || '';
+    return name.includes('Throttling') ||
+      name.includes('TooManyRequests') ||
+      name.includes('ServiceUnavailable') ||
+      name.includes('ModelTimeoutException') ||
+      msg.includes('Model timeout') ||
+      msg.includes('Too Many Requests') ||
+      msg.includes('ECONNRESET');
+  };
 
-    try {
-      return await invokeWithTimeout(NOVA_PRO_MODEL_ID, 12000, 600);
-    } catch (err2: any) {
-      console.warn('⚠️ Nova Pro attempt 2 failed:', err2.message);
+  // Retry config for Bedrock: 2 attempts with backoff (1s base, 4s max)
+  const BEDROCK_RETRY = { maxAttempts: 2, baseDelay: 1000, maxDelay: 4000, backoffMultiplier: 2, jitter: true };
 
+  // Attempt Nova Pro with throttle-aware backoff
+  const invokeWithRetry = async (modelId: string, timeoutMs: number, maxTokens: number): Promise<string> => {
+    let lastErr: any;
+    for (let attempt = 0; attempt < BEDROCK_RETRY.maxAttempts; attempt++) {
       try {
-        console.log('🔄 Falling back to Nova Lite model');
-        return await invokeWithTimeout(NOVA_LITE_MODEL_ID, 12000, 600);
-      } catch (err3: any) {
-        console.error('❌ All model attempts failed:', err3.message);
-        return 'MESSAGE: माफ़ करें, जवाब में थोड़ी देर हो गई। कृपया फिर से पूछें।\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 50\nREASONING: All model attempts failed';
+        return await invokeWithTimeout(modelId, timeoutMs, maxTokens);
+      } catch (err: any) {
+        lastErr = err;
+        const retriable = isThrottleOrTransient(err);
+        console.warn(`⚠️ ${modelId} attempt ${attempt + 1} failed: ${err.message} (retriable: ${retriable})`);
+        if (!retriable || attempt >= BEDROCK_RETRY.maxAttempts - 1) break;
+        const delay = calculateBackoffDelay(attempt, BEDROCK_RETRY);
+        console.log(`⏳ Waiting ${Math.round(delay)}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
+    }
+    throw lastErr;
+  };
+
+  try {
+    return await invokeWithRetry(NOVA_PRO_MODEL_ID, 15000, 800);
+  } catch (proErr: any) {
+    console.log('🔄 Nova Pro exhausted, falling back to Nova Lite');
+    try {
+      return await invokeWithRetry(NOVA_LITE_MODEL_ID, 12000, 600);
+    } catch (liteErr: any) {
+      console.error('❌ All model attempts failed:', liteErr.message);
+      return 'MESSAGE: माफ़ करें, जवाब में थोड़ी देर हो गई। कृपया फिर से पूछें।\nACTION: NONE\nRESPONSE_MODE: voice\nCONFIDENCE: 50\nREASONING: All model attempts failed';
     }
   }
 }
