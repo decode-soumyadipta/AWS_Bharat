@@ -35,7 +35,7 @@ const MARKETPLACE_TABLE = process.env.MARKETPLACE_PRODUCTS_TABLE || 'marketplace
 
 let _currentMessageId: string | undefined;
 
-type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
+type LanguageCode = 'hi-IN' | 'en-IN' | 'mr-IN';
 
 interface EnhancedAgentResponse {
   message: string;
@@ -625,11 +625,6 @@ function detectLanguageSwitch(message: string, currentLang: LanguageCode): Langu
     return 'mr-IN';
   }
 
-  if (lower.includes('bengali') || lower.includes('bangla') || lower.includes('বাংলা') || 
-      lower.includes('बंगाली')) {
-    return 'bn-IN';
-  }
-
   return currentLang;
 }
 
@@ -994,7 +989,6 @@ function buildEnhancedPrompt(
     'hi-IN': 'Hindi',
     'en-IN': 'English',
     'mr-IN': 'Marathi',
-    'bn-IN': 'Bengali'
   }[language];
 
   let prompt = '';
@@ -1121,10 +1115,6 @@ Action rules for NEW users:
 - For ALL other messages → welcome + PAN prompt, ACTION: NONE
 - RESPONSE_MODE must be "both" (text + voice for very first welcome)
 - NEVER use STORE_DATA, REGISTER_UPI, or any other action for NEW users except SKIP_KYC`,
-      'bn-IN': `\n\nONBOARDING STATE: BRAND NEW USER (first contact)
-This is the user's very first message. Give a warm, natural welcome in Bengali.
-- Welcome to Vyapar Vaani, ask for PAN card photo (optional), mention skip option.
-- RESPONSE_MODE "both", only SKIP_KYC action allowed.`,
     };
     prompt += onboardingInstructions[language] || onboardingInstructions['hi-IN'];
   } else if (userState?.state === 'GUEST_ACTIVE') {
@@ -1738,9 +1728,9 @@ export async function sendEnhancedAgentMessage(
 
   await showTypingIndicator(phone);
 
-  const lang = language.split('-')[0] as 'hi' | 'mr' | 'en' | 'bn';
+  const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
 
-  const whatsappLang = lang === 'bn' ? 'en' : lang;
+  const whatsappLang = lang;
 
   switch (mode) {
     case 'voice':

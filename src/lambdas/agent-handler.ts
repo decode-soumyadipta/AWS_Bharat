@@ -147,7 +147,7 @@ async function processAgentEvent(event: any): Promise<any> {
   try {
     const eventDetail = event.detail || event;
     const { phone, messageType, content } = eventDetail;
-    let language = (eventDetail.language || 'hi-IN') as 'hi-IN' | 'en-IN' | 'mr-IN' | 'bn-IN';
+    let language = (eventDetail.language || 'hi-IN') as 'hi-IN' | 'en-IN' | 'mr-IN';
 
     if (!phone) {
       throw new Error('Phone number is required');
@@ -928,20 +928,25 @@ function buildStockVoiceMessage(
   if (stockResults.length === 0) return '';
 
   const isHindi = lang === 'hi' || lang === 'hi-IN';
+  const isMarathi = lang === 'mr' || lang === 'mr-IN';
   const lines = stockResults.map(s => {
     if (s.outOfStock) {
       return isHindi
         ? `${s.name} का स्टॉक खत्म हो गया। ${s.orderedQty} ${s.unit} बिक गए।`
+        : isMarathi
+        ? `${s.name} चा स्टॉक संपला. ${s.orderedQty} ${s.unit} विकले गेले.`
         : `${s.name} is out of stock. ${s.orderedQty} ${s.unit} sold.`;
     }
     return isHindi
       ? `${s.name} में ${s.remainingQty} ${s.unit} बाकी हैं। ${s.orderedQty} ${s.unit} बिके।`
+      : isMarathi
+      ? `${s.name} मध्ये ${s.remainingQty} ${s.unit} शिल्लक आहेत. ${s.orderedQty} ${s.unit} विकले.`
       : `${s.name} has ${s.remainingQty} ${s.unit} left. ${s.orderedQty} ${s.unit} sold.`;
   });
 
-  const header = isHindi ? 'स्टॉक अपडेट' : 'Stock Update';
+  const header = isHindi ? 'स्टॉक अपडेट' : isMarathi ? 'स्टॉक अपडेट' : 'Stock Update';
   const warning = stockResults.some(s => s.outOfStock)
-    ? (isHindi ? ' कुछ उत्पादों का स्टॉक खत्म है, कृपया अपडेट करें।' : ' Some products are out of stock. Please restock.')
+    ? (isHindi ? ' कुछ उत्पादों का स्टॉक खत्म है, कृपया अपडेट करें।' : isMarathi ? ' काही उत्पादनांचा स्टॉक संपला आहे, कृपया अपडेट करा.' : ' Some products are out of stock. Please restock.')
     : '';
 
   return `${header}। ${lines.join(' ')}${warning}`;
@@ -967,6 +972,8 @@ async function handleOrderAcceptReject(
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const notFoundMsg = lang === 'hi'
         ? '⚠️ यह ऑर्डर नहीं मिला। शायद पहले से प्रोसेस हो चुका है।'
+        : lang === 'mr'
+        ? '⚠️ हा ऑर्डर सापडला नाही. कदाचित आधीच प्रोसेस झाला असेल.'
         : '⚠️ Order not found. It may have already been processed.';
       await sendEnhancedAgentMessage(sellerPhone, notFoundMsg, language as any, 'voice');
       return;
@@ -978,9 +985,13 @@ async function handleOrderAcceptReject(
       const alreadyMsg = order.status === 'CONFIRMED'
         ? (lang === 'hi'
           ? `✅ यह ऑर्डर पहले से कन्फ़र्म है (${order.payment?.method === 'UPI' ? 'UPI ऑटो-स्वीकार' : 'स्वीकृत'})। कृपया ऑर्डर पैक करें! 📦`
+          : lang === 'mr'
+          ? `✅ हा ऑर्डर आधीच कन्फर्म आहे (${order.payment?.method === 'UPI' ? 'UPI ऑटो-स्वीकार' : 'स्वीकृत'}). कृपया ऑर्डर पॅक करा! 📦`
           : `✅ This order is already confirmed (${order.payment?.method === 'UPI' ? 'UPI auto-accepted' : 'accepted'}). Please pack the order! 📦`)
         : (lang === 'hi'
           ? '❌ यह ऑर्डर पहले से रद्द हो चुका है।'
+          : lang === 'mr'
+          ? '❌ हा ऑर्डर आधीच रद्द झाला आहे.'
           : '❌ This order has already been cancelled.');
       await sendEnhancedAgentMessage(sellerPhone, alreadyMsg, language as any, 'voice');
       return;
@@ -1025,12 +1036,16 @@ async function handleOrderAcceptReject(
 
       const sellerMsg = lang === 'hi'
         ? `✅ ऑर्डर स्वीकार किया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI भुगतान' : 'कैश ऑन डिलीवरी'}\n\n${paymentMethod === 'UPI' ? '💡 UPI भुगतान आने का इंतजार करें। भुगतान मिलने पर आपको सूचना मिलेगी।' : '📦 कृपया ऑर्डर पैक करें और डिलीवरी की तैयारी करें!'}`
+        : lang === 'mr'
+        ? `✅ ऑर्डर स्वीकारला!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI पेमेंट' : 'कॅश ऑन डिलिव्हरी'}\n\n${paymentMethod === 'UPI' ? '💡 UPI पेमेंटची वाट पहा. पेमेंट आल्यावर तुम्हाला कळवले जाईल.' : '📦 कृपया ऑर्डर पॅक करा आणि डिलिव्हरीची तयारी करा!'}`
         : `✅ Order Accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n💳 ${paymentMethod === 'UPI' ? 'UPI Payment' : 'Cash on Delivery'}\n\n${paymentMethod === 'UPI' ? '💡 Wait for UPI payment. You will be notified when payment is received.' : '📦 Please pack the order and prepare for delivery!'}`;
       await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
 
       if (buyerPhone) {
         const buyerMsg = lang === 'hi'
           ? `🎉 आपका ऑर्डर स्वीकार हो गया!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 कृपया UPI से ₹' + totalAmount + ' भुगतान करें। भुगतान के बाद स्क्रीनशॉट या रेफरेंस नंबर भेजें।' : '💵 कैश ऑन डिलीवरी - डिलीवरी के समय भुगतान करें।'}\n\n🚚 डिलीवरी जल्द होगी!`
+          : lang === 'mr'
+          ? `🎉 तुमचा ऑर्डर स्वीकारला गेला!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 कृपया UPI ने ₹' + totalAmount + ' पेमेंट करा. पेमेंट केल्यावर स्क्रीनशॉट किंवा रेफरन्स नंबर पाठवा.' : '💵 कॅश ऑन डिलिव्हरी - डिलिव्हरीच्या वेळी पैसे द्या.'}\n\n🚚 डिलिव्हरी लवकरच होईल!`
           : `🎉 Your order has been accepted!\n\n📦 ${itemSummary}\n💰 ₹${totalAmount}\n\n${paymentMethod === 'UPI' ? '💳 Please pay ₹' + totalAmount + ' via UPI. Send screenshot or reference number after payment.' : '💵 Cash on Delivery - Pay when your order is delivered.'}\n\n🚚 Delivery coming soon!`;
         await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
       }
@@ -1050,12 +1065,16 @@ async function handleOrderAcceptReject(
 
       const sellerMsg = lang === 'hi'
         ? `ऑर्डर अस्वीकार किया गया। ग्राहक को सूचित कर दिया गया है। अगर कोई और ऑर्डर आए तो आपको बताएंगे।`
+        : lang === 'mr'
+        ? `ऑर्डर नाकारला. ग्राहकाला कळवले आहे. नवीन ऑर्डर आल्यावर तुम्हाला सांगू.`
         : `Order rejected. The buyer has been notified. We'll let you know when new orders come in.`;
       await sendEnhancedAgentMessage(sellerPhone, sellerMsg, language as any, 'voice');
 
       if (buyerPhone) {
         const buyerMsg = lang === 'hi'
           ? `माफ़ कीजिए, विक्रेता ने आपका ऑर्डर स्वीकार नहीं किया। ${itemSummary}. कृपया दूसरे विक्रेता से ऑर्डर करें।`
+          : lang === 'mr'
+          ? `माफ करा, विक्रेत्याने तुमचा ऑर्डर स्वीकारला नाही. ${itemSummary}. कृपया दुसऱ्या विक्रेत्याकडून ऑर्डर करा.`
           : `Sorry, the seller couldn't accept your order. ${itemSummary}. Please try ordering from another seller.`;
         await sendEnhancedAgentMessage(buyerPhone, buyerMsg, language as any, 'both');
       }
@@ -1066,6 +1085,8 @@ async function handleOrderAcceptReject(
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
         ? 'ऑर्डर प्रोसेस करने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+        : lang === 'mr'
+        ? 'ऑर्डर प्रोसेस करताना समस्या आली. कृपया पुन्हा प्रयत्न करा.'
         : 'There was an issue processing the order. Please try again.';
       await sendEnhancedAgentMessage(sellerPhone, errMsg, language as any, 'voice');
     } catch (e) {
@@ -1334,6 +1355,8 @@ async function createCatalog(phone: string, language: string): Promise<void> {
     const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
     const msg = lang === 'hi'
       ? 'Product ki jaankari abhi puri nahi hai. Pehle product ka naam, price aur photo bhejiye.'
+      : lang === 'mr'
+      ? 'Product ची माहिती अजून पूर्ण नाही. कृपया प्रथम प्रॉडक्टचे नाव, किंमत आणि फोटो पाठवा.'
       : 'Product information is incomplete. Please send product name, price, and photo first.';
     await sendEnhancedAgentMessage(phone, msg, language as any, 'voice');
     return;
@@ -1421,6 +1444,8 @@ async function deleteProduct(phone: string, productName: string, language: strin
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const notFoundMsg = lang === 'hi'
         ? `❌ "${productName}" नाम का कोई उत्पाद नहीं मिला। कृपया सही नाम बताएं।`
+        : lang === 'mr'
+        ? `❌ "${productName}" नावाचे कोणतेही उत्पादन सापडले नाही. कृपया योग्य नाव सांगा.`
         : `❌ No product found with name "${productName}". Please provide the correct name.`;
       await sendEnhancedAgentMessage(phone, notFoundMsg, language as any, 'voice');
       return;
@@ -1458,6 +1483,8 @@ async function deleteProduct(phone: string, productName: string, language: strin
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
         ? '⚠️ उत्पाद हटाने में समस्या हुई। कृपया दुबारा कोशिश करें।'
+        : lang === 'mr'
+        ? '⚠️ उत्पादन काढताना समस्या आली. कृपया पुन्हा प्रयत्न करा.'
         : '⚠️ Failed to delete product. Please try again.';
       await sendEnhancedAgentMessage(phone, errMsg, language as any, 'voice');
     } catch (e) {
@@ -1473,6 +1500,8 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const invalidMsg = lang === 'hi'
         ? '❌ UPI ID सही नहीं लग रहा। कृपया सही UPI ID बताएं जिसमें @ लगा हो, जैसे: name@oksbi, 9876543210@paytm, shop@ybl'
+        : lang === 'mr'
+        ? '❌ UPI ID बरोबर वाटत नाही. कृपया @ असलेला योग्य UPI ID सांगा, जसे: name@oksbi, 9876543210@paytm, shop@ybl'
         : '❌ Invalid UPI ID. Please provide a valid one with @ symbol (e.g., name@oksbi, 9876543210@paytm, shop@ybl)';
       await sendEnhancedAgentMessage(phone, invalidMsg, language as any, 'voice');
       return;
@@ -1536,6 +1565,8 @@ async function registerUpi(phone: string, upiId: string, language: string): Prom
       const lang = language.split('-')[0] as 'hi' | 'mr' | 'en';
       const errMsg = lang === 'hi'
         ? '⚠️ UPI रजिस्ट्रेशन में समस्या हुई। कृपया अपना UPI ID दुबारा भेजें (जैसे: name@upi)'
+        : lang === 'mr'
+        ? '⚠️ UPI नोंदणीत समस्या आली. कृपया तुमचा UPI ID पुन्हा पाठवा (जसे: name@upi)'
         : '⚠️ UPI registration had an issue. Please send your UPI ID again (e.g., name@upi)';
       await sendEnhancedAgentMessage(phone, errMsg, language as any, 'voice');
     } catch (e) {

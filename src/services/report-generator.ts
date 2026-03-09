@@ -682,7 +682,7 @@ function getDefaultRecommendations(): string[] {
 }
 
 function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): string {
-  if (language === 'hi' || language === 'mr') {
+  if (language === 'hi') {
     const parts: string[] = [];
 
     if (data.reportType === 'weekly') {
@@ -713,6 +713,41 @@ function buildVoiceSummary(data: ReportData, language: 'hi' | 'mr' | 'en'): stri
     parts.push(`Aapke catalog mein ${activeCount} products listed hain.`);
 
     parts.push('PDF report bhej raha hoon, ismein poori detail aur AI suggestions hain.');
+
+    return parts.join(' ');
+  }
+
+  if (language === 'mr') {
+    const parts: string[] = [];
+
+    if (data.reportType === 'weekly') {
+      parts.push(`${data.sellerName} जी, तुमचा आठवड्याचा अहवाल तयार आहे.`);
+    } else if (data.reportType === 'monthly') {
+      parts.push(`${data.sellerName} जी, तुमचा महिन्याचा अहवाल तयार आहे.`);
+    } else {
+      parts.push(`${data.sellerName} जी, तुमचा अहवाल तयार आहे.`);
+    }
+
+    parts.push(`एकूण ${data.totalOrders} ऑर्डर आले.`);
+
+    if (data.confirmedOrders > 0) {
+      parts.push(`कन्फर्म ऑर्डर: ${data.confirmedOrders}, कमाई ${data.confirmedRevenue} रुपये.`);
+    }
+    if (data.pendingOrders > 0) {
+      parts.push(`पेंडिंग ऑर्डर: ${data.pendingOrders}, ${data.pendingRevenue} रुपये पेंडिंग.`);
+    }
+    if (data.totalOrders === 0) {
+      parts.push('या कालावधीत अजून कोणताही ऑर्डर आला नाही.');
+    }
+
+    if (data.allProductStats.length > 0) {
+      parts.push(`सर्वाधिक विकले गेलेले उत्पादन ${toLatinSafe(data.allProductStats[0].productName)} आहे.`);
+    }
+
+    const activeCount = data.catalogItems.filter(c => c.status === 'ACTIVE').length;
+    parts.push(`तुमच्या कॅटलॉगमध्ये ${activeCount} उत्पादने लिस्ट आहेत.`);
+
+    parts.push('PDF अहवाल पाठवत आहोत, त्यात संपूर्ण तपशील आणि AI सूचना आहेत.');
 
     return parts.join(' ');
   }
