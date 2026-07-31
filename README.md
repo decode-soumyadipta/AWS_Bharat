@@ -37,7 +37,7 @@ This friction exists in Hindi just as much as English. Translating an interface 
 
 ## Solution
 
-Vyapar Vaani removes the interface entirely. A seller speaks a voice message on WhatsApp — the one app they already know. AI handles everything else: transcription, product extraction, photo enhancement, market pricing, and live listing. **No forms. No menus. No steps to learn. Zero digital literacy required.**
+Vyapar Vaani removes the interface entirely. A seller speaks a voice message on WhatsApp — the app they already know. AI handles everything else: transcription, product extraction, photo enhancement, market pricing, and live listing. **No forms. No menus. No steps to learn. Zero digital literacy required.**
 
 ---
 
