@@ -251,7 +251,6 @@ npx cdk deploy --all
 
 <div align="center">
 
-**Built for the [AWS Hackathon for Bharat](https://awshackathonforbharat.devpost.com/)**
 
 *Vyapar Vaani — giving every rural seller a voice in digital commerce.*
 
